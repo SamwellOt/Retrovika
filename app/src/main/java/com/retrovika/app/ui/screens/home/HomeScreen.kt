@@ -29,6 +29,15 @@ import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Downloading
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.res.pluralStringResource
+import com.retrovika.app.core.catalog.DownloadManager
+import com.retrovika.app.core.storage.formatBytes
+import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -78,6 +87,8 @@ fun HomeScreen(
     onOpenGame: (Long) -> Unit,
     onOpenSystem: (String) -> Unit,
     onExplore: () -> Unit,
+    onOpenLibrary: () -> Unit,
+    onOpenDownloads: () -> Unit,
     onAddFolder: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -87,9 +98,13 @@ fun HomeScreen(
     val newest by library.newest.collectAsStateWithLifecycle()
     val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
+    // Só o contador: a lista de tarefas muda a cada aviso de progresso e recomporia a tela inteira.
+    val activeDownloads by context.container.downloads.activeCount.collectAsStateWithLifecycle()
     val bottom = LocalBottomInset.current
+    val listState = rememberLazyListState()
+    ScrollToTopOnReselect("home", listState)
 
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(), contentPadding = PaddingValues(bottom = bottom + 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().ambientGlow(), state = listState, contentPadding = PaddingValues(bottom = bottom + 24.dp)) {
         item {
             Column(Modifier.statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -112,6 +127,10 @@ fun HomeScreen(
                     Text(stringResource(R.string.home_scanning, scan.found), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
                 }
             }
+        }
+
+        if (activeDownloads > 0) {
+            item(key = "downloads") { ActiveDownloadsCard(onClick = onOpenDownloads) }
         }
 
         val hero = recent.firstOrNull()
@@ -137,7 +156,7 @@ fun HomeScreen(
         if (counts.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(18.dp))
-                SectionHeader(stringResource(R.string.home_your_consoles))
+                SectionHeader(stringResource(R.string.home_your_consoles), action = stringResource(R.string.common_see_all), onAction = onOpenLibrary)
                 Spacer(Modifier.height(12.dp))
                 val present = remember(counts) {
                     val byId = counts.associate { it.systemId to it.count }
@@ -183,6 +202,43 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(key: String, @S
         Spacer(Modifier.height(12.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(games, key = { it.id }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }, width = 128.dp) }
+        }
+    }
+}
+
+/** Resumo dos downloads em andamento; toca para abrir a aba de downloads. */
+@Composable
+private fun ActiveDownloadsCard(onClick: () -> Unit) {
+    // O progresso é lido aqui dentro: a cada aviso só este cartão recompõe.
+    val tasks by LocalContext.current.container.downloads.tasks.collectAsStateWithLifecycle()
+    val active = remember(tasks) { tasks.filter { it.status in DownloadManager.ACTIVE } }
+    if (active.isEmpty()) return
+    val known = active.filter { it.bytesTotal > 0 }
+    val progress = if (known.isEmpty()) -1f else known.sumOf { it.bytesDone }.toFloat() / known.sumOf { it.bytesTotal }
+    val speed = active.sumOf { it.speed }
+    SurfaceCard(Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth(), onClick = onClick) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconTile(Icons.Rounded.Downloading, Palette.Cyan, size = 38.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    pluralStringResource(R.plurals.home_downloading, active.size, active.size),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    listOfNotNull(
+                        active.first().title,
+                        if (speed > 0) stringResource(R.string.downloads_speed, speed.formatBytes()) else null,
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+                val bar = Modifier.fillMaxWidth().clip(RoundedCornerShape(50))
+                if (progress >= 0f) LinearProgressIndicator(progress = { progress }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
+                else LinearProgressIndicator(modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.TextMuted)
         }
     }
 }

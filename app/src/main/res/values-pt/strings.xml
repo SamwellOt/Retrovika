@@ -12,10 +12,17 @@
     <string name="common_import">Importar</string>
     <string name="common_explore">Explorar</string>
     <string name="common_link_folder">Vincular pasta</string>
+    <string name="common_see_all">Ver todos</string>
+
+    <string name="sort_title">A–Z</string>
+    <string name="sort_recent">Jogados recentemente</string>
+    <string name="sort_added">Adicionados recentemente</string>
+    <string name="sort_playtime">Mais jogados</string>
 
     <string name="tab_home">Início</string>
     <string name="tab_library">Biblioteca</string>
     <string name="tab_explore">Explorar</string>
+    <string name="tab_downloads">Downloads</string>
     <string name="tab_settings">Ajustes</string>
 
     <string name="no_games">Nenhum jogo</string>

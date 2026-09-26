@@ -32,15 +32,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -70,13 +67,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retrovika.app.container
 import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.RomVariant
-import com.retrovika.app.core.catalog.DownloadManager
 import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.catalog.DownloadStatus
 import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.ui.components.ChipStrip
+import com.retrovika.app.ui.components.DownloadProgressBar
+import com.retrovika.app.ui.components.HeaderIconButton
+import com.retrovika.app.ui.components.ScrollToTopOnReselect
+import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
@@ -92,14 +92,13 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.theme.Palette
 
 @Composable
-fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
+fun ExploreScreen(onOpenBrowser: () -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
     val vm: ExploreViewModel = viewModel { ExploreViewModel(context.container) }
@@ -107,7 +106,7 @@ fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
     val downloads by vm.downloads.collectAsStateWithLifecycle()
     val prompt by vm.prompt.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
-    val active = downloads.count { it.status in DownloadManager.ACTIVE }
+    ScrollToTopOnReselect("explore", gridState)
     // Um mapa por lista de downloads, não uma busca por card: títulos se repetem entre consoles e
     // fontes, e a lista muda a cada aviso de progresso. A lista vem do mais novo para o mais antigo.
     val downloadsByEntry = remember(downloads) { downloads.asReversed().filter { it.entryKey != null }.associateBy { it.entryKey } }
@@ -132,11 +131,8 @@ fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column {
                 ScreenHeader(stringResource(R.string.tab_explore), subtitle = stringResource(R.string.explore_subtitle, state.totalResults), inset = 4.dp) {
-                    HeaderAction(Icons.Rounded.Language, stringResource(R.string.explore_open_site), onClick = onOpenBrowser)
-                    Spacer(Modifier.width(8.dp))
-                    BadgedBox(badge = { if (active > 0) androidx.compose.material3.Badge(containerColor = Palette.Neon) { Text("$active") } }) {
-                        HeaderAction(Icons.Rounded.Downloading, stringResource(R.string.explore_downloads), onClick = onOpenDownloads)
-                    }
+                    // Os downloads têm aba própria; aqui fica o atalho para o navegador interno.
+                    HeaderIconButton(Icons.Rounded.Language, stringResource(R.string.explore_open_site), onClick = onOpenBrowser)
                 }
                 Spacer(Modifier.height(16.dp))
                 SearchField(state.query, onChange = vm::setQuery, placeholder = stringResource(R.string.explore_search_hint), onSearch = { focus.clearFocus() })
@@ -183,7 +179,7 @@ fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
             }
         }
 
-        items(state.entries, key = { it.sourceId + it.id }) { entry ->
+        items(state.entries, key = { it.sourceId + it.id }, contentType = { "entry" }) { entry ->
             val task = downloadsByEntry[entry.downloadKey]
             CatalogCard(
                 entry, task,
@@ -243,15 +239,17 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
             when (task?.status) {
                 DownloadStatus.DOWNLOADING, DownloadStatus.QUEUED, DownloadStatus.EXTRACTING -> Column(Modifier.height(44.dp), verticalArrangement = Arrangement.Center) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(if (task.status == DownloadStatus.EXTRACTING) R.string.explore_extracting else R.string.explore_downloading), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
-                        if (task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
+                        val label = when (task.status) {
+                            DownloadStatus.EXTRACTING -> R.string.explore_extracting
+                            // A fila é real: com o limite de downloads simultâneos atingido, o jogo espera a vez.
+                            DownloadStatus.QUEUED -> R.string.downloads_queued
+                            else -> R.string.explore_downloading
+                        }
+                        Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
                     }
                     Spacer(Modifier.height(6.dp))
-                    if (task.progress > 0f) {
-                        LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    } else {
-                        LinearProgressIndicator(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    }
+                    DownloadProgressBar(task)
                 }
                 DownloadStatus.FAILED -> Column {
                     // Sem o motivo, "Tentar de novo" não diz o que deu errado (sem espaço, página no lugar do arquivo…).
@@ -304,7 +302,7 @@ private fun VariantPickerSheet(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(variant.label, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(variant.region?.let { regionLabel(it) }, formatSize(variant.sizeBytes), variant.note)
+                            val meta = listOfNotNull(variant.region?.let { regionLabel(it) }, variant.sizeBytes?.takeIf { it > 0 }?.formatBytes(), variant.note)
                             if (meta.isNotEmpty()) {
                                 Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
                             }
@@ -315,19 +313,6 @@ private fun VariantPickerSheet(
                 }
             }
         }
-    }
-}
-
-private fun formatSize(bytes: Long?): String? {
-    if (bytes == null || bytes <= 0) return null
-    val mb = bytes / (1024.0 * 1024.0)
-    return if (mb >= 1) "%.1f MB".format(mb) else "%.0f KB".format(bytes / 1024.0)
-}
-
-@Composable
-private fun HeaderAction(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.background(Palette.SurfaceHigh, CircleShape).border(1.dp, Palette.Outline, CircleShape)) {
-        Icon(icon, description)
     }
 }
 

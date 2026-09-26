@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aba de downloads. -->
+<resources>
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_none_active">No active downloads</string>
+    <string name="downloads_active">%1$d in progress</string>
+    <string name="downloads_from_link">Download from my link</string>
+    <string name="downloads_empty_title">Nothing here yet</string>
+    <string name="downloads_empty_message">Games you download in Explore, in the built-in browser or from your own links show up here, with speed and time left.</string>
+    <string name="downloads_queued">Waiting in line</string>
+    <string name="downloads_downloading">Downloading…</string>
+    <string name="downloads_extracting">Extracting…</string>
+    <string name="downloads_done">Ready to play</string>
+    <string name="downloads_failed">Failed: %1$s</string>
+    <string name="downloads_canceled">Canceled</string>
+    <string name="downloads_link_message">Use a direct link to one of your own backups (personal cloud, NAS, your own server).</string>
+    <string name="downloads_link_url">File URL</string>
+    <string name="downloads_link_console">Console</string>
+    <string name="downloads_progress">%1$s of %2$s</string>
+    <string name="downloads_speed">%1$s/s</string>
+    <string name="downloads_eta">%1$s left</string>
+    <string name="downloads_duration_seconds">%1$d s</string>
+    <string name="downloads_duration_minutes">%1$d min</string>
+    <string name="downloads_duration_hours">%1$d h %2$d min</string>
+    <string name="downloads_section_active">In progress</string>
+    <string name="downloads_section_done">Finished</string>
+    <string name="downloads_section_failed">Needs attention</string>
+    <string name="downloads_cancel_all">Cancel all</string>
+    <string name="downloads_parallel">Simultaneous downloads</string>
+    <string name="downloads_parallel_hint">The rest wait in line and start on their own.</string>
+</resources>
