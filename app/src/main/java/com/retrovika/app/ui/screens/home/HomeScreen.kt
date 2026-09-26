@@ -36,7 +36,6 @@ import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.res.pluralStringResource
 import com.retrovika.app.core.catalog.DownloadManager
-import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material3.MaterialTheme
@@ -99,8 +98,8 @@ fun HomeScreen(
     val newest by library.newest.collectAsStateWithLifecycle()
     val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
-    val tasks by context.container.downloads.tasks.collectAsStateWithLifecycle()
-    val active = remember(tasks) { tasks.filter { it.status in DownloadManager.ACTIVE } }
+    // Só o contador: a lista de tarefas muda a cada aviso de progresso e recomporia a tela inteira.
+    val activeDownloads by context.container.downloads.activeCount.collectAsStateWithLifecycle()
     val bottom = LocalBottomInset.current
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("home", listState)
@@ -130,8 +129,8 @@ fun HomeScreen(
             }
         }
 
-        if (active.isNotEmpty()) {
-            item(key = "downloads") { ActiveDownloadsCard(active, onClick = onOpenDownloads) }
+        if (activeDownloads > 0) {
+            item(key = "downloads") { ActiveDownloadsCard(onClick = onOpenDownloads) }
         }
 
         val hero = recent.firstOrNull()
@@ -209,7 +208,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(key: String, @S
 
 /** Resumo dos downloads em andamento; toca para abrir a aba de downloads. */
 @Composable
-private fun ActiveDownloadsCard(active: List<DownloadTask>, onClick: () -> Unit) {
+private fun ActiveDownloadsCard(onClick: () -> Unit) {
+    // O progresso é lido aqui dentro: a cada aviso só este cartão recompõe.
+    val tasks by LocalContext.current.container.downloads.tasks.collectAsStateWithLifecycle()
+    val active = remember(tasks) { tasks.filter { it.status in DownloadManager.ACTIVE } }
+    if (active.isEmpty()) return
     val known = active.filter { it.bytesTotal > 0 }
     val progress = if (known.isEmpty()) -1f else known.sumOf { it.bytesDone }.toFloat() / known.sumOf { it.bytesTotal }
     val speed = active.sumOf { it.speed }

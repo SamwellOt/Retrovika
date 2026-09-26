@@ -73,6 +73,7 @@ import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.ui.components.ChipStrip
+import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.HeaderIconButton
 import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import com.retrovika.app.core.storage.formatBytes
@@ -91,7 +92,6 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.retrovika.app.ui.components.readableAccent
@@ -249,13 +249,7 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                         if (task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
                     }
                     Spacer(Modifier.height(6.dp))
-                    if (task.status == DownloadStatus.QUEUED) {
-                        LinearProgressIndicator(progress = { 0f }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    } else if (task.progress > 0f && task.status == DownloadStatus.DOWNLOADING) {
-                        LinearProgressIndicator(progress = { task.progress }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    } else {
-                        LinearProgressIndicator(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    }
+                    DownloadProgressBar(task)
                 }
                 DownloadStatus.FAILED -> Column {
                     // Sem o motivo, "Tentar de novo" não diz o que deu errado (sem espaço, página no lugar do arquivo…).

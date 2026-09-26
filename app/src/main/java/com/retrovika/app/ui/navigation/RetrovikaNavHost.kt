@@ -123,6 +123,8 @@ fun RetrovikaNavHost() {
     // Tocar de novo na aba aberta: a tela daquela aba rola de volta ao topo.
     val reselect = remember { MutableSharedFlow<String>(extraBufferCapacity = 1) }
     val selectTab: (String) -> Unit = { if (!nav.navigateTab(it)) reselect.tryEmit(it) }
+    // "Ver downloads" (Início, Ajustes, navegador) quer a lista, não a última tela empilhada na aba.
+    val openDownloads = { nav.openTabRoot("downloads") }
 
     // Vincular pasta: permissão persistente de leitura via Storage Access Framework.
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -193,7 +195,7 @@ fun RetrovikaNavHost() {
                         onOpenSystem = { nav.open(entry, "system/$it") },
                         onExplore = { selectTab("explore") },
                         onOpenLibrary = { selectTab("library") },
-                        onOpenDownloads = { selectTab("downloads") },
+                        onOpenDownloads = openDownloads,
                         onAddFolder = addFolder,
                     )
                 }
@@ -204,7 +206,7 @@ fun RetrovikaNavHost() {
                     ExploreScreen(onOpenBrowser = { nav.open(entry, "browser") })
                 }
                 composable("browser") { entry ->
-                    BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = { selectTab("downloads") })
+                    BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = openDownloads)
                 }
                 composable("downloads") { entry ->
                     DownloadsScreen(
@@ -218,7 +220,7 @@ fun RetrovikaNavHost() {
                         onAddFolder = addFolder,
                         onOpenCores = { nav.open(entry, "settings/cores") },
                         onOpenBios = { nav.open(entry, "settings/bios") },
-                        onOpenDownloads = { selectTab("downloads") },
+                        onOpenDownloads = openDownloads,
                     )
                 }
                 composable("settings/cores") { entry -> CoresScreen(onBack = { nav.back(entry) }) }
@@ -235,7 +237,12 @@ fun RetrovikaNavHost() {
                     GameDetailsScreen(
                         gameId = entry.arguments?.getLong("id") ?: -1,
                         onBack = { nav.back(entry) },
-                        onOpenSystem = { nav.open(entry, "system/$it") },
+                        onOpenSystem = { id ->
+                            // Veio da tela desse console: volta para ela em vez de empilhar console → jogo → console…
+                            val previous = nav.previousBackStackEntry
+                            if (previous?.destination?.route == "system/{id}" && previous.arguments?.getString("id") == id) nav.back(entry)
+                            else nav.open(entry, "system/$id")
+                        },
                     )
                 }
             }
@@ -274,6 +281,17 @@ private fun NavHostController.navigateTab(route: String): Boolean {
         restoreState = true
     }
     return true
+}
+
+/**
+ * Abre a tela raiz de uma aba. Trocar de aba restaura a pilha guardada dela; se ela terminava em outra tela
+ * (ex.: navegador aberto a partir de Downloads), essa tela é tirada para mostrar a raiz. Não serve para
+ * "home": ela fica na base da pilha de todas as abas.
+ */
+private fun NavHostController.openTabRoot(route: String) {
+    val inStack = runCatching { getBackStackEntry(route) }.isSuccess
+    if (!inStack) navigateTab(route)
+    popBackStack(route, inclusive = false)
 }
 
 /**

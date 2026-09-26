@@ -39,7 +39,6 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -67,6 +66,7 @@ import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
+import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
@@ -249,14 +249,7 @@ private fun DownloadRow(task: DownloadTask, onClick: (() -> Unit)?, actions: @Co
             )
             if (task.status in DownloadManager.ACTIVE) {
                 Spacer(Modifier.height(6.dp))
-                val bar = Modifier.fillMaxWidth().clip(RoundedCornerShape(50))
-                when {
-                    task.status == DownloadStatus.QUEUED ->
-                        LinearProgressIndicator(progress = { 0f }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    task.progress > 0f && task.status == DownloadStatus.DOWNLOADING ->
-                        LinearProgressIndicator(progress = { task.progress }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    else -> LinearProgressIndicator(modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                }
+                DownloadProgressBar(task)
             }
         }
         Spacer(Modifier.width(4.dp))
@@ -284,11 +277,13 @@ private fun statusLine(task: DownloadTask): String = when (task.status) {
     DownloadStatus.CANCELED -> stringResource(R.string.downloads_canceled)
 }
 
-/** Duração curta: "45 s", "3 min", "1 h 20 min". As unidades são as mesmas em português e inglês. */
-private fun formatDuration(seconds: Long): String = when {
-    seconds < 60 -> "$seconds s"
-    seconds < 3600 -> "${(seconds + 30) / 60} min"
-    else -> "${seconds / 3600} h ${(seconds % 3600) / 60} min"
+/** Duração curta: "45 s", "3 min", "1 h 20 min". Arredonda para o minuto antes de escolher a unidade: 59 min 50 s é "1 h 0 min". */
+@Composable
+private fun formatDuration(seconds: Long): String {
+    if (seconds < 60) return stringResource(R.string.downloads_duration_seconds, seconds.toInt())
+    val minutes = ((seconds + 30) / 60).toInt()
+    return if (minutes < 60) stringResource(R.string.downloads_duration_minutes, minutes)
+    else stringResource(R.string.downloads_duration_hours, minutes / 60, minutes % 60)
 }
 
 /** Baixa um backup do próprio usuário (ex.: link do Google Drive/Dropbox/servidor pessoal). */

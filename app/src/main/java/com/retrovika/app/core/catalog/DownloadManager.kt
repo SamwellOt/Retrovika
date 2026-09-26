@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -87,8 +86,10 @@ class DownloadManager(
 
     // Fila: no máximo AppSettings.maxDownloads baixando; os outros ficam QUEUED até abrir uma vaga.
     // Extrair também ocupa a vaga, porque disputa o mesmo disco.
+    // A vaga vai sempre para o primeiro da fila de espera, na ordem em que os downloads foram pedidos.
     private val slotLock = Any()
     private var running = 0
+    private val waiting = ArrayDeque<String>()
     private val slotFreed = MutableStateFlow(0L)
 
     fun enqueue(entry: CatalogEntry) {
@@ -146,15 +147,19 @@ class DownloadManager(
 
     private fun start(id: String) {
         val block = work[id] ?: return
+        // Entra na fila aqui, e não dentro da corrotina: a ordem de espera é a ordem dos pedidos.
+        synchronized(slotLock) { waiting.addLast(id) }
         // LAZY: o job só começa depois de registrado, senão um download muito rápido
         // removeria a entrada antes dela existir e deixaria um job morto no mapa.
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var holdsSlot = false
             try {
-                awaitSlot()
+                awaitSlot(id)
                 holdsSlot = true
                 update(id) { it.copy(status = DownloadStatus.DOWNLOADING) }
                 block(id)
+                // Concluído não se refaz: soltar o pedido libera a entrada, os cookies e os cabeçalhos guardados.
+                work.remove(id)
             } catch (t: kotlinx.coroutines.CancellationException) {
                 update(id) { it.copy(status = DownloadStatus.CANCELED, speed = 0) }
                 throw t
@@ -162,21 +167,41 @@ class DownloadManager(
                 update(id) { it.copy(status = DownloadStatus.FAILED, error = t.userMessage(context), speed = 0) }
             } finally {
                 if (holdsSlot) releaseSlot()
-                // Só a própria entrada: um "tentar de novo" logo em seguida já registrou o job novo.
-                jobs.remove(id, coroutineContext.job)
             }
         }
         jobs[id] = job
+        // Também roda quando o job é cancelado antes de começar (o corpo acima nem chega a executar).
+        job.invokeOnCompletion { cause ->
+            val wasWaiting = synchronized(slotLock) { waiting.remove(id) }
+            if (wasWaiting) {
+                if (cause is kotlinx.coroutines.CancellationException) {
+                    update(id) { if (it.status == DownloadStatus.QUEUED) it.copy(status = DownloadStatus.CANCELED) else it }
+                }
+                // Saiu da fila sem vaga: o próximo confere se agora é a vez dele.
+                slotFreed.update { it + 1 }
+            }
+            // Por último, e só a própria entrada: "tentar de novo" espera até aqui para registrar o job novo.
+            jobs.remove(id, job)
+        }
         job.start()
     }
 
-    /** Espera uma vaga na fila. Acorda quando outro download libera a sua ou quando o limite muda nos ajustes. */
-    private suspend fun awaitSlot() {
+    /**
+     * Espera a vez na fila: só o primeiro da espera pega uma vaga livre. Acorda quando um download libera a
+     * sua, quando alguém sai da fila ou quando o limite muda nos ajustes.
+     */
+    private suspend fun awaitSlot(id: String) {
         while (true) {
             val tick = slotFreed.value
             val limit = settings.value.maxDownloads
-            val acquired = synchronized(slotLock) { if (running < limit) { running++; true } else false }
-            if (acquired) return
+            val acquired = synchronized(slotLock) {
+                if (waiting.firstOrNull() == id && running < limit) { waiting.removeFirst(); running++; true } else false
+            }
+            if (acquired) {
+                // Pode sobrar vaga para o próximo da fila (limite maior que 1).
+                slotFreed.update { it + 1 }
+                return
+            }
             combine(slotFreed, settings) { t, s -> t != tick || s.maxDownloads != limit }.first { it }
         }
     }
@@ -229,7 +254,13 @@ class DownloadManager(
         if (task.status !in RETRYABLE || jobs.containsKey(id)) return
         // Um pedido do catálogo que já foi refeito por outro caminho não é baixado duas vezes.
         if (task.entryKey != null && _tasks.value.any { it.id != id && it.entryKey == task.entryKey && it.status in ACTIVE }) return
-        update(id) { it.copy(status = DownloadStatus.QUEUED, error = null, progress = 0f, bytesDone = 0, speed = 0) }
+        // Volta ao fim da fila, como um pedido novo: sem o tamanho da tentativa anterior e com a hora de agora.
+        update(id) {
+            it.copy(
+                status = DownloadStatus.QUEUED, error = null, progress = 0f, bytesDone = 0, bytesTotal = -1, speed = 0,
+                createdAt = System.currentTimeMillis(),
+            )
+        }
         start(id)
     }
 

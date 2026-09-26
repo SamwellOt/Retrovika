@@ -239,8 +239,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 if (all.isNotEmpty()) {
                     SectionHeader(stringResource(R.string.system_games), inset = 4.dp)
                     Spacer(Modifier.height(12.dp))
-                    // Só vale a pena buscar quando a lista não cabe numa olhada.
-                    if (all.size > 6) {
+                    // Só vale a pena buscar quando a lista não cabe numa olhada. Com uma busca ativa o campo fica,
+                    // mesmo que a lista encolha: senão o filtro continuaria valendo sem ter como apagá-lo.
+                    if (all.size > 6 || query.isNotEmpty()) {
                         SearchField(query, { query = it }, stringResource(R.string.system_search, system.shortName), onSearch = { focus.clearFocus() })
                         Spacer(Modifier.height(10.dp))
                     }

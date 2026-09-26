@@ -84,6 +84,9 @@ import com.retrovika.app.R
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
+import androidx.compose.material3.LinearProgressIndicator
+import com.retrovika.app.core.catalog.DownloadStatus
+import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.ui.theme.DisplayFamily
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.ui.theme.PixelFamily
@@ -594,4 +597,20 @@ fun ChipStrip(modifier: Modifier = Modifier, contentPadding: PaddingValues = Pad
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
+}
+
+/**
+ * Barra de um download: vazia enquanto espera na fila, com a fração quando o tamanho é conhecido e
+ * indeterminada no resto (extração, servidor que não informa o tamanho).
+ */
+@Composable
+fun DownloadProgressBar(task: DownloadTask, modifier: Modifier = Modifier) {
+    val bar = modifier.fillMaxWidth().clip(RoundedCornerShape(50))
+    when {
+        task.status == DownloadStatus.QUEUED ->
+            LinearProgressIndicator(progress = { 0f }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
+        task.status == DownloadStatus.DOWNLOADING && task.progress > 0f ->
+            LinearProgressIndicator(progress = { task.progress }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
+        else -> LinearProgressIndicator(modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
+    }
 }
