@@ -90,18 +90,29 @@ class CdRomanceSource : CatalogSource {
             throw e
         }
         val doc = Jsoup.parse(html, base)
-        val cards = doc.select("div.game-container")
-        val entries = cards.mapNotNull { parseCard(it) }
+        // Na página de categoria o console é o da própria categoria.
+        val listingSystem = if (q.isBlank()) systemId else null
+        val entries = parseCards(doc, listingSystem)
             .let { list -> if (systemId != null) list.filter { it.systemId == systemId } else list }
-        return CatalogPage(entries, page, totalPages(doc, page, hasCards = cards.isNotEmpty()), entries.size)
+        val hasCards = doc.select("div.game-container").isNotEmpty()
+        return CatalogPage(entries, page, totalPages(doc, page, hasCards), entries.size)
     }
 
-    private fun parseCard(card: Element): CatalogEntry? {
+    internal fun parseCards(html: String, listingSystem: String?): List<CatalogEntry> =
+        parseCards(Jsoup.parse(html, base), listingSystem)
+
+    private fun parseCards(doc: Document, listingSystem: String?): List<CatalogEntry> =
+        doc.select("div.game-container").mapNotNull { parseCard(it, listingSystem) }
+
+    private fun parseCard(card: Element, listingSystem: String?): CatalogEntry? {
         val link = card.selectFirst("a.cover-link") ?: return null
         val gameUrl = link.absUrl("href").ifBlank { link.attr("href") }.takeIf { it.isNotBlank() } ?: return null
+        // O selo de console (div.console) só aparece na busca; nas páginas de categoria os cartões
+        // não o têm. Sem ele, o console vem da seção na URL do jogo (/gba-roms/…) ou da categoria.
         val consoleEl = card.selectFirst("div.console")
         val section = consoleEl?.classNames()?.firstOrNull { it != "console" }
-        val systemId = section?.let { classify(it) } ?: return null
+        val urlSection = gameUrl.removePrefix(base).trim('/').substringBefore('/')
+        val systemId = section?.let { classify(it) } ?: classify(urlSection) ?: listingSystem ?: return null
         val img = card.selectFirst("img")
         val title = card.selectFirst("div.game-title")?.text()?.takeIf { it.isNotBlank() }
             ?: img?.attr("alt")?.takeIf { it.isNotBlank() }
@@ -123,9 +134,10 @@ class CdRomanceSource : CatalogSource {
     }
 
     /** Classifica a seção pelo mapa explícito e, se for uma seção nova, por palavras-chave no slug. */
-    private fun classify(section: String): String? {
-        systemBySection[section]?.let { return it }
-        val s = section.lowercase()
+    internal fun classify(section: String): String? {
+        // As classes do site misturam "_" e "-" (gb_roms, sega_cd_isos, gba-roms).
+        val s = section.lowercase().replace('_', '-')
+        systemBySection[s]?.let { return it }
         // Do mais específico para o mais genérico: "genesis" e "snes" contêm "nes", e
         // "gameboy-advance" contém "gameboy".
         return when {
@@ -137,7 +149,7 @@ class CdRomanceSource : CatalogSource {
             "snes" in s || "super-nintendo" in s -> "snes"
             "nds" in s || "nintendo-ds" in s -> "nds"
             "megadrive" in s || "mega-drive" in s || "genesis" in s -> "genesis"
-            "nes" in s -> "nes"
+            "nes" in s || "famicom" in s -> "nes"
             "master-system" in s || s == "sms" -> "sms"
             "sega-cd" in s || "segacd" in s || "mega-cd" in s -> "segacd"
             "32x" in s -> "32x"
@@ -149,7 +161,8 @@ class CdRomanceSource : CatalogSource {
             "wonderswan" in s -> "wswan"
             "atari-2600" in s || "atari2600" in s -> "atari2600"
             "lynx" in s -> "lynx"
-            s == "psx-iso" || s == "playstation" -> "psx"
+            // psx2psp: jogos de PS1 em EBOOT.PBP, que o núcleo de PS1 roda.
+            s == "psx-iso" || s == "playstation" || s == "psx2psp" -> "psx"
             s == "ps2-iso" -> "ps2"
             s == "psp" -> "psp"
             else -> null
