@@ -91,6 +91,10 @@ private val tabs = listOf(
 )
 private val tabRoutes = tabs.map { it.route }.toSet()
 
+private const val TAB_FADE_MS = 150
+private const val PUSH_MS = 200
+private const val EXIT_FADE_MS = 90
+
 @Composable
 fun RetrovikaNavHost() {
     val nav = rememberNavController()
@@ -124,7 +128,7 @@ fun RetrovikaNavHost() {
         containerColor = Palette.Ink,
         bottomBar = {
             AnimatedVisibility(
-                visible = tabs.any { it.route == route },
+                visible = route in tabRoutes,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
@@ -137,16 +141,17 @@ fun RetrovikaNavHost() {
           CompositionLocalProvider(LocalBottomInset provides padding.calculateBottomPadding()) {
             NavHost(
                 nav, startDestination = "home",
-                // Abas trocam com fade; telas empilhadas entram deslizando levemente da direita.
+                // Abas trocam com um fade curto; telas empilhadas entram deslizando levemente da direita.
+                // Durações enxutas: durante a transição as duas telas são desenhadas ao mesmo tempo.
                 enterTransition = {
-                    if (targetState.destination.route in tabRoutes) fadeIn(tween(220))
-                    else fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 8 }
+                    if (targetState.destination.route in tabRoutes) fadeIn(tween(TAB_FADE_MS))
+                    else fadeIn(tween(PUSH_MS)) + slideInHorizontally(tween(PUSH_MS)) { it / 10 }
                 },
-                exitTransition = { fadeOut(tween(160)) },
-                popEnterTransition = { fadeIn(tween(220)) },
+                exitTransition = { fadeOut(tween(EXIT_FADE_MS)) },
+                popEnterTransition = { fadeIn(tween(TAB_FADE_MS)) },
                 popExitTransition = {
-                    if (initialState.destination.route in tabRoutes) fadeOut(tween(160))
-                    else fadeOut(tween(180)) + slideOutHorizontally(tween(220)) { it / 8 }
+                    if (initialState.destination.route in tabRoutes) fadeOut(tween(EXIT_FADE_MS))
+                    else fadeOut(tween(EXIT_FADE_MS)) + slideOutHorizontally(tween(PUSH_MS)) { it / 10 }
                 },
             ) {
                 composable("home") {
@@ -196,10 +201,14 @@ fun RetrovikaNavHost() {
     }
 }
 
-private fun NavHostController.navigateTab(route: String) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
-    launchSingleTop = true
-    restoreState = true
+private fun NavHostController.navigateTab(route: String) {
+    // Tocar na aba já aberta não refaz a navegação nem dispara a transição.
+    if (currentDestination?.route == route) return
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
 }
 
 /** Barra de abas flutuante: cápsula translúcida; a aba ativa ganha o degradê do sol e mostra o rótulo. */

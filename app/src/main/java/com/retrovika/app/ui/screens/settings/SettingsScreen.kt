@@ -89,7 +89,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import com.retrovika.app.container
-import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.storage.sizeRecursive
@@ -113,12 +112,13 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
     val app = context.container
     val repo = app.settings
     val scope = rememberCoroutineScope()
-    val s by repo.settings.collectAsStateWithLifecycle(AppSettings())
+    val s by repo.cached.collectAsStateWithLifecycle()
     val scan by app.library.scan.collectAsStateWithLifecycle()
-    val counts by app.library.counts.collectAsStateWithLifecycle(emptyList())
+    val counts by app.library.counts.collectAsStateWithLifecycle()
     var storageVersion by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
-    val storage by produceState<StorageUsage?>(null, storageVersion) {
+    // Mostra na hora o último cálculo e atualiza em segundo plano: somar a pasta de ROMs demora.
+    val storage by produceState(lastStorage, storageVersion) {
         value = withContext(Dispatchers.IO) {
             StorageUsage(
                 games = app.paths.roms.sizeRecursive(),
@@ -126,7 +126,7 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                 system = app.paths.system.sizeRecursive() + app.paths.cores.sizeRecursive(),
                 cache = context.cacheDir.sizeRecursive(),
             )
-        }
+        }.also { lastStorage = it }
     }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
@@ -273,6 +273,9 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
         )
     }
 }
+
+/** Último uso de armazenamento calculado, guardado entre as visitas à aba. */
+private var lastStorage: StorageUsage? = null
 
 private data class StorageUsage(val games: Long, val saves: Long, val system: Long, val cache: Long) {
     val total get() = games + saves + system + cache

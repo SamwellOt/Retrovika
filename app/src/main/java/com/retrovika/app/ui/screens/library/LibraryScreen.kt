@@ -56,15 +56,15 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val focus = LocalFocusManager.current
     val library = context.container.library
     val scope = rememberCoroutineScope()
-    val counts by library.counts.collectAsStateWithLifecycle(emptyList())
+    val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var onlyWithGames by rememberSaveable { mutableStateOf(false) }
     val results by remember(query) { if (query.isBlank()) flowOf(emptyList()) else library.search(query) }
         .collectAsStateWithLifecycle(emptyList())
 
-    val countMap = counts.associate { it.systemId to it.count }
-    val systems = Systems.all.filter { !onlyWithGames || (countMap[it.id] ?: 0) > 0 }
+    val countMap = remember(counts) { counts.associate { it.systemId to it.count } }
+    val systems = remember(countMap, onlyWithGames) { Systems.all.filter { !onlyWithGames || (countMap[it.id] ?: 0) > 0 } }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),

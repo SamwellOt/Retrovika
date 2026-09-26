@@ -3,6 +3,7 @@ package com.retrovika.app.core.library
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.retrovika.app.core.settings.SettingsRepository
@@ -11,10 +12,14 @@ import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameFiles
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -30,6 +35,7 @@ class LibraryRepository(
     private val dao: GameDao,
     private val paths: StoragePaths,
     private val settings: SettingsRepository,
+    private val scope: CoroutineScope,
 ) {
     private val resolver: ContentResolver = context.contentResolver
 
@@ -37,10 +43,14 @@ class LibraryRepository(
     val scan: StateFlow<ScanState> = _scan.asStateFlow()
 
     val all = dao.observeAll()
-    val recent = dao.observeRecent()
-    val favorites = dao.observeFavorites()
-    val newest = dao.observeNewest()
-    val counts = dao.observeCounts()
+    // Listas das abas mantidas em memória: ao voltar para uma aba os dados já estão prontos,
+    // sem refazer a consulta nem desenhar a tela vazia antes do resultado chegar.
+    val recent: StateFlow<List<Game>> = dao.observeRecent().cached()
+    val favorites: StateFlow<List<Game>> = dao.observeFavorites().cached()
+    val newest: StateFlow<List<Game>> = dao.observeNewest().cached()
+    val counts: StateFlow<List<SystemCount>> = dao.observeCounts().cached()
+
+    private fun <T> Flow<List<T>>.cached() = stateIn(scope, SharingStarted.Eagerly, emptyList())
     fun bySystem(systemId: String) = dao.observeBySystem(systemId)
     fun search(query: String) = dao.search(query)
     fun observe(id: Long) = dao.observe(id)
@@ -78,8 +88,9 @@ class LibraryRepository(
     suspend fun rescan() = withContext(Dispatchers.IO) {
         if (_scan.value.running) return@withContext
         _scan.value = ScanState(running = true)
+        lastProgress = 0L
+        val found = mutableListOf<Game>()
         try {
-            val found = mutableListOf<Game>()
             scanInternal(found)
             val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
@@ -98,7 +109,7 @@ class LibraryRepository(
             }
             if (missing.isNotEmpty()) dao.deleteByUris(missing)
         } finally {
-            _scan.value = ScanState(running = false, found = _scan.value.found)
+            _scan.value = ScanState(running = false, found = found.size)
         }
     }
 
@@ -192,7 +203,14 @@ class LibraryRepository(
         }
     }
 
+    private var lastProgress = 0L
+
     private fun progress(count: Int, name: String) {
+        // No máximo ~6 atualizações por segundo: cada uma recompõe as telas que mostram o progresso,
+        // e emitir a cada arquivo travava o menu durante a varredura de coleções grandes.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastProgress < PROGRESS_INTERVAL_MS) return
+        lastProgress = now
         _scan.value = _scan.value.copy(found = count, current = name)
     }
 
@@ -268,5 +286,6 @@ class LibraryRepository(
     private companion object {
         /** Índices maiores que isso não são .cue/.m3u de verdade; não vale abri-los na varredura. */
         const val MAX_SHEET_BYTES = 256L * 1024
+        const val PROGRESS_INTERVAL_MS = 160L
     }
 }

@@ -13,9 +13,13 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 
@@ -41,7 +45,7 @@ data class AppSettings(
     val hiddenGames: Set<String> = emptySet(),
 )
 
-class SettingsRepository(private val context: Context) {
+class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     private object Keys {
         val folders = stringSetPreferencesKey("linked_folders")
@@ -79,6 +83,9 @@ class SettingsRepository(private val context: Context) {
             hiddenGames = p[Keys.hidden].orEmpty(),
         )
     }
+
+    /** Última leitura em memória, para telas que precisam desenhar sem esperar o DataStore. */
+    val cached: StateFlow<AppSettings> = settings.stateIn(scope, SharingStarted.Eagerly, AppSettings())
 
     suspend fun current(): AppSettings = settings.first()
 
