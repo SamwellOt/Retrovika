@@ -1,4 +1,5 @@
-# Publica uma release com o APK quando uma tag v* é enviada (ex.: git push origin v0.2.0).
+# Publica uma release com o APK quando uma tag v* é enviada (ex.: git push origin v0.2.0)
+# ou quando o workflow é disparado à mão com o nome da tag, que é criada no commit compilado.
 #
 # Assinatura: com os secrets RETROVIKA_KEYSTORE_BASE64, RETROVIKA_KEYSTORE_PASSWORD,
 # RETROVIKA_KEY_ALIAS e RETROVIKA_KEY_PASSWORD, o APK sai com a chave do projeto e atualiza
@@ -23,9 +24,9 @@ jobs:
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
+      # Disparado à mão, compila o commit escolhido no "Run workflow" (a main, normalmente)
+      # e a release cria a tag nele.
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -67,5 +68,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
           else
-            gh release create "$TAG" "$APK" --title "Retrovika ${TAG#v}" "${args[@]}"
+            gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "Retrovika ${TAG#v}" "${args[@]}"
           fi
