@@ -582,7 +582,7 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun releaseAllInputs(view: GLRetroView) {
-        val ports = (InputDevice.getDeviceIds().mapNotNull { id ->
+        val ports = (InputDevice.getDeviceIds().toList().mapNotNull { id ->
             InputDevice.getDevice(id)?.takeIf { isPhysicalController(it) }?.controllerNumber?.takeIf { it > 0 }?.minus(1)
         } + 0).toSet()
         ports.forEach { port ->
