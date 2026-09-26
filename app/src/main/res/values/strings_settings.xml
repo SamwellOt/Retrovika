@@ -27,7 +27,7 @@
     <string name="settings_haptics">Vibrate on touch</string>
     <string name="settings_haptics_subtitle">Haptic feedback on virtual buttons</string>
     <string name="settings_hide_pad">Hide with a physical controller</string>
-    <string name="settings_hide_pad_subtitle">Hides the buttons when a Bluetooth/USB gamepad is connected</string>
+    <string name="settings_hide_pad_subtitle">Hides the buttons once a Bluetooth/USB gamepad is used</string>
     <string name="settings_group_emulation">Emulation</string>
     <string name="settings_auto_save">Save on exit</string>
     <string name="settings_auto_save_subtitle">Creates an automatic save state when you close the game</string>

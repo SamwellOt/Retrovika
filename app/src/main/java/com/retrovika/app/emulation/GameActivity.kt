@@ -80,7 +80,12 @@ class GameActivity : ComponentActivity() {
     private var ui by mutableStateOf<EmulationUi>(EmulationUi.Preparing("", null))
     private var menuOpen by mutableStateOf(false)
     private var fastForward by mutableStateOf(false)
-    private var hasController by mutableStateOf(false)
+    /**
+     * Um controle físico está sendo usado. Só vira verdadeiro quando chega um botão ou analógico dele:
+     * vários celulares declaram sensores e leitores de digital como "gamepad", e esconder o controle
+     * virtual só por o dispositivo existir deixava o jogo sem botões na tela.
+     */
+    private var controllerActive by mutableStateOf(false)
     private var toast by mutableStateOf<String?>(null)
     private var menuSnapshot: Bitmap? = null
 
@@ -100,9 +105,10 @@ class GameActivity : ComponentActivity() {
     private var autoSaveReady = false
 
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(id: Int) { hasController = detectController() }
-        override fun onInputDeviceRemoved(id: Int) { hasController = detectController() }
-        override fun onInputDeviceChanged(id: Int) { hasController = detectController() }
+        override fun onInputDeviceAdded(id: Int) = Unit
+        // Controle desconectado: o controle virtual volta na hora.
+        override fun onInputDeviceRemoved(id: Int) { if (!detectController()) controllerActive = false }
+        override fun onInputDeviceChanged(id: Int) { if (!detectController()) controllerActive = false }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,7 +123,6 @@ class GameActivity : ComponentActivity() {
         hideSystemBars()
         emulationOwner.registry.currentState = Lifecycle.State.CREATED
 
-        hasController = detectController()
         getSystemService(InputManager::class.java).registerInputDeviceListener(inputDeviceListener, Handler(Looper.getMainLooper()))
 
         // Android 16+ (targetSdk 36) entrega o "voltar" só por callback, sem KEYCODE_BACK: sem isto,
@@ -133,7 +138,7 @@ class GameActivity : ComponentActivity() {
                     settings = settings,
                     menuOpen = menuOpen,
                     fastForward = fastForward,
-                    showPad = !(hasController && settings.hidePadWithController),
+                    showPad = !(controllerActive && settings.hidePadWithController),
                     toast = toast,
                     padListener = padListener,
                     menu = menuActions,
@@ -460,6 +465,9 @@ class GameActivity : ComponentActivity() {
             return true
         }
         if (!menuOpen && view != null && isGamepadEvent(event)) {
+            // Setas soltas não contam: gestos do leitor de digital chegam como D-pad em alguns aparelhos.
+            val fromPad = KeyEvent.isGamepadButton(event.keyCode) || event.isFromSource(InputDevice.SOURCE_GAMEPAD)
+            if (fromPad && isPhysicalController(event.device)) controllerActive = true
             return if (event.action == KeyEvent.ACTION_DOWN) view.onKeyDown(event.keyCode, event) else view.onKeyUp(event.keyCode, event)
         }
         return super.dispatchKeyEvent(event)
@@ -468,6 +476,7 @@ class GameActivity : ComponentActivity() {
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         val view = retroView
         if (!menuOpen && view != null && (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
+            if (isPhysicalController(event.device)) controllerActive = true
             return view.onGenericMotionEvent(event)
         }
         return super.dispatchGenericMotionEvent(event)
@@ -481,11 +490,11 @@ class GameActivity : ComponentActivity() {
             ((src and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD && event.device?.isVirtual == false)
     }
 
-    private fun detectController(): Boolean = InputDevice.getDeviceIds().any { id ->
-        val d = InputDevice.getDevice(id) ?: return@any false
-        !d.isVirtual && (d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+    private fun detectController(): Boolean = InputDevice.getDeviceIds().any { id -> isPhysicalController(InputDevice.getDevice(id)) }
+
+    private fun isPhysicalController(d: InputDevice?): Boolean =
+        d != null && !d.isVirtual && (d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK)
-    }
 
     // endregion
 
