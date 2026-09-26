@@ -13,6 +13,9 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
+/** Resposta HTTP fora da faixa 2xx; [code] permite tratar casos como 404 sem depender da mensagem. */
+class HttpStatusException(val code: Int, url: String) : IOException("HTTP $code: $url")
+
 object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -31,7 +34,7 @@ object Http {
     suspend fun getString(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         client.newCall(request).execute().use { res ->
-            if (!res.isSuccessful) throw IOException("HTTP ${res.code}: $url")
+            if (!res.isSuccessful) throw HttpStatusException(res.code, url)
             res.body!!.string()
         }
     }

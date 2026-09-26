@@ -51,6 +51,9 @@ data class ExploreState(
 
 const val ALL_SOURCES = "all"
 
+/** Quantas páginas vazias seguidas buscamos antes de esperar o usuário rolar de novo. */
+private const val MAX_EMPTY_PAGES = 3
+
 @OptIn(FlowPreview::class)
 class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     private val realSources: List<SourceInfo> =
@@ -121,7 +124,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun fetch(page: Int) {
+    private suspend fun fetch(page: Int, emptyStreak: Int = 0) {
         val s = _state.value
         val call = runCatching {
             if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page)
@@ -135,6 +138,12 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
                         page = result.page, totalPages = result.totalPages, totalResults = result.totalResults,
                         loading = false,
                     )
+                }
+                // Página sem nada deste filtro (ex.: busca do CDRomance só com outros consoles): a lista
+                // não cresce, a rolagem não pede mais e tudo parava. Segue para as próximas algumas vezes.
+                if (result.entries.isEmpty() && result.page < result.totalPages && emptyStreak < MAX_EMPTY_PAGES) {
+                    _state.update { it.copy(loading = true) }
+                    fetch(result.page + 1, emptyStreak + 1)
                 }
             }
             .onFailure { t ->
