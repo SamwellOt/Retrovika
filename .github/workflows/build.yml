@@ -4,7 +4,10 @@ name: Build
 on:
   pull_request:
   push:
-    branches: [main]
+    # Branches de trabalho do Claude também compilam a cada push, antes mesmo de virar PR.
+    branches: [main, 'claude/**']
+  # Disparo manual: compila qualquer branch sem precisar abrir PR.
+  workflow_dispatch:
 
 jobs:
   build:

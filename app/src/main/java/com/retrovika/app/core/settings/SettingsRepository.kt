@@ -32,6 +32,16 @@ enum class ShaderOption(@StringRes val label: Int) {
     DEFAULT(R.string.shader_default), SHARP(R.string.shader_sharp), CRT(R.string.shader_crt), LCD(R.string.shader_lcd)
 }
 
+/** Tamanho das capas nas grades de jogos: [minWidth] é a largura mínima de cada coluna, em dp. */
+enum class CoverSize(@StringRes val label: Int, val minWidth: Int) {
+    COMPACT(R.string.settings_cover_compact, 96), NORMAL(R.string.settings_cover_normal, 118), LARGE(R.string.settings_cover_large, 150)
+}
+
+/** Ordem dos jogos na tela de cada console. */
+enum class GameSort(@StringRes val label: Int) {
+    TITLE(R.string.sort_title), RECENT(R.string.sort_recent), ADDED(R.string.sort_added), PLAYTIME(R.string.sort_playtime)
+}
+
 data class AppSettings(
     val linkedFolders: Set<String> = emptySet(),
     val shader: ShaderOption = ShaderOption.DEFAULT,
@@ -46,6 +56,12 @@ data class AppSettings(
     val onboardingDone: Boolean = false,
     /** URIs de jogos removidos de pastas vinculadas: o rescan não os adiciona de novo. */
     val hiddenGames: Set<String> = emptySet(),
+    /** Quantos downloads rodam ao mesmo tempo; os demais esperam na fila. */
+    val maxDownloads: Int = 2,
+    /** Troca de telas sem animação: mais leve em aparelhos modestos. */
+    val reduceMotion: Boolean = false,
+    val coverSize: CoverSize = CoverSize.NORMAL,
+    val gameSort: GameSort = GameSort.TITLE,
 )
 
 class SettingsRepository(private val context: Context, scope: CoroutineScope) {
@@ -63,6 +79,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val hidePad = booleanPreferencesKey("hide_pad_controller")
         val onboarding = booleanPreferencesKey("onboarding_done")
         val hidden = stringSetPreferencesKey("hidden_games")
+        val maxDownloads = intPreferencesKey("max_downloads")
+        val reduceMotion = booleanPreferencesKey("reduce_motion")
+        val coverSize = stringPreferencesKey("cover_size")
+        val gameSort = stringPreferencesKey("game_sort")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
@@ -87,6 +107,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             hidePadWithController = p[Keys.hidePad] ?: false,
             onboardingDone = p[Keys.onboarding] ?: false,
             hiddenGames = p[Keys.hidden].orEmpty(),
+            maxDownloads = (p[Keys.maxDownloads] ?: 2).coerceIn(1, MAX_PARALLEL_DOWNLOADS),
+            reduceMotion = p[Keys.reduceMotion] ?: false,
+            coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
+            gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
         )
     }
 
@@ -115,11 +139,17 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setLowLatencyAudio(v: Boolean) = set(Keys.lowLatency, v)
     suspend fun setHidePadWithController(v: Boolean) = set(Keys.hidePad, v)
     suspend fun setOnboardingDone() = set(Keys.onboarding, true)
+    suspend fun setMaxDownloads(v: Int) = set(Keys.maxDownloads, v.coerceIn(1, MAX_PARALLEL_DOWNLOADS))
+    suspend fun setReduceMotion(v: Boolean) = set(Keys.reduceMotion, v)
+    suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
+    suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
 
-    /** Volta controle, vídeo e emulação aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
+    /** Volta controle, vídeo, emulação, interface e downloads aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
     suspend fun resetPreferences() = context.dataStore.edit { p ->
-        listOf(Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad)
-            .forEach { p.remove(it) }
+        listOf(
+            Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
+            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort,
+        ).forEach { p.remove(it) }
     }
 
     fun coreFor(systemId: String): Flow<String?> = data.map { it[Keys.core(systemId)] }
@@ -146,4 +176,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     }
 
     suspend fun resetCoreOptions(coreId: String) = context.dataStore.edit { it.remove(Keys.coreOptions(coreId)) }
+
+    companion object {
+        const val MAX_PARALLEL_DOWNLOADS = 4
+    }
 }

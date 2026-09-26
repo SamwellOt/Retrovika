@@ -18,24 +18,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.FileOpen
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +51,12 @@ import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.ui.components.Badge
 import com.retrovika.app.ui.components.ChipStrip
+import com.retrovika.app.ui.components.SearchField
+import com.retrovika.app.core.library.Game
+import com.retrovika.app.core.settings.GameSort
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalFocusManager
 import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
 import com.retrovika.app.ui.components.IconTile
@@ -92,7 +90,12 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val scope = rememberCoroutineScope()
     // Null até o Room responder: começar com lista vazia mostrava "nenhum jogo" durante a transição.
     val loaded by remember(systemId) { app.library.bySystem(systemId) }.collectAsStateWithLifecycle(null)
-    val games = loaded.orEmpty()
+    val settings by app.settings.cached.collectAsStateWithLifecycle()
+    var query by rememberSaveable(systemId) { mutableStateOf("") }
+    val focus = LocalFocusManager.current
+    val all = loaded.orEmpty()
+    // Busca e ordem aplicadas em memória: a lista de um console é pequena e já vem do Room.
+    val games = remember(all, query, settings.gameSort) { all.filterByTitle(query).sortedFor(settings.gameSort) }
     val selectedCore by remember(systemId) { app.settings.coreFor(systemId) }.collectAsStateWithLifecycle(null)
     val preset by remember(systemId) { app.settings.presetFor(systemId) }.collectAsStateWithLifecycle(Preset.BALANCED)
     // BIOS com hash errado também contam como ausentes; em grupos, basta uma alternativa válida.
@@ -122,7 +125,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
 
     val accent = system.accentColor()
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(118.dp),
+        columns = GridCells.Adaptive(settings.coverSize.minWidth.dp),
         modifier = Modifier.fillMaxSize().ambientGlow(primary = accent, secondary = Palette.Violet, height = 520.dp),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp + LocalBottomInset.current),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -144,7 +147,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     ScreenHeader(
                         system.name,
                         kicker = "${system.manufacturer} · ${system.year}",
-                        subtitle = if (loaded == null) null else pluralStringResource(R.plurals.games_count, games.size, games.size),
+                        subtitle = if (loaded == null) null else pluralStringResource(R.plurals.games_count, all.size, all.size),
                         onBack = onBack,
                         inset = 4.dp,
                     ) { if (system.experimental) Badge(stringResource(R.string.system_experimental), Palette.Sun) }
@@ -233,11 +236,30 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
                 )
-                if (games.isNotEmpty()) SectionHeader(stringResource(R.string.system_games), inset = 4.dp)
+                if (all.isNotEmpty()) {
+                    SectionHeader(stringResource(R.string.system_games), inset = 4.dp)
+                    Spacer(Modifier.height(12.dp))
+                    // Só vale a pena buscar quando a lista não cabe numa olhada.
+                    if (all.size > 6) {
+                        SearchField(query, { query = it }, stringResource(R.string.system_search, system.shortName), onSearch = { focus.clearFocus() })
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    ChipStrip(contentPadding = PaddingValues(0.dp)) {
+                        GameSort.entries.forEach { sort ->
+                            SelectChip(stringResource(sort.label), sort == settings.gameSort, onClick = { scope.launch { app.settings.setGameSort(sort) } })
+                        }
+                    }
+                }
             }
         }
 
-        if (loaded != null && games.isEmpty()) {
+        if (all.isNotEmpty() && games.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyState(stringResource(R.string.library_no_results_title), stringResource(R.string.system_no_match, query), icon = Icons.Rounded.SearchOff)
+            }
+        }
+
+        if (loaded != null && all.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth()) {
                     EmptyState(
@@ -248,6 +270,19 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 }
             }
         }
-        items(games, key = { it.id }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
+        items(games, key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
     }
+}
+
+private fun List<Game>.filterByTitle(query: String): List<Game> {
+    val q = query.trim()
+    return if (q.isEmpty()) this else filter { it.title.contains(q, ignoreCase = true) }
+}
+
+/** A lista chega em ordem alfabética; os outros critérios desempatam por ela (sortedBy é estável). */
+private fun List<Game>.sortedFor(sort: GameSort): List<Game> = when (sort) {
+    GameSort.TITLE -> this
+    GameSort.RECENT -> sortedByDescending { it.lastPlayed ?: 0L }
+    GameSort.ADDED -> sortedByDescending { it.addedAt }
+    GameSort.PLAYTIME -> sortedByDescending { it.playTimeSeconds }
 }

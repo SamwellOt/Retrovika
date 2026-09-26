@@ -51,12 +51,14 @@ object Http {
 
     /**
      * Baixa [url] para [target] reportando progresso de 0 a 1 (ou -1 quando o tamanho é desconhecido).
+     * [onBytes] recebe os bytes lidos e o total (-1 se desconhecido), no mesmo ritmo do progresso.
      * Escreve primeiro em um arquivo .part para nunca deixar arquivos corrompidos.
      */
     suspend fun download(
         url: String,
         target: File,
         headers: Map<String, String> = emptyMap(),
+        onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
         // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
@@ -88,11 +90,13 @@ object Http {
                             val now = System.nanoTime()
                             if (now - lastReport > PROGRESS_INTERVAL_NS) {
                                 lastReport = now
+                                onBytes(read, total)
                                 onProgress(if (total > 0) read.toFloat() / total else -1f)
                             }
                         }
                     }
                 }
+                onBytes(read, if (total > 0) total else read)
             }
         } catch (t: Throwable) {
             part.delete()

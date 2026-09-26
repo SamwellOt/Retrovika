@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aba de downloads. -->
+<resources>
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_none_active">Nenhum download ativo</string>
+    <string name="downloads_active">%1$d em andamento</string>
+    <string name="downloads_from_link">Baixar do meu link</string>
+    <string name="downloads_empty_title">Nada por aqui</string>
+    <string name="downloads_empty_message">Os jogos que você baixar no Explorar, no navegador interno ou pelos seus links aparecem aqui, com velocidade e tempo restante.</string>
+    <string name="downloads_queued">Esperando na fila</string>
+    <string name="downloads_downloading">Baixando…</string>
+    <string name="downloads_extracting">Extraindo…</string>
+    <string name="downloads_done">Pronto para jogar</string>
+    <string name="downloads_failed">Falhou: %1$s</string>
+    <string name="downloads_canceled">Cancelado</string>
+    <string name="downloads_link_message">Use um link direto para um backup seu (nuvem pessoal, NAS, servidor próprio).</string>
+    <string name="downloads_link_url">URL do arquivo</string>
+    <string name="downloads_link_console">Console</string>
+    <string name="downloads_progress">%1$s de %2$s</string>
+    <string name="downloads_speed">%1$s/s</string>
+    <string name="downloads_eta">faltam %1$s</string>
+    <string name="downloads_section_active">Em andamento</string>
+    <string name="downloads_section_done">Concluídos</string>
+    <string name="downloads_section_failed">Com problema</string>
+    <string name="downloads_cancel_all">Cancelar todos</string>
+    <string name="downloads_parallel">Downloads simultâneos</string>
+    <string name="downloads_parallel_hint">Os demais esperam na fila e começam sozinhos.</string>
+</resources>

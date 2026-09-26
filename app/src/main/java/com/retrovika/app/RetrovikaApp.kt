@@ -34,7 +34,7 @@ class AppContainer(app: Application) {
     val bios = BiosManager(paths, app.contentResolver)
     val catalog = CatalogRepository()
     val dat = DatRepository(app, database.dats())
-    val downloads = DownloadManager(app, scope, paths, library) { catalog.resolve(it) }
+    val downloads = DownloadManager(app, scope, paths, library, settings.cached) { catalog.resolve(it) }
 }
 
 class RetrovikaApp : Application(), SingletonImageLoader.Factory {

@@ -8,6 +8,18 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.runtime.remember
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import com.retrovika.app.ui.components.LocalTabReselect
+import kotlinx.coroutines.flow.MutableSharedFlow
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
@@ -88,6 +100,7 @@ private val tabs = listOf(
     Tab("home", R.string.tab_home, Icons.Rounded.Home),
     Tab("library", R.string.tab_library, Icons.Rounded.VideogameAsset),
     Tab("explore", R.string.tab_explore, Icons.Rounded.Explore),
+    Tab("downloads", R.string.tab_downloads, Icons.Rounded.Download),
     Tab("settings", R.string.tab_settings, Icons.Rounded.Settings),
 )
 private val tabRoutes = tabs.map { it.route }.toSet()
@@ -103,6 +116,13 @@ fun RetrovikaNavHost() {
     val app = context.container
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
+    // Só o que a raiz usa: observar a lista inteira de downloads recompunha o NavHost a cada aviso de progresso.
+    val reduceMotion by remember { app.settings.cached.map { it.reduceMotion }.distinctUntilChanged() }
+        .collectAsStateWithLifecycle(app.settings.cached.value.reduceMotion)
+    val activeDownloads by app.downloads.activeCount.collectAsStateWithLifecycle()
+    // Tocar de novo na aba aberta: a tela daquela aba rola de volta ao topo.
+    val reselect = remember { MutableSharedFlow<String>(extraBufferCapacity = 1) }
+    val selectTab: (String) -> Unit = { if (!nav.navigateTab(it)) reselect.tryEmit(it) }
 
     // Vincular pasta: permissão persistente de leitura via Storage Access Framework.
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -135,33 +155,45 @@ fun RetrovikaNavHost() {
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
-                FloatingTabBar(route, onSelect = { nav.navigateTab(it) })
+                FloatingTabBar(route, activeDownloads, onSelect = selectTab)
             }
         },
     ) { padding ->
         // O conteúdo rola por baixo da barra flutuante; cada tela soma LocalBottomInset ao seu padding.
         Box(Modifier.fillMaxSize()) {
-          CompositionLocalProvider(LocalBottomInset provides padding.calculateBottomPadding()) {
+          CompositionLocalProvider(
+              LocalBottomInset provides padding.calculateBottomPadding(),
+              LocalTabReselect provides reselect,
+          ) {
             NavHost(
                 nav, startDestination = "home",
                 // Abas trocam com um fade curto; telas empilhadas entram deslizando levemente da direita.
                 // Durações enxutas: durante a transição as duas telas são desenhadas ao mesmo tempo.
+                // Com "reduzir animações" a troca é imediata: só uma tela é desenhada por vez.
                 enterTransition = {
-                    if (targetState.destination.route in tabRoutes) fadeIn(tween(TAB_FADE_MS))
-                    else fadeIn(tween(PUSH_MS)) + slideInHorizontally(tween(PUSH_MS)) { it / 10 }
+                    when {
+                        reduceMotion -> EnterTransition.None
+                        targetState.destination.route in tabRoutes -> fadeIn(tween(TAB_FADE_MS))
+                        else -> fadeIn(tween(PUSH_MS)) + slideInHorizontally(tween(PUSH_MS)) { it / 10 }
+                    }
                 },
-                exitTransition = { fadeOut(tween(EXIT_FADE_MS)) },
-                popEnterTransition = { fadeIn(tween(TAB_FADE_MS)) },
+                exitTransition = { if (reduceMotion) ExitTransition.None else fadeOut(tween(EXIT_FADE_MS)) },
+                popEnterTransition = { if (reduceMotion) EnterTransition.None else fadeIn(tween(TAB_FADE_MS)) },
                 popExitTransition = {
-                    if (initialState.destination.route in tabRoutes) fadeOut(tween(EXIT_FADE_MS))
-                    else fadeOut(tween(EXIT_FADE_MS)) + slideOutHorizontally(tween(PUSH_MS)) { it / 10 }
+                    when {
+                        reduceMotion -> ExitTransition.None
+                        initialState.destination.route in tabRoutes -> fadeOut(tween(EXIT_FADE_MS))
+                        else -> fadeOut(tween(EXIT_FADE_MS)) + slideOutHorizontally(tween(PUSH_MS)) { it / 10 }
+                    }
                 },
             ) {
                 composable("home") { entry ->
                     HomeScreen(
                         onOpenGame = { nav.open(entry, "game/$it") },
                         onOpenSystem = { nav.open(entry, "system/$it") },
-                        onExplore = { nav.navigateTab("explore") },
+                        onExplore = { selectTab("explore") },
+                        onOpenLibrary = { selectTab("library") },
+                        onOpenDownloads = { selectTab("downloads") },
                         onAddFolder = addFolder,
                     )
                 }
@@ -169,19 +201,26 @@ fun RetrovikaNavHost() {
                     LibraryScreen(onOpenSystem = { nav.open(entry, "system/$it") }, onOpenGame = { nav.open(entry, "game/$it") })
                 }
                 composable("explore") { entry ->
-                    ExploreScreen(onOpenDownloads = { nav.open(entry, "downloads") }, onOpenBrowser = { nav.open(entry, "browser") })
+                    ExploreScreen(onOpenBrowser = { nav.open(entry, "browser") })
                 }
                 composable("browser") { entry ->
-                    BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = { nav.open(entry, "downloads") })
+                    BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = { selectTab("downloads") })
+                }
+                composable("downloads") { entry ->
+                    DownloadsScreen(
+                        onOpenGame = { nav.open(entry, "game/$it") },
+                        onExplore = { selectTab("explore") },
+                        onOpenBrowser = { nav.open(entry, "browser") },
+                    )
                 }
                 composable("settings") { entry ->
                     SettingsScreen(
                         onAddFolder = addFolder,
                         onOpenCores = { nav.open(entry, "settings/cores") },
                         onOpenBios = { nav.open(entry, "settings/bios") },
+                        onOpenDownloads = { selectTab("downloads") },
                     )
                 }
-                composable("downloads") { entry -> DownloadsScreen(onBack = { nav.back(entry) }) }
                 composable("settings/cores") { entry -> CoresScreen(onBack = { nav.back(entry) }) }
                 composable("settings/bios") { entry -> BiosScreen(onBack = { nav.back(entry) }) }
                 composable("system/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
@@ -193,7 +232,11 @@ fun RetrovikaNavHost() {
                     )
                 }
                 composable("game/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                    GameDetailsScreen(gameId = entry.arguments?.getLong("id") ?: -1, onBack = { nav.back(entry) })
+                    GameDetailsScreen(
+                        gameId = entry.arguments?.getLong("id") ?: -1,
+                        onBack = { nav.back(entry) },
+                        onOpenSystem = { nav.open(entry, "system/$it") },
+                    )
                 }
             }
           }
@@ -221,26 +264,31 @@ private fun NavHostController.back(from: NavBackStackEntry) {
     popBackStack()
 }
 
-private fun NavHostController.navigateTab(route: String) {
+/** Troca de aba guardando a pilha de cada uma. Devolve falso quando a aba já estava aberta (nada a fazer). */
+private fun NavHostController.navigateTab(route: String): Boolean {
     // Tocar na aba já aberta não refaz a navegação nem dispara a transição.
-    if (currentDestination?.route == route) return
+    if (currentDestination?.route == route) return false
     navigate(route) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
     }
+    return true
 }
 
-/** Barra de abas flutuante: cápsula translúcida; a aba ativa ganha o degradê do sol e mostra o rótulo. */
+/**
+ * Barra de abas flutuante: cápsula translúcida; a aba ativa ganha o degradê do sol e mostra o rótulo.
+ * A aba de downloads mostra quantos estão em andamento.
+ */
 @Composable
-private fun FloatingTabBar(route: String?, onSelect: (String) -> Unit) {
+private fun FloatingTabBar(route: String?, activeDownloads: Int, onSelect: (String) -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .background(Brush.verticalGradient(0f to Color.Transparent, 0.25f to Palette.Ink.copy(alpha = 0.94f), 0.55f to Palette.Ink))
             .navigationBarsPadding()
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)
             .shadow(24.dp, shape, ambientColor = Palette.Neon, spotColor = Palette.Neon)
             .clip(shape)
             .background(Palette.SurfaceHigh)
@@ -253,19 +301,26 @@ private fun FloatingTabBar(route: String?, onSelect: (String) -> Unit) {
             val selected = route == tab.route
             val label = stringResource(tab.label)
             val tint by animateColorAsState(if (selected) Color(0xFF1C0010) else Palette.TextSecondary, label = "tab")
+            val badge = if (tab.route == "downloads") activeDownloads else 0
             Row(
                 Modifier
+                    // Só a aba ativa cresce, e só até o espaço que sobra: em telas estreitas o rótulo encurta em vez de empurrar as outras.
+                    .then(if (selected) Modifier.weight(1f, fill = false) else Modifier)
                     .clip(RoundedCornerShape(22.dp))
                     .then(if (selected) Modifier.background(Palette.SunsetHorizontal) else Modifier)
-                    .clickable { onSelect(tab.route) }
+                    .clickable(onClickLabel = label) { onSelect(tab.route) }
                     .animateContentSize(spring(stiffness = 500f))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(tab.icon, label, tint = tint, modifier = Modifier.size(22.dp))
+                BadgedBox(badge = {
+                    if (badge > 0) Badge(containerColor = Palette.Cyan, contentColor = Palette.Ink) { Text("$badge") }
+                }) {
+                    Icon(tab.icon, label, tint = tint, modifier = Modifier.size(22.dp))
+                }
                 if (selected) {
                     Spacer(Modifier.width(6.dp))
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1)
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

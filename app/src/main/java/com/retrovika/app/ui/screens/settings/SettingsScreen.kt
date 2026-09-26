@@ -37,6 +37,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AutoMode
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.rounded.Animation
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Downloading
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.retrovika.app.core.catalog.DownloadManager
+import com.retrovika.app.core.settings.CoverSize
+import com.retrovika.app.core.settings.GameSort
+import com.retrovika.app.core.settings.SettingsRepository
+import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -108,7 +119,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios: () -> Unit) {
+fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios: () -> Unit, onOpenDownloads: () -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val repo = app.settings
@@ -133,8 +144,13 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     }
 
+    val listState = rememberLazyListState()
+    ScrollToTopOnReselect("settings", listState)
+    val activeDownloads by app.downloads.activeCount.collectAsStateWithLifecycle()
+
     LazyColumn(
         Modifier.fillMaxSize().ambientGlow(secondary = Palette.Cyan),
+        state = listState,
         contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp),
     ) {
         item { ScreenHeader(stringResource(R.string.settings_title), subtitle = stringResource(R.string.settings_subtitle)) }
@@ -223,6 +239,24 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
         }
 
+        group(R.string.settings_group_interface) {
+            SwitchRow(Icons.Rounded.Animation, Palette.Violet, stringResource(R.string.settings_reduce_motion), stringResource(R.string.settings_reduce_motion_subtitle), s.reduceMotion) { scope.launch { repo.setReduceMotion(it) } }
+            RowDivider()
+            ChipRow(Icons.Rounded.GridView, Palette.Cyan, stringResource(R.string.settings_cover_size), CoverSize.entries, s.coverSize, { stringResource(it.label) }) { scope.launch { repo.setCoverSize(it) } }
+            RowDivider()
+            ChipRow(Icons.AutoMirrored.Rounded.Sort, Palette.Sun, stringResource(R.string.settings_game_sort), GameSort.entries, s.gameSort, { stringResource(it.label) }) { scope.launch { repo.setGameSort(it) } }
+        }
+
+        group(R.string.settings_group_downloads) {
+            NavRow(
+                Icons.Rounded.Downloading, Palette.Cyan, stringResource(R.string.settings_open_downloads),
+                if (activeDownloads > 0) stringResource(R.string.downloads_active, activeDownloads) else stringResource(R.string.settings_open_downloads_subtitle),
+                onClick = onOpenDownloads,
+            )
+            RowDivider()
+            ChipRow(Icons.Rounded.Download, Palette.Neon, stringResource(R.string.downloads_parallel), (1..SettingsRepository.MAX_PARALLEL_DOWNLOADS).toList(), s.maxDownloads, { "$it" }) { scope.launch { repo.setMaxDownloads(it) } }
+        }
+
         group(R.string.settings_group_storage) {
             StorageBar(storage)
             Text(
@@ -243,7 +277,7 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                     withContext(Dispatchers.IO) {
                         loader.diskCache?.clear()
                         // Só arquivos temporários de downloads que não estão em andamento.
-                        if (app.downloads.tasks.value.none { it.status in com.retrovika.app.core.catalog.DownloadManager.ACTIVE }) {
+                        if (app.downloads.tasks.value.none { it.status in DownloadManager.ACTIVE }) {
                             app.paths.downloadsTmp.listFiles()?.forEach { it.deleteRecursively() }
                         }
                     }

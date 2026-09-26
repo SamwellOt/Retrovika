@@ -41,8 +41,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,6 +103,22 @@ fun GameSystem.readableAccent(): Color {
 
 /** Altura da barra de abas flutuante: as telas de aba somam isso ao padding inferior da lista. */
 val LocalBottomInset = compositionLocalOf { 0.dp }
+
+/** Rota da aba tocada de novo quando já estava aberta: a tela daquela aba volta ao topo. */
+val LocalTabReselect = staticCompositionLocalOf<SharedFlow<String>> { MutableSharedFlow() }
+
+/** Tocar de novo na aba [route] rola a lista de volta ao início. */
+@Composable
+fun ScrollToTopOnReselect(route: String, state: LazyListState) {
+    val events = LocalTabReselect.current
+    LaunchedEffect(events, state) { events.collect { if (it == route) state.animateScrollToItem(0) } }
+}
+
+@Composable
+fun ScrollToTopOnReselect(route: String, state: LazyGridState) {
+    val events = LocalTabReselect.current
+    LaunchedEffect(events, state) { events.collect { if (it == route) state.animateScrollToItem(0) } }
+}
 
 // ---------------------------------------------------------------- marca
 
@@ -152,14 +176,12 @@ fun ScreenHeader(
 ) {
     Column(modifier.fillMaxWidth().statusBarsPadding().padding(top = if (onBack != null) 4.dp else 16.dp)) {
         if (onBack != null) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.padding(start = (inset - 12.dp).coerceAtLeast(0.dp), bottom = 4.dp).background(Palette.SurfaceHigh.copy(alpha = 0.8f), CircleShape),
-            ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back))
-            }
+            HeaderIconButton(
+                Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onBack,
+                Modifier.padding(start = (inset - 12.dp).coerceAtLeast(0.dp), bottom = 4.dp),
+            )
         }
-        Row(Modifier.padding(horizontal = inset), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = inset), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 kicker?.let { Kicker(it); Spacer(Modifier.height(8.dp)) }
                 Text(title, style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -271,6 +293,36 @@ fun GhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
     ) {
         icon?.let { Icon(it, null, tint = tint, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
         Text(text, style = MaterialTheme.typography.labelLarge, color = tint)
+    }
+}
+
+/**
+ * Botão redondo dos cabeçalhos (voltar, atualizar, navegador…): o mesmo visual em todas as telas.
+ * [badge] maior que zero mostra um contador no canto; [busy] troca o ícone por um indicador de progresso.
+ */
+@Composable
+fun HeaderIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = Palette.TextPrimary,
+    badge: Int = 0,
+    busy: Boolean = false,
+    enabled: Boolean = true,
+) {
+    BadgedBox(
+        badge = { if (badge > 0) androidx.compose.material3.Badge(containerColor = Palette.Neon, contentColor = Color(0xFF1C0010)) { Text("$badge") } },
+        modifier = modifier,
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled && !busy,
+            modifier = Modifier.background(Palette.SurfaceHigh.copy(alpha = 0.85f), CircleShape).border(1.dp, Palette.Outline, CircleShape),
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Cyan)
+            else Icon(icon, description, tint = tint)
+        }
     }
 }
 

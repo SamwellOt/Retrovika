@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Início, Biblioteca, Console, Detalhes e Downloads. -->
+<!-- Início, Biblioteca, Console e Detalhes. -->
 <resources>
     <!-- Início -->
     <string name="home_greeting_morning">Good morning,</string>
@@ -12,6 +12,10 @@
     <string name="home_stat_consoles">consoles</string>
     <string name="home_stat_favorites">favorites</string>
     <string name="home_your_consoles">Your consoles</string>
+    <plurals name="home_downloading">
+        <item quantity="one">Downloading %d game</item>
+        <item quantity="other">Downloading %d games</item>
+    </plurals>
     <string name="home_shelf_recent">Recently played</string>
     <string name="home_shelf_favorites">Favorites</string>
     <string name="home_shelf_newest">Recently added</string>
@@ -51,6 +55,9 @@
     <string name="system_preset">Performance profile</string>
     <string name="system_formats">Formats: %1$s</string>
     <string name="system_games">Games</string>
+    <string name="details_open_system">More %1$s games ›</string>
+    <string name="system_search">Search %1$s games</string>
+    <string name="system_no_match">No game matches \"%1$s\".</string>
     <string name="system_empty_title">No %1$s games</string>
     <string name="system_empty_message">Import your own backups, or link a folder with a \"%1$s\" subfolder in Settings.</string>
 
@@ -78,22 +85,4 @@
     <string name="details_remove_title">Remove %1$s?</string>
     <string name="details_remove_linked">The game leaves the library, but the file stays in your folder. To show it again, use Settings › Removed games.</string>
     <string name="details_remove_file">The file will be deleted from Retrovika\'s storage. Saves and states are kept.</string>
-
-    <!-- Downloads -->
-    <string name="downloads_title">Downloads</string>
-    <string name="downloads_none_active">No active downloads</string>
-    <string name="downloads_active">%1$d in progress</string>
-    <string name="downloads_from_link">Download from my link</string>
-    <string name="downloads_empty_title">Nothing here yet</string>
-    <string name="downloads_empty_message">Games you download in Explore show up in this list.</string>
-    <string name="downloads_queued">Queued</string>
-    <string name="downloads_downloading">Downloading…</string>
-    <string name="downloads_downloading_percent">Downloading %1$d%%</string>
-    <string name="downloads_extracting">Extracting…</string>
-    <string name="downloads_done">Ready to play</string>
-    <string name="downloads_failed">Failed: %1$s</string>
-    <string name="downloads_canceled">Canceled</string>
-    <string name="downloads_link_message">Use a direct link to one of your own backups (personal cloud, NAS, your own server).</string>
-    <string name="downloads_link_url">File URL</string>
-    <string name="downloads_link_console">Console</string>
 </resources>

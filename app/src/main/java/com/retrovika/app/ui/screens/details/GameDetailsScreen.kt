@@ -29,13 +29,9 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,6 +57,9 @@ import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.ui.components.ChipStrip
+import com.retrovika.app.ui.components.HeaderIconButton
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
@@ -70,9 +69,7 @@ import com.retrovika.app.ui.components.SelectChip
 import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.ambientGlow
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Folder
@@ -92,7 +89,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
+fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val scope = rememberCoroutineScope()
@@ -114,13 +111,14 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
 
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RoundAction(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onClick = onBack)
+                HeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onBack)
                 Spacer(Modifier.weight(1f))
-                RoundAction(
+                HeaderIconButton(
                     if (g.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, stringResource(R.string.common_favorite),
-                    tint = if (g.favorite) Palette.Neon else Color.White,
-                ) { scope.launch { app.library.toggleFavorite(g.id) } }
-                RoundAction(Icons.Rounded.Delete, stringResource(R.string.common_remove)) { confirmDelete = true }
+                    onClick = { scope.launch { app.library.toggleFavorite(g.id) } },
+                    tint = if (g.favorite) Palette.Neon else Palette.TextPrimary,
+                )
+                HeaderIconButton(Icons.Rounded.Delete, stringResource(R.string.common_remove), { confirmDelete = true })
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
@@ -136,6 +134,14 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
                     Text(g.title, style = MaterialTheme.typography.headlineSmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(4.dp))
                     Text(g.developer ?: system?.name.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+                    system?.let {
+                        // Atalho para a coleção do console, sem voltar pela pilha.
+                        Text(
+                            stringResource(R.string.details_open_system, it.shortName),
+                            style = MaterialTheme.typography.labelLarge, color = it.readableAccent(),
+                            modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).clickable { onOpenSystem(it.id) }.padding(vertical = 4.dp),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(22.dp))
@@ -289,15 +295,6 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
             containerColor = Palette.SurfaceHigh,
         )
     }
-}
-
-/** Botão redondo translúcido usado sobre o fundo desfocado. */
-@Composable
-private fun RoundAction(icon: ImageVector, description: String, tint: Color = Color.White, onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.background(Palette.Ink.copy(alpha = 0.45f), CircleShape).border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape),
-    ) { Icon(icon, description, tint = tint) }
 }
 
 /** Avisa quando o núcleo que vai rodar o jogo ainda não está instalado, com opção de instalar já. */
