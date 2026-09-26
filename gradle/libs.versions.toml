@@ -1,0 +1,60 @@
+[versions]
+agp = "8.13.2"
+kotlin = "2.2.21"
+ksp = "2.3.0"
+composeBom = "2025.10.00"
+coreKtx = "1.17.0"
+activityCompose = "1.11.0"
+lifecycle = "2.9.4"
+navigation = "2.9.5"
+room = "2.8.3"
+work = "2.10.5"
+datastore = "1.1.7"
+coil = "3.3.0"
+okhttp = "4.12.0"
+serialization = "1.9.0"
+coroutines = "1.10.2"
+documentfile = "1.1.0"
+libretrodroid = "0.13.2"
+jsoup = "1.18.3"
+commonsCompress = "1.27.1"
+xz = "1.10"
+junit = "4.13.2"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidx-splashscreen = { module = "androidx.core:core-splashscreen", version = "1.0.1" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-icons = { module = "androidx.compose.material:material-icons-extended" }
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+datastore = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+coil-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+kotlinx-serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+libretrodroid = { module = "com.github.Swordfish90:LibretroDroid", version.ref = "libretrodroid" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
+xz = { module = "org.tukaani:xz", version.ref = "xz" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Descrições dos núcleos e BIOS do catálogo (Systems.kt). -->
+<resources>
+    <string name="bios_5200_rom" translatable="false">BIOS Atari 5200</string>
+    <string name="bios_ataribas_rom">Atari BASIC (optional)</string>
+    <string name="bios_atariosb_rom">Atari 400/800 OS-B BIOS (optional)</string>
+    <string name="bios_atarixl_rom">Atari XL/XE BIOS (optional)</string>
+    <string name="bios_bios7_bin">ARM7 BIOS (optional with FreeBIOS)</string>
+    <string name="bios_bios9_bin">ARM9 BIOS (optional with FreeBIOS)</string>
+    <string name="bios_bios_cd_e_bin">Mega CD BIOS (Europe)</string>
+    <string name="bios_bios_cd_j_bin">Mega CD BIOS (Japan)</string>
+    <string name="bios_bios_cd_u_bin">Sega CD BIOS (USA)</string>
+    <string name="bios_colecovision_rom" translatable="false">BIOS ColecoVision</string>
+    <string name="bios_dc_dc_boot_bin">Dreamcast BIOS (optional with HLE)</string>
+    <string name="bios_dc_dc_flash_bin">Dreamcast flash</string>
+    <string name="bios_disksys_rom" translatable="false">Famicom Disk System</string>
+    <string name="bios_exec_bin" translatable="false">Executive ROM</string>
+    <string name="bios_firmware_bin">Firmware (optional)</string>
+    <string name="bios_gba_bios_bin">GBA BIOS (optional, improves compatibility)</string>
+    <string name="bios_goldstar_bin" translatable="false">BIOS GoldStar</string>
+    <string name="bios_grom_bin" translatable="false">Graphics ROM</string>
+    <string name="bios_kick34005_a500">Kickstart 1.3 (A500) — improves compatibility</string>
+    <string name="bios_kick40068_a1200">Kickstart 3.1 (A1200) — for WHDLoad/AGA</string>
+    <string name="bios_lynxboot_img">Lynx boot ROM</string>
+    <string name="bios_mpr_17933_bin">Saturn BIOS USA/Europe (Beetle)</string>
+    <string name="bios_msx2_rom">MSX2 BIOS (fMSX only)</string>
+    <string name="bios_msx2ext_rom">MSX2 extension (fMSX only)</string>
+    <string name="bios_msx_rom">MSX BIOS (fMSX only)</string>
+    <string name="bios_neocd_000_lo_lo">Zoom table (required)</string>
+    <string name="bios_neocd_neocd_f_rom" translatable="false">BIOS Front Loader</string>
+    <string name="bios_neocd_neocd_sf_rom" translatable="false">BIOS Front Loader (SMKDAN)</string>
+    <string name="bios_neocd_neocd_st_rom" translatable="false">BIOS Top Loader (SMKDAN)</string>
+    <string name="bios_neocd_neocd_sz_rom" translatable="false">BIOS CDZ (SMKDAN)</string>
+    <string name="bios_neocd_neocd_t_rom" translatable="false">BIOS Top Loader</string>
+    <string name="bios_neocd_neocd_z_rom" translatable="false">BIOS CDZ</string>
+    <string name="bios_neocd_uni_bioscd_rom" translatable="false">UniBIOS CD</string>
+    <string name="bios_neogeo_zip">Neo Geo BIOS (place it in the ROMs or system folder)</string>
+    <string name="bios_o2rom_bin" translatable="false">BIOS Odyssey²</string>
+    <string name="bios_panafz10_bin">Panasonic FZ-10 BIOS (recommended)</string>
+    <string name="bios_panafz1_bin" translatable="false">BIOS Panasonic FZ-1</string>
+    <string name="bios_pcfx_rom" translatable="false">BIOS PC-FX</string>
+    <string name="bios_pcsx2_bios_scph39001_bin">PS2 BIOS (required for LRPS2)</string>
+    <string name="bios_saturn_bios_bin">Saturn BIOS (optional on YabaSanshiro)</string>
+    <string name="bios_scph5500_bin">PS1 BIOS (Japan)</string>
+    <string name="bios_scph5501_bin">PS1 BIOS (USA) — recommended</string>
+    <string name="bios_scph5502_bin">PS1 BIOS (Europe)</string>
+    <string name="bios_sega_101_bin">Saturn BIOS Japan (Beetle)</string>
+    <string name="bios_sl31253_bin">Channel F BIOS (part 1)</string>
+    <string name="bios_sl31254_bin">Channel F BIOS (part 2)</string>
+    <string name="bios_sl90025_bin">Channel F II BIOS (optional)</string>
+    <string name="bios_syscard3_pce">System Card 3 (required for CD games)</string>
+    <string name="core_a5200">Dedicated 5200 core.</string>
+    <string name="core_ardens">Newer and faster.</string>
+    <string name="core_arduous">Arduboy emulator.</string>
+    <string name="core_atari800_a5200">Alternative that also covers the 8-bit family.</string>
+    <string name="core_atari800_a800">Atari 8-bit computers; START/SELECT/OPTION on the pad.</string>
+    <string name="core_bluemsx">Uses the free C-BIOS; nothing to import.</string>
+    <string name="core_bsnes">Cycle-accurate; needs a powerful device.</string>
+    <string name="core_cap32">The reference CPC emulator.</string>
+    <string name="core_citra">Experimental on Android via libretro.</string>
+    <string name="core_crocods">Lightweight alternative.</string>
+    <string name="core_desmume">Lighter on some devices.</string>
+    <string name="core_dolphin_gc">Needs a flagship device.</string>
+    <string name="core_dolphin_wii">Needs a flagship device; the Wii Remote is emulated on the RetroPad.</string>
+    <string name="core_dosbox_pure">Runs games straight from the .zip; on-screen keyboard and mouse.</string>
+    <string name="core_fbneo">CPS1/2/3, Neo Geo, Cave and much more.</string>
+    <string name="core_fceumm">Fast and compatible, great on any device.</string>
+    <string name="core_flycast">High-resolution Dreamcast/NAOMI emulation.</string>
+    <string name="core_fmsx">Lighter; needs the original BIOS files.</string>
+    <string name="core_freechaf">Channel F emulator.</string>
+    <string name="core_freeintv">SELECT shows the controller keypad.</string>
+    <string name="core_fuse">Full Spectrum emulator with a virtual keyboard.</string>
+    <string name="core_gambatte">Accurate and lightweight.</string>
+    <string name="core_gearcoleco">Accurate ColecoVision emulator.</string>
+    <string name="core_geargrafx">Accurate alternative.</string>
+    <string name="core_gearsystem">Accurate alternative.</string>
+    <string name="core_genesis_plus_gx_genesis">Excellent accuracy; supports Mega CD and Master System.</string>
+    <string name="core_genesis_plus_gx_gg">Accurate and lightweight.</string>
+    <string name="core_genesis_plus_gx_segacd">Full Mega CD support.</string>
+    <string name="core_genesis_plus_gx_sg1000">Accurate and lightweight.</string>
+    <string name="core_genesis_plus_gx_sms">Accurate and lightweight.</string>
+    <string name="core_gpsp">Extremely fast on low-end devices.</string>
+    <string name="core_gw">Simulator for Nintendo\'s LCD handhelds (.mgw files).</string>
+    <string name="core_handy">The classic Lynx emulator.</string>
+    <string name="core_mame2003_plus">Huge library of classic arcade games.</string>
+    <string name="core_mednafen_ngp">Accurate and lightweight.</string>
+    <string name="core_mednafen_pce_fast">Fast; supports CD-ROM².</string>
+    <string name="core_mednafen_pcfx">The reference PC-FX core.</string>
+    <string name="core_mednafen_saturn">Maximum accuracy; very heavy.</string>
+    <string name="core_mednafen_vb">Complete emulation with anaglyph mode.</string>
+    <string name="core_mednafen_wswan">Supports vertical mode.</string>
+    <string name="core_melondsds">Recommended: accuracy and modern features.</string>
+    <string name="core_mesen">The most accurate; needs a mid-range device.</string>
+    <string name="core_mgba_gb">Solid alternative.</string>
+    <string name="core_mgba_gba">Best balance between accuracy and speed.</string>
+    <string name="core_mupen64plus_next_gles3">GLideN64 with high compatibility.</string>
+    <string name="core_neocd">Dedicated Neo Geo CD emulator with faster loading.</string>
+    <string name="core_nestopia">High accuracy, excellent mapper support.</string>
+    <string name="core_o2em">Odyssey² and Videopac emulator.</string>
+    <string name="core_opera">3DO emulator derived from 4DO.</string>
+    <string name="core_panda3ds">New emulator under development.</string>
+    <string name="core_parallel_n64">Alternative for problematic games.</string>
+    <string name="core_pcsx2">High compatibility; needs a flagship chip.</string>
+    <string name="core_pcsx_rearmed">Fast ARM dynarec with a built-in HLE BIOS.</string>
+    <string name="core_picodrive_32x">The only core that supports the 32X.</string>
+    <string name="core_picodrive_genesis">Very light; also runs 32X.</string>
+    <string name="core_play">PS2 emulator with OpenGL ES rendering.</string>
+    <string name="core_pokemini">Pokémon Mini emulator.</string>
+    <string name="core_potator">Supervision emulator.</string>
+    <string name="core_ppsspp">Full-featured PSP emulator.</string>
+    <string name="core_prosystem">The reference 7800 core.</string>
+    <string name="core_puae">Uses the free AROS Kickstart if the original is missing.</string>
+    <string name="core_retro8">Free PICO-8 reimplementation (.p8 and .p8.png carts).</string>
+    <string name="core_sameboy">Maximum accuracy.</string>
+    <string name="core_sameduck">SameBoy variant for the Mega Duck.</string>
+    <string name="core_snes9x">The benchmark for compatibility and performance.</string>
+    <string name="core_snes9x2010">For modest devices.</string>
+    <string name="core_stella">Current version, more accurate.</string>
+    <string name="core_stella2014">Lightweight and compatible.</string>
+    <string name="core_swanstation">HD rendering and texture correction.</string>
+    <string name="core_tic80">Open-source fantasy console.</string>
+    <string name="core_vba_next">Classic alternative.</string>
+    <string name="core_vecx">Vector graphics; BIOS built in.</string>
+    <string name="core_vice_x64">Fast; virtual keyboard included.</string>
+    <string name="core_vice_x64sc">Cycle-accurate; heavier.</string>
+    <string name="core_virtualjaguar">Heavy: needs a powerful device.</string>
+    <string name="core_yabasanshiro">OpenGL ES rendering and HLE BIOS.</string>
+</resources>

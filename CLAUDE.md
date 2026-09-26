@@ -1,0 +1,94 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+Retrovika is an all-in-one Android emulation frontend. It is written in Kotlin with Jetpack Compose and has one Gradle module (`:app`). The emulation engine is [LibretroDroid](https://github.com/Swordfish90/LibretroDroid) (JitPack), which loads libretro cores (`.so`). Code comments are in Brazilian Portuguese; keep new ones in Portuguese. The UI is bilingual (English and Portuguese): see **Languages** below.
+
+Keep ROM files and any direct download links out of version control (see `roms/` and `.gitignore`); the catalog metadata is fine to commit.
+
+## Commands
+
+The Android SDK path is in `local.properties` (`sdk.dir`). Export `ANDROID_HOME` to the same path. JDK 17+ is required.
+
+```bash
+./gradlew assembleDebug                         # debug APK -> app/build/outputs/apk/debug/
+./gradlew assembleRelease                       # R8-minified release (own key via keystore.properties, else debug key)
+./gradlew assembleRelease -PbundleCores=all     # embed every core listed in Systems.kt into jniLibs
+./gradlew assembleRelease -PbundleCores=snes9x,mgba -PbundleAbis=arm64-v8a,x86_64
+./gradlew compileDebugKotlin                    # fast compile check
+./gradlew testDebugUnitTest                     # JVM unit tests (app/src/test), no device needed
+```
+
+Unit tests cover the pure logic: `DatParser`, `RomNaming`, `GameFiles.referencedPaths`, `BiosManager.unsatisfied`, `FileNames` and the consistency of the `Systems` catalog. `unitTests.isReturnDefaultValues` is on, so code that touches `android.*` returns defaults instead of throwing. There are no instrumented tests and no lint config. Verify UI and emulation changes on a device:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.retrovika.app/.MainActivity
+adb shell am start -n com.retrovika.app/.emulation.GameActivity --el game_id <id>   # works from a root adb shell
+adb exec-out screencap -p > shot.png
+```
+
+App data lives in `/sdcard/Android/data/com.retrovika.app/files/Retrovika/`, with subfolders `roms/<systemId>/`, `saves/`, `states/` and `system/`. Cores live in internal `filesDir/cores/`. The DB is `/data/data/com.retrovika.app/databases/retrovika.db`.
+
+## Architecture
+
+**Dependency wiring.** `RetrovikaApp` builds one `AppContainer` holding the repositories and managers. It uses no DI framework. Composables reach it with `LocalContext.current.container` (an extension on `Context`). ViewModels are created with `viewModel { XViewModel(context.container) }`.
+
+**Systems catalog.** `core/systems/Systems.kt` is the single source of truth for consoles. Each `GameSystem` declares:
+- file extensions
+- an ordered core list (the first entry is the default)
+- per-core option `defaults` and `presets`
+- BIOS files with MD5 hashes
+- orientation
+- a `PadLayout` from `emulation/input/PadLayout.kt`
+- `libretroDbName`, used for thumbnail URLs
+
+- `keepArchives` for systems whose core runs the `.zip` itself (arcade, DOS), so downloads are not extracted
+- `folderOnlyExtensions` for extensions too generic to identify the console on their own (PICO-8 `.png`)
+- BIOS entries can share a `group`: the group is satisfied when any one file in it is present (3DO, Neo Geo CD)
+
+To add a console, you mostly just add an entry here, plus folder aliases in `RomNaming` and, for cartridge systems with a No-Intro DAT, an entry in `DatCatalog`. `SystemsTest` checks the catalog for consistency. The Gradle `fetchCores` task finds core IDs by regex-matching `CoreInfo("<id>"` in this file, so keep that literal form.
+
+**Cores.** `CoreManager.corePath()` first looks for a core bundled in the APK (`nativeLibraryDir/lib<id>_libretro_android.so`). If there isn't one, it uses the downloaded `filesDir/cores/<id>_libretro_android.so`. Missing cores are downloaded from `buildbot.libretro.com/nightly/android/latest/<abi>/` and marked read-only, which Android 14+ requires for dlopen. They must stay on internal storage. Some cores need `systemAssets` from `buildbot.libretro.com/assets/system/` (PPSSPP, Dolphin's `dolphin-emu/Sys`, LRPS2's `pcsx2/resources`, blueMSX's `Machines`/`Databases`). They are extracted into `system/`, and a `.asset-<name>` marker is written only after extraction completes. `CoreManager.needsInstall()` checks both the `.so` and the markers, and installs are serialized per core.
+
+**Core options at launch.** Options are merged in this order: `core.defaults`, then `core.presets[preset]`, then the user's manual overrides stored in DataStore under `core_options_<coreId>`.
+
+**Library.** `LibraryRepository.rescan()` merges two sources:
+- the internal `roms/<systemId>/` tree (plain file paths, `GameSource.IMPORTED`/`DOWNLOADED`)
+- user folders linked through SAF (`content://` URIs, `GameSource.LOCAL`), scanned directly with `DocumentsContract` for speed
+
+`RomNaming` decides the system: a folder alias (`ps1`, `megadrive`, …) wins over the file extension, and an extension only identifies a system on its own if it is unique (`Systems.byUniqueExtension`). Scans read every `.cue`/`.gdi`/`.m3u`/`.ccd` first, and only the files those sheets reference are hidden as auxiliary. When a sheet can't be read, `isAuxiliaryFile` falls back to a name heuristic. Removing a SAF game adds its URI to `hiddenGames` in settings, so the rescan doesn't bring it back; Ajustes can unhide them.
+
+**Launching games.** Path-based games pass `gameFilePath` to LibretroDroid. SAF games go through `GameFiles.virtualFiles()`, which opens file descriptors for the main file plus any `.cue`/`.gdi`/`.m3u` references under the fake directory `/retrovika_vfs/`. LibretroDroid's VFS matches those paths by exact string, so references keep their relative subfolder (`disc1/x.cue`) as written in the sheet.
+
+**GameActivity lifecycle (important).** LibretroDroid is a native singleton, which has several consequences:
+- `GameActivity` is `singleTask` with its own `taskAffinity`. `onNewIntent` with a different game ID saves and then calls `recreate()`.
+- `GLRetroView` observes a private `LifecycleRegistry` (`emulationOwner`), not the Activity's lifecycle. Pausing means moving that registry to `STARTED`. This is how the pause menu freezes emulation.
+- In `onPause`, SRAM and the autosave state are written synchronously *before* the registry is moved down.
+- While paused, serialize and unserialize calls pass `useEmulationThread = false`.
+- The manifest `configChanges` stops rotation from recreating the Activity.
+- `GameScreen` keeps the `AndroidView` at the same composition position in both orientations, so the GL surface is never re-parented.
+
+**Saves.** SRAM is stored as `saves/<system>/<rawName>.srm`, the same naming RetroArch uses. States are `states/<system>/<gameId>/slot<N>.state` plus `.png` thumbnails. Slot 0 is the autosave, and its thumbnails come from `PixelCopy`.
+
+**Virtual gamepad.** `VirtualGamepad` gives every control its own `pointerInput`. This is what makes multi-touch work, and it lets touches outside the controls reach the game view (needed for the DS touchscreen). `PadMetrics` holds nominal dp sizes and computes an auto-scale that fits the portrait or landscape area. If you add a `FaceArrangement` or change control sizes, update `PadMetrics` too. Key codes follow the libretro RetroPad convention (A = right, B = bottom, X = top, Y = left). The D-pad and the N64 C-buttons send motion events, not key events.
+
+**Catalog and downloads.** `CatalogSource` implementations are registered in `CatalogRepository`. The only one today is `HomebrewHubSource`: search uses `q`, because `title` is case-sensitive, and `developer` can be a string or an array. `DownloadManager` runs downloads in the app scope, extracts `.zip`/`.7z` (`core/storage/Archives.kt`, except for arcade; disc games with `.cue`/`.gdi`/`.m3u` get every track extracted), and registers the result through `LibraryRepository.addDownloaded`.
+
+**In-app browser.** `ui/screens/browser/BrowserScreen.kt` is a WebView for sites that can't be a `CatalogSource` (Cloudflare challenges, token flows). The user browses normally; `DownloadListener` captures the file, `RomNaming.guessSystem` pre-selects the console from the extension or page URL/title, and `DownloadManager.enqueueBrowser` downloads it with the WebView's cookies, User-Agent and Referer. `Http` keeps a User-Agent set on the request instead of overriding it.
+
+**Visual identity.** The theme is "synthwave sunset" (`ui/theme/Theme.kt`). `Palette.Neon` (pink) is the primary accent, `Cyan` the secondary, and `SunsetGradient`/`SunsetHorizontal` (pink → orange → yellow) are used for primary buttons, the active tab and the brand. Fonts are bundled in `res/font` (OFL): Space Grotesk (`DisplayFamily`, the Material typography), JetBrains Mono (`MonoFamily`, labels) and Press Start 2P (`PixelFamily`, only for `Wordmark` and `Kicker`). Build screens from the shared pieces in `ui/components/Components.kt`: `ScreenHeader`, `SectionHeader`, `GradientButton`/`GhostButton`, `SelectChip`/`ChipStrip` (instead of M3 `FilterChip`), `IconTile`, `SearchField`, `SurfaceCard`, `EmptyState(icon = …)` and `Modifier.ambientGlow()`. The tab bar floats over the content, so tab screens add `LocalBottomInset.current` to their bottom `contentPadding`. The logo is an "R" whose counter is a play button, in front of a striped sun: `ic_launcher_background` (scene) + `ic_launcher_foreground` (monogram) + `ic_launcher_monochrome`; `ic_logo` (layer-list) is used by the splash, and `BrandMark` draws it in Compose.
+
+**Languages.** No user-visible string is hardcoded in Kotlin. Strings live in resources: `res/values/` is English (the fallback for any other system language) and `res/values-pt/` is Portuguese. Every key must exist in both. `strings.xml` holds the shared keys (`common_*`, `tab_*`, the `games_count`/`consoles_count` plurals, `region_*`), and each area has its own `strings_<area>.xml`. Enums and catalog data carry `@StringRes` ids, not text (`Preset.label`, `ShaderOption.label`, `CoreInfo.description`, `BiosFile.description`). Use `stringResource`/`pluralStringResource` in composables. Outside the UI, use `context.localized().getString(...)`, because the Application context isn't recreated when the language changes below Android 13. Regions are stored in the DB in Portuguese at scan time (`RomNaming.region`, `regionOf`) and translated only at display time with `regionLabel()`. The language picker in Ajustes goes through `core/settings/Languages.kt`:
+- On Android 13+ it uses the system per-app language (`LocaleManager`, `res/xml/locales_config.xml`).
+- Below that, it stores the choice in SharedPreferences and `Languages.wrap` is applied in `attachBaseContext` of the Application, `MainActivity` and `GameActivity`.
+
+**Navigation.** `ui/navigation/RetrovikaNavHost.kt` uses string routes (`home`, `library`, `explore`, `settings`, `system/{id}`, `game/{id}`, `downloads`, `browser`, `settings/cores`, `settings/bios`). It also owns the SAF folder-picker launcher and runs a rescan on startup.
+
+## Constraints
+
+- Library versions are pinned in `gradle/libs.versions.toml` (AGP 8.13, Kotlin 2.2, compileSdk 36). AGP 9.x is not in use.
+- Release signing reads `keystore.properties` (template: `keystore.properties.example`) or `RETROVIKA_*` env vars, and falls back to the debug key with a warning. Never commit the keystore or its properties.
+- With targetSdk 36, Android 16 delivers Back only through `OnBackPressedDispatcher`, not as `KEYCODE_BACK`. `GameActivity` handles both paths.

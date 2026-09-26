@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Início, Biblioteca, Console, Detalhes e Downloads. -->
+<resources>
+    <!-- Início -->
+    <string name="home_greeting_morning">Good morning,</string>
+    <string name="home_greeting_afternoon">Good afternoon,</string>
+    <string name="home_greeting_evening">Good evening,</string>
+    <string name="home_question_returning">Ready to jump back in?</string>
+    <string name="home_question_new">Ready to play?</string>
+    <string name="home_scanning">Looking for games… %1$d found</string>
+    <string name="home_stat_games">games</string>
+    <string name="home_stat_consoles">consoles</string>
+    <string name="home_stat_favorites">favorites</string>
+    <string name="home_your_consoles">Your consoles</string>
+    <string name="home_shelf_recent">Recently played</string>
+    <string name="home_shelf_favorites">Favorites</string>
+    <string name="home_shelf_newest">Recently added</string>
+    <string name="home_welcome_kicker">Welcome</string>
+    <string name="home_welcome_title">Your station is empty</string>
+    <string name="home_welcome_message">Link the folder where you keep your games, or grab free homebrew titles in Explore.</string>
+    <string name="home_step_folder_title">Link a folder</string>
+    <string name="home_step_folder_subtitle">Subfolders like snes, gba and psx are detected automatically</string>
+    <string name="home_step_explore_title">Or browse the catalog</string>
+    <string name="home_step_explore_subtitle">Hundreds of free homebrew games to download</string>
+
+    <!-- Biblioteca -->
+    <string name="library_title">Library</string>
+    <string name="library_summary">%1$s in %2$s</string>
+    <string name="library_refresh">Refresh library</string>
+    <string name="library_search">Search your collection</string>
+    <string name="library_filter_all">All consoles</string>
+    <string name="library_filter_with_games">With games</string>
+    <string name="library_no_results_title">Nothing found</string>
+    <string name="library_no_results_message">No game in your collection matches \"%1$s\".</string>
+
+    <!-- Console -->
+    <plurals name="system_importing">
+        <item quantity="one">Importing %d file…</item>
+        <item quantity="other">Importing %d files…</item>
+    </plurals>
+    <string name="system_import_done">Import complete</string>
+    <string name="system_import_skipped">Skipped: %1$s</string>
+    <string name="system_import_games">Import games</string>
+    <string name="system_experimental">EXPERIMENTAL</string>
+    <string name="system_bios_missing">Required BIOS missing</string>
+    <string name="system_bios_or">" or "</string>
+    <string name="system_core">Core</string>
+    <string name="system_core_beta">%1$s (beta)</string>
+    <string name="system_preset">Performance profile</string>
+    <string name="system_formats">Formats: %1$s</string>
+    <string name="system_games">Games</string>
+    <string name="system_empty_title">No %1$s games</string>
+    <string name="system_empty_message">Import your own backups, or link a folder with a \"%1$s\" subfolder in Settings.</string>
+
+    <!-- Detalhes -->
+    <string name="details_game">Game</string>
+    <string name="details_source_local">Linked folder</string>
+    <string name="details_source_imported">Imported</string>
+    <string name="details_source_downloaded">Downloaded</string>
+    <string name="details_last_session">Last session: %1$s</string>
+    <string name="details_core_title">Core for this game</string>
+    <string name="details_core_subtitle">Some games run better on a specific core.</string>
+    <string name="details_core_default">Console default</string>
+    <string name="details_identify_title">Identification</string>
+    <string name="details_identify_subtitle">Check this file against the No-Intro DATs to confirm its version and see the other ones.</string>
+    <string name="details_identifying">Analyzing the file…</string>
+    <string name="details_other_versions">Other known versions (%1$d)</string>
+    <string name="details_not_found">Not found in the DATs. It may be a hack, translation or modified dump.</string>
+    <string name="details_see_versions">See versions</string>
+    <string name="details_identify_version">Identify version</string>
+    <string name="details_remove_title">Remove %1$s?</string>
+    <string name="details_remove_linked">The game leaves the library, but the file stays in your folder. To show it again, use Settings › Removed games.</string>
+    <string name="details_remove_file">The file will be deleted from Retrovika\'s storage. Saves and states are kept.</string>
+
+    <!-- Downloads -->
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_none_active">No active downloads</string>
+    <string name="downloads_active">%1$d in progress</string>
+    <string name="downloads_from_link">Download from my link</string>
+    <string name="downloads_empty_title">Nothing here yet</string>
+    <string name="downloads_empty_message">Games you download in Explore show up in this list.</string>
+    <string name="downloads_queued">Queued</string>
+    <string name="downloads_downloading">Downloading…</string>
+    <string name="downloads_downloading_percent">Downloading %1$d%%</string>
+    <string name="downloads_extracting">Extracting…</string>
+    <string name="downloads_done">Ready to play</string>
+    <string name="downloads_failed">Failed: %1$s</string>
+    <string name="downloads_canceled">Canceled</string>
+    <string name="downloads_link_message">Use a direct link to one of your own backups (personal cloud, NAS, your own server).</string>
+    <string name="downloads_link_url">File URL</string>
+    <string name="downloads_link_console">Console</string>
+</resources>

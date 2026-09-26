@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="common_back">Voltar</string>
+    <string name="common_cancel">Cancelar</string>
+    <string name="common_remove">Remover</string>
+    <string name="common_clear">Limpar</string>
+    <string name="common_play">Jogar</string>
+    <string name="common_continue">Continuar</string>
+    <string name="common_download">Baixar</string>
+    <string name="common_retry">Tentar de novo</string>
+    <string name="common_favorite">Favorito</string>
+    <string name="common_import">Importar</string>
+    <string name="common_explore">Explorar</string>
+    <string name="common_link_folder">Vincular pasta</string>
+
+    <string name="tab_home">Início</string>
+    <string name="tab_library">Biblioteca</string>
+    <string name="tab_explore">Explorar</string>
+    <string name="tab_settings">Ajustes</string>
+
+    <string name="no_games">Nenhum jogo</string>
+    <plurals name="games_count">
+        <item quantity="one">%d jogo</item>
+        <item quantity="other">%d jogos</item>
+    </plurals>
+    <plurals name="consoles_count">
+        <item quantity="one">%d console</item>
+        <item quantity="other">%d consoles</item>
+    </plurals>
+    <plurals name="favorites_count">
+        <item quantity="one">%d favorito</item>
+        <item quantity="other">%d favoritos</item>
+    </plurals>
+
+    <string name="preset_performance">Desempenho</string>
+    <string name="preset_balanced">Equilibrado</string>
+    <string name="preset_quality">Qualidade</string>
+
+    <string name="shader_default">Nítido (padrão)</string>
+    <string name="shader_sharp">Suavizado</string>
+    <string name="shader_crt">CRT</string>
+    <string name="shader_lcd">LCD</string>
+
+    <string name="folder_link_failed">Não foi possível vincular esta pasta. Escolha uma pasta do armazenamento do aparelho.</string>
+
+    <string name="region_usa">EUA</string>
+    <string name="region_europe">Europa</string>
+    <string name="region_japan">Japão</string>
+    <string name="region_world">Mundo</string>
+    <string name="region_brazil">Brasil</string>
+    <string name="region_korea">Coreia</string>
+    <string name="region_china">China</string>
+</resources>

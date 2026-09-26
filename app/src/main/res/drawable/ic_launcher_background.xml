@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cenário "pôr do sol synthwave": céu violeta, sol listrado no horizonte e piso em grade neon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+
+    <!-- Céu -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="54" android:startY="0" android:endX="54" android:endY="76">
+                <item android:offset="0" android:color="#FF0E0724" />
+                <item android:offset="0.55" android:color="#FF2A0C52" />
+                <item android:offset="1" android:color="#FF5A1466" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Estrelas -->
+    <path android:fillColor="#CCFFFFFF" android:pathData="M24,26m-0.9,0a0.9,0.9 0,1 1,1.8 0a0.9,0.9 0,1 1,-1.8 0" />
+    <path android:fillColor="#99FFFFFF" android:pathData="M81,22m-0.7,0a0.7,0.7 0,1 1,1.4 0a0.7,0.7 0,1 1,-1.4 0" />
+    <path android:fillColor="#B3FFFFFF" android:pathData="M86,40m-0.6,0a0.6,0.6 0,1 1,1.2 0a0.6,0.6 0,1 1,-1.2 0" />
+    <path android:fillColor="#80FFFFFF" android:pathData="M28,44m-0.6,0a0.6,0.6 0,1 1,1.2 0a0.6,0.6 0,1 1,-1.2 0" />
+    <path android:fillColor="#B336E2F5" android:pathData="M68,17m-0.7,0a0.7,0.7 0,1 1,1.4 0a0.7,0.7 0,1 1,-1.4 0" />
+
+    <!-- Sol listrado: o clip deixa as fendas horizontais cada vez mais largas perto do horizonte -->
+    <group>
+        <clip-path android:pathData="M0,0H108V59H0Z M0,61H108V64.4H0Z M0,66.6H108V69.2H0Z M0,71.6H108V73.2H0Z" />
+        <path android:pathData="M54,74m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="54" android:startY="44" android:endX="54" android:endY="74">
+                    <item android:offset="0" android:color="#FFFFE066" />
+                    <item android:offset="0.45" android:color="#FFFF8A3D" />
+                    <item android:offset="1" android:color="#FFFF2E88" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+
+    <!-- Piso -->
+    <path android:pathData="M0,74h108v34h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="54" android:startY="74" android:endX="54" android:endY="108">
+                <item android:offset="0" android:color="#FF1C0736" />
+                <item android:offset="1" android:color="#FF07030F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Grade em perspectiva -->
+    <path
+        android:strokeColor="#B3FF2E88" android:strokeWidth="0.7"
+        android:pathData="M0,77.5H108 M0,82H108 M0,88.5H108 M0,98H108
+            M54,74L54,108 M54,74L36,108 M54,74L72,108 M54,74L16,108 M54,74L92,108
+            M54,74L-6,108 M54,74L114,108 M54,74L-30,108 M54,74L138,108" />
+
+    <!-- Linha do horizonte -->
+    <path android:fillColor="#FFFF5CA8" android:pathData="M0,73.6h108v1h-108z" />
+</vector>

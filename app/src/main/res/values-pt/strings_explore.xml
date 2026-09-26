@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Explorar -->
+    <string name="explore_subtitle">Catálogo livre · %d títulos</string>
+    <string name="explore_open_site">Abrir site</string>
+    <string name="explore_downloads">Downloads</string>
+    <string name="explore_search_hint">Buscar jogos para baixar</string>
+    <string name="explore_filter_all">Todos</string>
+    <string name="explore_kind_games">Jogos</string>
+    <string name="explore_kind_demos">Demos</string>
+    <string name="explore_kind_everything">Tudo</string>
+    <string name="explore_error_title">Algo deu errado</string>
+    <string name="explore_error_network">Não foi possível acessar o catálogo. Verifique a conexão.</string>
+    <string name="explore_empty_title">Nada por aqui</string>
+    <string name="explore_empty_message">Nenhum título livre encontrado para \"%s\".</string>
+    <string name="explore_extracting">Extraindo</string>
+    <string name="explore_downloading">Baixando</string>
+    <string name="explore_pick_rom">Escolha qual ROM baixar</string>
+    <string name="explore_variants_failed">Não foi possível listar as versões. Tente novamente.</string>
+
+    <!-- Fontes do catálogo -->
+    <string name="catalog_all_sources">Todas as fontes</string>
+    <string name="catalog_all_sources_description">Busca o mesmo título em todos os sites de uma vez e mostra de onde dá para baixar.</string>
+    <string name="catalog_homebrewhub_description">Milhares de jogos independentes e gratuitos de GB, GBC, GBA e NES.</string>
+    <string name="catalog_archive_description">Software hospedado no archive.org.</string>
+    <string name="catalog_cdromance_description">Acervo amplo de ROMs e ISOs de vários consoles, com download direto.</string>
+    <string name="catalog_no_compatible_file">Nenhum arquivo compatível em %s</string>
+    <string name="catalog_no_downloads">Sem downloads em %s</string>
+    <string name="catalog_no_downloadable_file">Nenhum arquivo baixável em %s</string>
+
+    <!-- Downloads (mensagens do gerenciador e da rede) -->
+    <string name="download_default_name">jogo</string>
+    <string name="download_http_error">HTTP %1$d ao baixar %2$s</string>
+    <string name="download_forbidden">O site recusou o download fora do navegador (HTTP 403)</string>
+    <string name="download_move_failed">Não foi possível mover %s</string>
+    <string name="download_unsupported_format">Formato não suportado: %s</string>
+
+    <!-- Navegador interno -->
+    <string name="browser_title">Abrir site</string>
+    <string name="browser_intro">Navegue normalmente. Quando um download começar, o Retrovika pergunta o console e adiciona o jogo à biblioteca.</string>
+    <string name="browser_address_hint">Endereço ou busca</string>
+    <string name="browser_downloading">Baixando %s</string>
+    <string name="browser_view">Ver</string>
+    <string name="browser_blob_unsupported">Este site gera o arquivo dentro da página; não dá para capturá-lo.</string>
+    <string name="browser_close_site">Fechar site</string>
+    <string name="browser_loading">Carregando…</string>
+    <string name="browser_reload">Recarregar</string>
+    <string name="browser_add_to_library">Adicionar à biblioteca</string>
+    <string name="browser_console">Console</string>
+    <string name="browser_console_unknown">Não deu para identificar o console pelo arquivo; escolha na lista.</string>
+    <string name="browser_site_romsfun">Consoles clássicos e portáteis</string>
+    <string name="browser_site_vimm">Acervo grande, arquivos em .7z</string>
+    <string name="browser_site_cdromance">Jogos em disco e traduções</string>
+    <string name="browser_site_archive">Coleções e homebrew</string>
+</resources>

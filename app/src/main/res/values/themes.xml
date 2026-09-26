@@ -1,0 +1,18 @@
+<resources>
+    <style name="Theme.Retrovika" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Retrovika.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Retrovika</item>
+    </style>
+
+    <style name="Theme.Retrovika.Game" parent="Theme.Retrovika">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

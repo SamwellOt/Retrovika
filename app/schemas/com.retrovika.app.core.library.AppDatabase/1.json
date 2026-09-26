@@ -1,0 +1,150 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "b00e582401e80ec3f2a6e27b8dcfeef9",
+    "entities": [
+      {
+        "tableName": "games",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `rawName` TEXT NOT NULL, `fileName` TEXT NOT NULL, `uri` TEXT NOT NULL, `systemId` TEXT NOT NULL, `size` INTEGER NOT NULL, `region` TEXT, `coverUrl` TEXT, `favorite` INTEGER NOT NULL, `lastPlayed` INTEGER, `playTimeSeconds` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, `coreOverride` TEXT, `source` TEXT NOT NULL, `developer` TEXT, `description` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawName",
+            "columnName": "rawName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "fileName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uri",
+            "columnName": "uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "systemId",
+            "columnName": "systemId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "region",
+            "columnName": "region",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "coverUrl",
+            "columnName": "coverUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "favorite",
+            "columnName": "favorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastPlayed",
+            "columnName": "lastPlayed",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "playTimeSeconds",
+            "columnName": "playTimeSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "addedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coreOverride",
+            "columnName": "coreOverride",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "developer",
+            "columnName": "developer",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_games_systemId",
+            "unique": false,
+            "columnNames": [
+              "systemId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_systemId` ON `${TABLE_NAME}` (`systemId`)"
+          },
+          {
+            "name": "index_games_uri",
+            "unique": true,
+            "columnNames": [
+              "uri"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_games_uri` ON `${TABLE_NAME}` (`uri`)"
+          },
+          {
+            "name": "index_games_lastPlayed",
+            "unique": false,
+            "columnNames": [
+              "lastPlayed"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_lastPlayed` ON `${TABLE_NAME}` (`lastPlayed`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b00e582401e80ec3f2a6e27b8dcfeef9')"
+    ]
+  }
+}

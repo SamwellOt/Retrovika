@@ -1,0 +1,38 @@
+package com.retrovika.app.emulation
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class GameFilesTest {
+
+    @Test
+    fun `cue lista as faixas`() {
+        val cue = """
+            FILE "Jogo (Track 1).bin" BINARY
+              TRACK 01 MODE2/2352
+            FILE "Jogo (Track 2).bin" BINARY
+              TRACK 02 AUDIO
+        """.trimIndent()
+        assertEquals(listOf("Jogo (Track 1).bin", "Jogo (Track 2).bin"), GameFiles.referencedPaths("cue", cue, "Jogo.cue"))
+    }
+
+    @Test
+    fun `m3u mantem subpastas e normaliza barras`() {
+        val m3u = "#EXTM3U\ndisc1\\Jogo (Disc 1).cue\r\ndisc2/Jogo (Disc 2).cue\n\n"
+        assertEquals(listOf("disc1/Jogo (Disc 1).cue", "disc2/Jogo (Disc 2).cue"), GameFiles.referencedPaths("m3u", m3u, "Jogo.m3u"))
+        assertEquals(listOf("Jogo (Disc 1).cue", "Jogo (Disc 2).cue"), GameFiles.referencedFiles("m3u", m3u, "Jogo.m3u"))
+    }
+
+    @Test
+    fun `caminhos absolutos ou que sobem de pasta viram so o nome`() {
+        val m3u = "../fora/Disco.cue\nC:\\Jogos\\Disco2.cue\n/sdcard/Disco3.cue"
+        assertEquals(listOf("Disco.cue", "Disco2.cue", "Disco3.cue"), GameFiles.referencedPaths("m3u", m3u, "x.m3u"))
+    }
+
+    @Test
+    fun `gdi e ccd`() {
+        val gdi = "3\n1 0 4 2352 track01.bin 0\n2 756 0 2352 \"track 02.raw\" 0\n3 45000 4 2352 track03.bin 0"
+        assertEquals(listOf("track01.bin", "track 02.raw", "track03.bin"), GameFiles.referencedPaths("gdi", gdi, "jogo.gdi"))
+        assertEquals(listOf("Jogo.img", "Jogo.sub"), GameFiles.referencedPaths("ccd", "", "Jogo.ccd"))
+    }
+}

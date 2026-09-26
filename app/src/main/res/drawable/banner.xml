@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Banner do launcher da TV (320×180): céu em degradê com o logo centralizado. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <gradient android:angle="270" android:startColor="#FF0E0724" android:centerColor="#FF2A0C52" android:endColor="#FF5A1466" />
+        </shape>
+    </item>
+    <item android:width="150dp" android:height="150dp" android:gravity="center" android:drawable="@drawable/ic_logo" />
+</layer-list>

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Início -->
+    <string name="home_greeting_morning">Bom dia,</string>
+    <string name="home_greeting_afternoon">Boa tarde,</string>
+    <string name="home_greeting_evening">Boa noite,</string>
+    <string name="home_question_returning">Pronto pra voltar?</string>
+    <string name="home_question_new">Bora jogar?</string>
+    <string name="home_scanning">Procurando jogos… %1$d encontrados</string>
+    <string name="home_stat_games">jogos</string>
+    <string name="home_stat_consoles">consoles</string>
+    <string name="home_stat_favorites">favoritos</string>
+    <string name="home_your_consoles">Seus consoles</string>
+    <string name="home_shelf_recent">Jogados recentemente</string>
+    <string name="home_shelf_favorites">Favoritos</string>
+    <string name="home_shelf_newest">Adicionados recentemente</string>
+    <string name="home_welcome_kicker">Bem-vindo</string>
+    <string name="home_welcome_title">Sua estação está vazia</string>
+    <string name="home_welcome_message">Vincule a pasta onde você guarda seus jogos ou baixe títulos homebrew gratuitos no Explorar.</string>
+    <string name="home_step_folder_title">Vincule uma pasta</string>
+    <string name="home_step_folder_subtitle">Subpastas como snes, gba e psx são reconhecidas sozinhas</string>
+    <string name="home_step_explore_title">Ou explore o catálogo</string>
+    <string name="home_step_explore_subtitle">Centenas de jogos homebrew livres para baixar</string>
+
+    <!-- Biblioteca -->
+    <string name="library_title">Biblioteca</string>
+    <string name="library_summary">%1$s em %2$s</string>
+    <string name="library_refresh">Atualizar biblioteca</string>
+    <string name="library_search">Buscar na sua coleção</string>
+    <string name="library_filter_all">Todos os consoles</string>
+    <string name="library_filter_with_games">Com jogos</string>
+    <string name="library_no_results_title">Nada encontrado</string>
+    <string name="library_no_results_message">Nenhum jogo da sua coleção corresponde a \"%1$s\".</string>
+
+    <!-- Console -->
+    <plurals name="system_importing">
+        <item quantity="one">Importando %d arquivo…</item>
+        <item quantity="other">Importando %d arquivos…</item>
+    </plurals>
+    <string name="system_import_done">Importação concluída</string>
+    <string name="system_import_skipped">Ignorados: %1$s</string>
+    <string name="system_import_games">Importar jogos</string>
+    <string name="system_experimental">EXPERIMENTAL</string>
+    <string name="system_bios_missing">BIOS obrigatória ausente</string>
+    <string name="system_bios_or">" ou "</string>
+    <string name="system_core">Núcleo</string>
+    <string name="system_core_beta">%1$s (beta)</string>
+    <string name="system_preset">Perfil de desempenho</string>
+    <string name="system_formats">Formatos: %1$s</string>
+    <string name="system_games">Jogos</string>
+    <string name="system_empty_title">Nenhum jogo de %1$s</string>
+    <string name="system_empty_message">Importe os seus próprios backups ou vincule uma pasta com subpasta \"%1$s\" em Ajustes.</string>
+
+    <!-- Detalhes -->
+    <string name="details_game">Jogo</string>
+    <string name="details_source_local">Pasta vinculada</string>
+    <string name="details_source_imported">Importado</string>
+    <string name="details_source_downloaded">Baixado</string>
+    <string name="details_last_session">Última sessão: %1$s</string>
+    <string name="details_core_title">Núcleo para este jogo</string>
+    <string name="details_core_subtitle">Alguns jogos rodam melhor em um núcleo específico.</string>
+    <string name="details_core_default">Padrão do console</string>
+    <string name="details_identify_title">Identificação</string>
+    <string name="details_identify_subtitle">Compare este arquivo com os DATs No-Intro para confirmar a versão e ver as outras existentes.</string>
+    <string name="details_identifying">Analisando o arquivo…</string>
+    <string name="details_other_versions">Outras versões conhecidas (%1$d)</string>
+    <string name="details_not_found">Não encontrado nos DATs. Pode ser um hack, tradução ou dump modificado.</string>
+    <string name="details_see_versions">Ver versões</string>
+    <string name="details_identify_version">Identificar versão</string>
+    <string name="details_remove_title">Remover %1$s?</string>
+    <string name="details_remove_linked">O jogo sai da biblioteca, mas o arquivo continua na sua pasta. Para mostrá-lo de novo, use Ajustes › Jogos removidos.</string>
+    <string name="details_remove_file">O arquivo será apagado do armazenamento do Retrovika. Saves e estados são mantidos.</string>
+
+    <!-- Downloads -->
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_none_active">Nenhum download ativo</string>
+    <string name="downloads_active">%1$d em andamento</string>
+    <string name="downloads_from_link">Baixar do meu link</string>
+    <string name="downloads_empty_title">Nada por aqui</string>
+    <string name="downloads_empty_message">Os jogos que você baixar no Explorar aparecem nesta lista.</string>
+    <string name="downloads_queued">Na fila</string>
+    <string name="downloads_downloading">Baixando…</string>
+    <string name="downloads_downloading_percent">Baixando %1$d%%</string>
+    <string name="downloads_extracting">Extraindo…</string>
+    <string name="downloads_done">Pronto para jogar</string>
+    <string name="downloads_failed">Falhou: %1$s</string>
+    <string name="downloads_canceled">Cancelado</string>
+    <string name="downloads_link_message">Use um link direto para um backup seu (nuvem pessoal, NAS, servidor próprio).</string>
+    <string name="downloads_link_url">URL do arquivo</string>
+    <string name="downloads_link_console">Console</string>
+</resources>
