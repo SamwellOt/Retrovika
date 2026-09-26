@@ -5,10 +5,11 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 class CatalogRepository {
+    // A ordem aqui é a dos filtros no Explorar e a do rodízio em "Todas as fontes".
     val sources: List<CatalogSource> = listOf(
+        CdRomanceSource(),
         HomebrewHubSource(),
         InternetArchiveSource(),
-        CdRomanceSource(),
     )
 
     val supportedSystems: Set<String> get() = sources.flatMap { it.systems }.toSet()
