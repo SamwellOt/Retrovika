@@ -39,6 +39,8 @@
     </plurals>
     <string name="system_import_done">Importação concluída</string>
     <string name="system_import_skipped">Ignorados: %1$s</string>
+    <string name="system_import_failed">%1$s falhou: %2$s</string>
+    <string name="system_import_unreadable">Não foi possível ler o arquivo</string>
     <string name="system_import_games">Importar jogos</string>
     <string name="system_experimental">EXPERIMENTAL</string>
     <string name="system_bios_missing">BIOS obrigatória ausente</string>
@@ -59,6 +61,11 @@
     <string name="details_last_session">Última sessão: %1$s</string>
     <string name="details_core_title">Núcleo para este jogo</string>
     <string name="details_core_subtitle">Alguns jogos rodam melhor em um núcleo específico.</string>
+    <string name="details_core_missing">Núcleo %s não instalado</string>
+    <string name="details_core_missing_message">Este jogo precisa dele para rodar. Ele será baixado ao tocar em Jogar, ou instale agora para jogar offline.</string>
+    <string name="details_core_install">Instalar agora</string>
+    <string name="details_core_installing">Instalando %1$s… %2$d%%</string>
+    <string name="details_core_failed">Não foi possível instalar %1$s: %2$s</string>
     <string name="details_core_default">Padrão do console</string>
     <string name="details_identify_title">Identificação</string>
     <string name="details_identify_subtitle">Compare este arquivo com os DATs No-Intro para confirmar a versão e ver as outras existentes.</string>

@@ -6,6 +6,8 @@ import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.settings.localized
 import com.retrovika.app.core.library.LibraryRepository
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.LocalizedException
+import com.retrovika.app.core.storage.RomExtractor
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.storage.Archives
 import com.retrovika.app.core.storage.FileNames
@@ -37,7 +39,12 @@ data class DownloadTask(
     val status: DownloadStatus = DownloadStatus.QUEUED,
     val error: String? = null,
     val gameId: Long? = null,
+    /** Fonte + entrada do catálogo ("fonte|id"), para ligar o download ao card certo no Explorar. */
+    val entryKey: String? = null,
 )
+
+/** Chave que liga uma entrada do catálogo aos seus downloads (títulos se repetem entre consoles e fontes). */
+val CatalogEntry.downloadKey: String get() = "$sourceId|$id"
 
 class DownloadManager(
     private val context: Context,
@@ -54,27 +61,31 @@ class DownloadManager(
 
     fun enqueue(entry: CatalogEntry) {
         val system = Systems.byId(entry.systemId) ?: return
-        if (_tasks.value.any { it.title == entry.title && it.status in ACTIVE }) return
-        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl)
+        if (isActive(entry)) return
+        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) {
             val resolved = resolve(entry)
-            runDownload(task.id, resolved.downloadUrl, resolved.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null })
+            runDownload(task.id, resolved.downloadUrl, resolved.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
         }
     }
 
     /** Baixa a variante (região/revisão) escolhida pelo usuário para uma entrada. */
     fun enqueue(entry: CatalogEntry, variant: RomVariant) {
         val system = Systems.byId(entry.systemId) ?: return
-        if (_tasks.value.any { it.title == entry.title && it.status in ACTIVE }) return
-        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl)
+        if (isActive(entry)) return
+        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) {
-            runDownload(task.id, variant.downloadUrl, variant.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null })
+            runDownload(task.id, variant.downloadUrl, variant.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
         }
     }
 
+    private fun isActive(entry: CatalogEntry) = _tasks.value.any { it.entryKey == entry.downloadKey && it.status in ACTIVE }
+
     /** Download a partir de um link fornecido pelo próprio usuário (ex.: link direto na nuvem). */
     fun enqueueUrl(url: String, system: GameSystem) {
-        val name = url.substringAfterLast('/').substringBefore('?').ifBlank { context.localized().getString(R.string.download_default_name) }.let { java.net.URLDecoder.decode(it, "UTF-8") }
+        // Uri.decode não lança exceção com um "%" solto (URLDecoder derrubaria o app) nem troca "+" por espaço.
+        val name = url.substringAfterLast('/').substringBefore('?').substringBefore('#').let { android.net.Uri.decode(it) }
+            .ifBlank { context.localized().getString(R.string.download_default_name) }
         val task = DownloadTask(title = name.substringBeforeLast('.'), systemId = system.id, coverUrl = null)
         launchTask(task) { runDownload(task.id, url, name, system, task.title, null, null, null) }
     }
@@ -87,6 +98,10 @@ class DownloadManager(
         val task = DownloadTask(title = RomNaming.cleanTitle(fileName.substringBeforeLast('.')), systemId = system.id, coverUrl = null)
         launchTask(task) { runDownload(task.id, url, fileName, system, task.title, null, null, null, headers) }
     }
+
+    /** Alguns servidores (CDRomance, por exemplo) só liberam o arquivo vindo da página do jogo. */
+    private fun refererOf(entry: CatalogEntry): Map<String, String> =
+        entry.website?.takeIf { it.startsWith("http") }?.let { mapOf("Referer" to it) }.orEmpty()
 
     private fun launchTask(task: DownloadTask, block: suspend () -> Unit) {
         _tasks.update { listOf(task) + it }
@@ -116,28 +131,17 @@ class DownloadManager(
         val dir = paths.romsFor(system.id)
         val target = File(dir, FileNames.safe(fileName))
         var file = Http.download(url, target, headers) { p -> update(taskId) { it.copy(progress = p) } }
+        // Página de erro/aviso salva como se fosse o jogo: melhor avisar do que "extrair" HTML.
+        if (withContext(Dispatchers.IO) { Archives.isHtml(file) }) {
+            file.delete()
+            throw LocalizedException(R.string.download_got_webpage)
+        }
         if (Archives.isArchive(file) && !system.keepArchives) {
             update(taskId) { it.copy(status = DownloadStatus.EXTRACTING) }
-            file = withContext(Dispatchers.IO) { extractRom(file, dir, system) }
+            file = withContext(Dispatchers.IO) { RomExtractor.extract(file, dir, system) }
         }
         val gameId = library.addDownloaded(system, file, title, cover, developer, description)
         update(taskId) { it.copy(status = DownloadStatus.DONE, progress = 1f, gameId = gameId) }
-    }
-
-    /**
-     * Extrai a ROM de um .zip/.7z. Jogos em disco com arquivo de índice (.m3u/.cue/.gdi/.ccd)
-     * precisam de todas as faixas, então o conteúdo inteiro é extraído; nos demais, só a ROM.
-     * Sem nenhuma entrada reconhecida, mantém o arquivo compactado como está.
-     */
-    private fun extractRom(archive: File, dir: File, system: GameSystem): File {
-        val names = Archives.entryNames(archive)
-        val candidates = names.filter { it.substringAfterLast('.').lowercase().let { ext -> ext in system.extensions && ext !in ARCHIVE_EXTS } }
-        val main = candidates.minByOrNull { SHEET_PRIORITY.indexOf(it.substringAfterLast('.').lowercase()).let { i -> if (i < 0) SHEET_PRIORITY.size else i } }
-            ?: return archive
-        val isSheet = main.substringAfterLast('.').lowercase() in SHEET_PRIORITY
-        val extracted = Archives.extract(archive, dir, if (isSheet) names.toSet() else setOf(main))
-        archive.delete()
-        return extracted.first { it.name == main.substringAfterLast('/').substringAfterLast('\\') }
     }
 
     fun cancel(id: String) { jobs[id]?.cancel() }
@@ -149,7 +153,5 @@ class DownloadManager(
 
     companion object {
         val ACTIVE = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.EXTRACTING)
-        private val ARCHIVE_EXTS = setOf("zip", "7z")
-        private val SHEET_PRIORITY = listOf("m3u", "cue", "gdi", "ccd")
     }
 }

@@ -85,8 +85,13 @@ object RomNaming {
         parentFolders.asReversed().forEach { folder ->
             systemForFolder(folder)?.let { if (ext in it.extensions) return it }
         }
+        // .zip/.7z não identificam o console sozinhos (quase todo site compacta as ROMs): um
+        // "gba/Jogo.7z" não pode virar Arcade só porque o Arcade é o único que lista .7z.
+        if (ext in ARCHIVE_EXTENSIONS) return null
         return Systems.byUniqueExtension(ext)
     }
+
+    private val ARCHIVE_EXTENSIONS = setOf("zip", "7z")
 
     /**
      * Palpite de console para um arquivo baixado no navegador: extensão exclusiva primeiro; senão,
@@ -96,7 +101,7 @@ object RomNaming {
     fun guessSystem(fileName: String, hints: List<String>): GameSystem? {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         // .zip/.7z não dizem nada: quase todo site compacta as ROMs (e .zip só "pertence" ao Arcade no catálogo).
-        if (ext !in setOf("zip", "7z")) Systems.byUniqueExtension(ext)?.let { return it }
+        if (ext !in ARCHIVE_EXTENSIONS) Systems.byUniqueExtension(ext)?.let { return it }
         hints.forEach { hint ->
             val words = hint.lowercase().split(Regex("""[^a-z0-9]+""")).filter { it.isNotEmpty() }
             for (size in 3 downTo 1) {

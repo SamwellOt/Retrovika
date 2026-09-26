@@ -37,6 +37,9 @@ class RomNamingTest {
         assertEquals("c64", RomNaming.resolveSystem("Jogo.d64", emptyList())?.id)
         assertNull(RomNaming.resolveSystem("Jogo.bin", emptyList()))
         assertNull(RomNaming.resolveSystem("Jogo.zip", emptyList()))
+        assertNull(RomNaming.resolveSystem("Jogo.7z", emptyList()))
+        assertNull(RomNaming.resolveSystem("Pokemon.7z", listOf("gba")))
+        assertEquals("arcade", RomNaming.resolveSystem("sf2.7z", listOf("arcade"))?.id)
     }
 
     @Test

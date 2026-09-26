@@ -53,7 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -128,10 +128,15 @@ fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = Palette.N
 // ---------------------------------------------------------------- fundo e estrutura
 
 /** Brilho ambiente no topo da tela: duas "nebulosas" suaves nas cores da marca. */
-fun Modifier.ambientGlow(primary: Color = Palette.Neon, secondary: Color = Palette.Violet, height: Dp = 420.dp): Modifier = drawBehind {
+fun Modifier.ambientGlow(primary: Color = Palette.Neon, secondary: Color = Palette.Violet, height: Dp = 420.dp): Modifier = drawWithCache {
+    // Os degradês só são recriados quando o tamanho muda, não a cada quadro desenhado.
     val h = height.toPx()
-    drawRect(Brush.radialGradient(listOf(primary.copy(alpha = 0.20f), Color.Transparent), center = Offset(size.width * 0.15f, 0f), radius = h * 0.9f))
-    drawRect(Brush.radialGradient(listOf(secondary.copy(alpha = 0.16f), Color.Transparent), center = Offset(size.width * 0.95f, h * 0.25f), radius = h * 0.8f))
+    val first = Brush.radialGradient(listOf(primary.copy(alpha = 0.20f), Color.Transparent), center = Offset(size.width * 0.15f, 0f), radius = h * 0.9f)
+    val second = Brush.radialGradient(listOf(secondary.copy(alpha = 0.16f), Color.Transparent), center = Offset(size.width * 0.95f, h * 0.25f), radius = h * 0.8f)
+    onDrawBehind {
+        drawRect(first)
+        drawRect(second)
+    }
 }
 
 /** Cabeçalho das telas: botão voltar opcional, título grande, subtítulo e ações à direita. */
@@ -212,7 +217,8 @@ fun Modifier.pressScale(source: MutableInteractionSource, enabled: Boolean = tru
     if (!enabled) return this
     val isPressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(if (isPressed) pressed else 1f, spring(stiffness = 600f), label = "press")
-    return scale(scale)
+    // Lido só na camada gráfica: a animação redesenha o elemento sem recompor o cartão a cada quadro.
+    return graphicsLayer { scaleX = scale; scaleY = scale }
 }
 
 // ---------------------------------------------------------------- botões
@@ -390,8 +396,9 @@ fun SystemTile(system: GameSystem, count: Int, onClick: () -> Unit, modifier: Mo
             .pressScale(source)
             .clip(shape)
             .background(Palette.SurfaceHigh)
-            .drawBehind {
-                drawRect(Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent), center = Offset(size.width, 0f), radius = size.width * 0.95f))
+            .drawWithCache {
+                val glow = Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent), center = Offset(size.width, 0f), radius = size.width * 0.95f)
+                onDrawBehind { drawRect(glow) }
             }
             .border(1.dp, Brush.linearGradient(listOf(readable.copy(alpha = 0.55f), Palette.Outline.copy(alpha = 0.4f))), shape)
             .clickable(source, null, onClick = onClick),
@@ -405,7 +412,7 @@ fun SystemTile(system: GameSystem, count: Int, onClick: () -> Unit, modifier: Mo
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(system.shortName, fontFamily = DisplayFamily, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
-                if (system.experimental) Badge("BETA", Palette.Sun)
+                if (system.experimental) Badge(stringResource(R.string.common_beta), Palette.Sun)
             }
             Spacer(Modifier.height(20.dp))
             Text(system.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

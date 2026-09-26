@@ -11,6 +11,8 @@ import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -35,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.Language
@@ -66,6 +69,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import android.os.Bundle
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -120,15 +124,19 @@ fun BrowserScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var url by rememberSaveable { mutableStateOf<String?>(null) }
+    // Abrir Downloads tira o navegador da tela e destrói o WebView; o histórico e a página (já depois
+    // de um desafio do Cloudflare, por exemplo) voltam deste pacote em vez de recarregar do zero.
+    val webState = rememberSaveable { Bundle() }
     var pending by remember { mutableStateOf<PendingDownload?>(null) }
 
     Box(Modifier.fillMaxSize()) {
         val current = url
         if (current == null) {
-            StartPage(onBack = onBack, onOpen = { url = it })
+            StartPage(onBack = onBack, onOpen = { webState.clear(); url = it })
         } else {
             BrowserView(
                 startUrl = current,
+                savedState = webState,
                 activeDownloads = active,
                 onClose = { url = null },
                 onOpenDownloads = onOpenDownloads,
@@ -219,6 +227,7 @@ private fun StartPage(onBack: () -> Unit, onOpen: (String) -> Unit) {
 @Composable
 private fun BrowserView(
     startUrl: String,
+    savedState: Bundle,
     activeDownloads: Int,
     onClose: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -230,10 +239,14 @@ private fun BrowserView(
     var title by remember { mutableStateOf("") }
     var pageUrl by remember { mutableStateOf(startUrl) }
     var canGoBack by remember { mutableStateOf(false) }
+    val defaultName = stringResource(R.string.download_default_name)
 
     val webView = remember {
         WebView(context).apply {
             settings.javaScriptEnabled = true
+            // O WebView se identifica com "; wv" e "Version/4.0" no User-Agent; alguns sites (Vimm's Lair
+            // entre eles) escondem o conteúdo ou os downloads para WebViews. Aqui ele se apresenta como o Chrome.
+            settings.userAgentString = chromeUserAgent(settings.userAgentString)
             settings.domStorageEnabled = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
@@ -266,7 +279,7 @@ private fun BrowserView(
                     Toast.makeText(context, R.string.browser_blob_unsupported, Toast.LENGTH_LONG).show()
                     return@setDownloadListener
                 }
-                val fileName = fileNameFor(url, contentDisposition, mimeType)
+                val fileName = fileNameFor(url, contentDisposition, mimeType, defaultName)
                 val headers = buildMap {
                     put("User-Agent", userAgent)
                     CookieManager.getInstance().getCookie(url)?.let { put("Cookie", it) }
@@ -275,11 +288,14 @@ private fun BrowserView(
                 val guess = RomNaming.guessSystem(fileName, listOfNotNull(this@apply.url, this@apply.title, url))
                 onDownload(PendingDownload(url, fileName, contentLength, headers, guess))
             }
-            loadUrl(startUrl)
+            if (savedState.isEmpty || restoreState(savedState) == null) loadUrl(startUrl)
+            canGoBack = this.canGoBack()
         }
     }
     DisposableEffect(webView) {
         onDispose {
+            savedState.clear()
+            webView.saveState(savedState)
             CookieManager.getInstance().flush()
             webView.stopLoading()
             webView.destroy()
@@ -301,6 +317,14 @@ private fun BrowserView(
                 )
             }
             IconButton(onClick = { webView.reload() }) { Icon(Icons.Rounded.Refresh, stringResource(R.string.browser_reload)) }
+            // Plano B para sites que não funcionam no navegador interno.
+            IconButton(onClick = {
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pageUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(context, R.string.browser_no_external, Toast.LENGTH_SHORT).show()
+                }
+            }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.browser_open_external)) }
             IconButton(onClick = onOpenDownloads) {
                 BadgedBox(badge = { if (activeDownloads > 0) androidx.compose.material3.Badge { Text("$activeDownloads") } }) {
                     Icon(Icons.Rounded.Downloading, stringResource(R.string.explore_downloads))
@@ -315,7 +339,7 @@ private fun BrowserView(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConfirmDownloadDialog(download: PendingDownload, onDismiss: () -> Unit, onConfirm: (GameSystem) -> Unit) {
-    var system by remember { mutableStateOf(download.guess) }
+    var system by remember(download) { mutableStateOf(download.guess) }
     var expanded by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -366,12 +390,16 @@ private fun toUrl(input: String): String {
  * Nome do arquivo: Content-Disposition (filename* ou filename), depois o fim da URL.
  * O [URLUtil.guessFileName] fica por último porque às vezes troca a extensão (.7z -> .bin).
  */
-private fun fileNameFor(url: String, contentDisposition: String?, mimeType: String?): String {
+private fun fileNameFor(url: String, contentDisposition: String?, mimeType: String?, defaultName: String): String {
     val fromHeader = contentDisposition?.let { cd ->
         Regex("""filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)""").find(cd)?.groupValues?.get(1)?.let(Uri::decode)
             ?: Regex("""filename\s*=\s*"?([^";]+)"?""").find(cd)?.groupValues?.get(1)
     }
     val fromUrl = Uri.parse(url).lastPathSegment?.takeIf { '.' in it }
     val name = (fromHeader ?: fromUrl ?: URLUtil.guessFileName(url, contentDisposition, mimeType)).trim()
-    return name.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { "jogo" }
+    return name.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { defaultName }
 }
+
+/** User-Agent do WebView sem as marcas de WebView ("; wv" e "Version/x.y"), igual ao do Chrome no mesmo aparelho. */
+internal fun chromeUserAgent(webView: String): String =
+    webView.replace("; wv)", ")").replace(Regex("""Version/[\d.]+ """), "")

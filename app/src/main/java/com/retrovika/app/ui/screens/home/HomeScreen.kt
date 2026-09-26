@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -49,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
 import com.retrovika.app.container
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.systems.Systems
@@ -79,10 +82,10 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val library = context.container.library
-    val recent by library.recent.collectAsStateWithLifecycle(emptyList())
-    val favorites by library.favorites.collectAsStateWithLifecycle(emptyList())
-    val newest by library.newest.collectAsStateWithLifecycle(emptyList())
-    val counts by library.counts.collectAsStateWithLifecycle(emptyList())
+    val recent by library.recent.collectAsStateWithLifecycle()
+    val favorites by library.favorites.collectAsStateWithLifecycle()
+    val newest by library.newest.collectAsStateWithLifecycle()
+    val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
     val bottom = LocalBottomInset.current
 
@@ -136,8 +139,11 @@ fun HomeScreen(
                 Spacer(Modifier.height(18.dp))
                 SectionHeader(stringResource(R.string.home_your_consoles))
                 Spacer(Modifier.height(12.dp))
+                val present = remember(counts) {
+                    val byId = counts.associate { it.systemId to it.count }
+                    Systems.all.mapNotNull { s -> byId[s.id]?.let { s to it } }
+                }
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val present = Systems.all.mapNotNull { s -> counts.firstOrNull { it.systemId == s.id }?.let { s to it.count } }
                     items(present, key = { it.first.id }) { (system, count) ->
                         val shape = RoundedCornerShape(16.dp)
                         Row(
@@ -254,8 +260,11 @@ private fun ContinueCard(game: Game, onPlay: () -> Unit, onDetails: () -> Unit) 
             .clickable(onClick = onDetails),
     ) {
         // Fundo: a capa ampliada e desfocada, coberta por um degradê na cor do console.
-        game.coverUrl?.let {
-            AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().blur(28.dp).graphicsLayer { alpha = 0.55f })
+        // A capa é decodificada pequena: vai ser desfocada de qualquer jeito, e o bitmap menor pesa bem menos.
+        game.coverUrl?.let { url ->
+            val platform = LocalPlatformContext.current
+            val small = remember(url) { ImageRequest.Builder(platform).data(url).size(96).build() }
+            AsyncImage(small, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().blur(28.dp).graphicsLayer { alpha = 0.55f })
         }
         Box(
             Modifier.matchParentSize().background(

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup automático (Android 11 e anteriores). A cota é de 25 MB: núcleos, ROMs, save states e BIOS
+    passariam dela e o Android descartaria o backup inteiro. Ficam as preferências, o banco da biblioteca
+    e as memórias de cartucho (saves/). Núcleos também não servem em outro aparelho (ABI diferente).
+-->
+<full-backup-content>
+    <exclude domain="file" path="cores/" />
+    <exclude domain="external" path="Retrovika/roms/" />
+    <exclude domain="external" path="Retrovika/states/" />
+    <exclude domain="external" path="Retrovika/system/" />
+</full-backup-content>

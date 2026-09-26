@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.storage.StoragePaths
 import java.io.File
+import java.io.IOException
 
 data class SaveSlot(val index: Int, val exists: Boolean, val timestamp: Long?, val thumbnail: File?)
 
@@ -28,11 +29,26 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
 
     fun write(slot: Int, data: ByteArray, thumbnail: Bitmap?) {
         val tmp = File(dir, "slot$slot.tmp")
-        tmp.writeBytes(data)
-        tmp.renameTo(stateFile(slot))
+        try {
+            tmp.writeBytes(data)
+            if (!tmp.renameTo(stateFile(slot))) throw IOException("rename ${tmp.name}")
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
         // Sem captura nova, a miniatura antiga mostraria um momento que não corresponde mais ao estado.
         if (thumbnail == null) thumbFile(slot).delete()
         else thumbFile(slot).outputStream().use { thumbnail.compress(Bitmap.CompressFormat.PNG, 90, it) }
+    }
+
+    /**
+     * Guarda o estado do slot à parte (`slotN.state.bak`). Usado quando o salvamento automático não
+     * carrega (outro núcleo, versão nova do núcleo): o próximo salvamento automático não o destrói.
+     */
+    fun backup(slot: Int) {
+        val file = stateFile(slot)
+        if (file.exists()) file.renameTo(File(dir, "slot$slot.state.bak"))
+        thumbFile(slot).delete()
     }
 
     fun thumbnail(slot: Int): Bitmap? = thumbFile(slot).takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.absolutePath) }

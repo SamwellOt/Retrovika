@@ -27,9 +27,9 @@ import kotlinx.coroutines.SupervisorJob
 class AppContainer(app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val paths = StoragePaths(app)
-    val settings = SettingsRepository(app)
+    val settings = SettingsRepository(app, scope)
     val database = AppDatabase.build(app)
-    val library = LibraryRepository(app, database.games(), paths, settings)
+    val library = LibraryRepository(app, database.games(), paths, settings, scope)
     val cores = CoreManager(app, paths)
     val bios = BiosManager(paths, app.contentResolver)
     val catalog = CatalogRepository()

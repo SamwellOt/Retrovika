@@ -76,12 +76,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Memory
+import com.retrovika.app.core.cores.CoreState
+import com.retrovika.app.core.systems.CoreInfo
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Storage
 import com.retrovika.app.ui.components.Pill
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.screens.home.formatPlayTime
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -142,6 +146,10 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
                 icon = Icons.Rounded.PlayArrow,
                 height = 56.dp,
             )
+            if (system != null) {
+                val preferred by remember(system.id) { app.settings.coreFor(system.id) }.collectAsStateWithLifecycle(null)
+                CoreNotice(system.core(g.coreOverride ?: preferred))
+            }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 g.region?.let { Pill(regionLabel(it), icon = Icons.Rounded.Public) }
@@ -258,7 +266,7 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(40.dp + LocalBottomInset.current))
         }
     }
 
@@ -290,4 +298,49 @@ private fun RoundAction(icon: ImageVector, description: String, tint: Color = Co
         onClick = onClick,
         modifier = Modifier.background(Palette.Ink.copy(alpha = 0.45f), CircleShape).border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape),
     ) { Icon(icon, description, tint = tint) }
+}
+
+/** Avisa quando o núcleo que vai rodar o jogo ainda não está instalado, com opção de instalar já. */
+@Composable
+private fun CoreNotice(core: CoreInfo) {
+    val app = LocalContext.current.container
+    val states by app.cores.states.collectAsStateWithLifecycle()
+    val state = states[core.id] ?: CoreState.NotInstalled
+    // needsInstall confere o .so e os pacotes de sistema no disco: refeito só quando o tipo de estado
+    // muda (instalado, falhou…), não a cada aviso de progresso do download.
+    val missing = remember(state::class, core.id) { app.cores.needsInstall(core) }
+    if (!missing && state !is CoreState.Downloading) return
+    Row(
+        Modifier
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp)
+            .fillMaxWidth()
+            .background(Palette.Sun.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
+            .border(1.dp, Palette.Sun.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Memory, null, tint = Palette.Sun, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.details_core_missing, core.displayName), style = MaterialTheme.typography.titleSmall)
+            Text(
+                when (state) {
+                    is CoreState.Downloading -> stringResource(R.string.details_core_installing, core.displayName, (state.progress * 100).toInt())
+                    is CoreState.Failed -> stringResource(R.string.details_core_failed, core.displayName, state.message)
+                    else -> stringResource(R.string.details_core_missing_message)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state is CoreState.Failed) Palette.Coral else Palette.TextSecondary,
+            )
+        }
+        if (state !is CoreState.Downloading) {
+            Spacer(Modifier.width(10.dp))
+            // No escopo do app: a instalação continua mesmo se o usuário sair da tela.
+            TextButton(onClick = { app.scope.launch { runCatching { app.cores.install(core) } } }) {
+                Text(stringResource(R.string.details_core_install), color = Palette.Sun)
+            }
+        } else {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Sun)
+        }
+    }
 }

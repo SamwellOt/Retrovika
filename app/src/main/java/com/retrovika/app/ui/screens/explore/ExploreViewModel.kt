@@ -51,6 +51,9 @@ data class ExploreState(
 
 const val ALL_SOURCES = "all"
 
+/** Quantas páginas vazias seguidas buscamos antes de esperar o usuário rolar de novo. */
+private const val MAX_EMPTY_PAGES = 3
+
 @OptIn(FlowPreview::class)
 class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     private val realSources: List<SourceInfo> =
@@ -121,7 +124,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun fetch(page: Int) {
+    private suspend fun fetch(page: Int, emptyStreak: Int = 0) {
         val s = _state.value
         val call = runCatching {
             if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page)
@@ -136,6 +139,12 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
                         loading = false,
                     )
                 }
+                // Página sem nada deste filtro (ex.: busca do CDRomance só com outros consoles): a lista
+                // não cresce, a rolagem não pede mais e tudo parava. Segue para as próximas algumas vezes.
+                if (result.entries.isEmpty() && result.page < result.totalPages && emptyStreak < MAX_EMPTY_PAGES) {
+                    _state.update { it.copy(loading = true) }
+                    fetch(result.page + 1, emptyStreak + 1)
+                }
             }
             .onFailure { t ->
                 if (t is kotlinx.coroutines.CancellationException) throw t
@@ -148,10 +157,20 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
      * Ponto de entrada do download: descobre quais ROMs a entrada oferece. Se houver só
      * uma, baixa direto; se houver várias, abre o seletor para o usuário escolher.
      */
+    private var promptJob: Job? = null
+
     fun requestDownload(entry: CatalogEntry) {
-        viewModelScope.launch {
+        // Toque duplo ou nova escolha: o pedido anterior não abre o seletor nem baixa por cima.
+        promptJob?.cancel()
+        promptJob = viewModelScope.launch {
             _prompt.value = VariantPrompt.Loading(entry)
-            val variants = runCatching { app.catalog.variants(entry) }.getOrElse { emptyList() }
+            val variants = try {
+                app.catalog.variants(entry)
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                emptyList()
+            }
             when {
                 variants.isEmpty() -> { _prompt.value = null; app.downloads.enqueue(entry) }
                 variants.size == 1 -> { _prompt.value = null; app.downloads.enqueue(entry, variants.first()) }
@@ -165,5 +184,9 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         _prompt.value = null
     }
 
-    fun dismissPrompt() { _prompt.value = null }
+    /** Fechar o seletor enquanto as variantes carregam cancela o pedido: nada é baixado. */
+    fun dismissPrompt() {
+        promptJob?.cancel()
+        _prompt.value = null
+    }
 }

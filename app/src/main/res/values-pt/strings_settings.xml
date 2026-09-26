@@ -27,7 +27,7 @@
     <string name="settings_haptics">Vibração ao tocar</string>
     <string name="settings_haptics_subtitle">Resposta tátil nos botões virtuais</string>
     <string name="settings_hide_pad">Esconder com controle físico</string>
-    <string name="settings_hide_pad_subtitle">Oculta os botões quando um gamepad Bluetooth/USB é conectado</string>
+    <string name="settings_hide_pad_subtitle">Oculta os botões quando um gamepad Bluetooth/USB é usado</string>
     <string name="settings_group_emulation">Emulação</string>
     <string name="settings_auto_save">Salvar ao sair</string>
     <string name="settings_auto_save_subtitle">Cria um save state automático ao fechar o jogo</string>

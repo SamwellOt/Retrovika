@@ -4,7 +4,9 @@ import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
 import android.net.Uri
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.HttpStatusException
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 /**
@@ -80,12 +82,18 @@ class CdRomanceSource : CatalogSource {
             else -> "$base/${pagePath(page)}" // home: lançamentos recentes
         }
 
-        val doc = Jsoup.parse(Http.getString(url), base)
-        val entries = doc.select("div.game-container").mapNotNull { parseCard(it) }
+        val html = try {
+            Http.getString(url)
+        } catch (e: HttpStatusException) {
+            // Página além da última: o WordPress responde 404. Fim da lista, não um erro de rede.
+            if (e.code == 404 && page > 1) return CatalogPage(emptyList(), page, page, 0)
+            throw e
+        }
+        val doc = Jsoup.parse(html, base)
+        val cards = doc.select("div.game-container")
+        val entries = cards.mapNotNull { parseCard(it) }
             .let { list -> if (systemId != null) list.filter { it.systemId == systemId } else list }
-        val totalPages = doc.select("a.page-numbers").mapNotNull { it.text().replace(".", "").toIntOrNull() }
-            .maxOrNull()?.coerceAtLeast(page) ?: page
-        return CatalogPage(entries, page, totalPages, entries.size.coerceAtLeast(0))
+        return CatalogPage(entries, page, totalPages(doc, page, hasCards = cards.isNotEmpty()), entries.size)
     }
 
     private fun parseCard(card: Element): CatalogEntry? {
@@ -118,16 +126,18 @@ class CdRomanceSource : CatalogSource {
     private fun classify(section: String): String? {
         systemBySection[section]?.let { return it }
         val s = section.lowercase()
+        // Do mais específico para o mais genérico: "genesis" e "snes" contêm "nes", e
+        // "gameboy-advance" contém "gameboy".
         return when {
             "gameboy-color" in s || "gbc" in s -> "gbc"
-            "gameboy" in s || s == "gb-roms" -> "gb"
             "gba" in s || "advance" in s -> "gba"
+            "gameboy" in s || s == "gb-roms" -> "gb"
             "n64" in s || "nintendo-64" in s -> "n64"
             "gamecube" in s || "gcn" in s -> "gc"
-            "nes" in s -> "nes"
             "snes" in s || "super-nintendo" in s -> "snes"
             "nds" in s || "nintendo-ds" in s -> "nds"
             "megadrive" in s || "mega-drive" in s || "genesis" in s -> "genesis"
+            "nes" in s -> "nes"
             "master-system" in s || s == "sms" -> "sms"
             "sega-cd" in s || "segacd" in s || "mega-cd" in s -> "segacd"
             "32x" in s -> "32x"
@@ -179,6 +189,19 @@ class CdRomanceSource : CatalogSource {
     }
 
     private fun pagePath(page: Int): String = if (page > 1) "page/$page/" else ""
+
+    /**
+     * Total de páginas da listagem. Antes só líamos os números dos links, e números como "1,234"
+     * (ou a ausência deles) faziam a fonte parar na 1ª página, enquanto "Todas as fontes" seguia
+     * pedindo as próximas e mostrava jogos do CDRomance que o filtro dele nunca alcançava.
+     */
+    private fun totalPages(doc: Document, page: Int, hasCards: Boolean): Int {
+        val numbered = doc.select(".page-numbers").mapNotNull { it.text().filter(Char::isDigit).toIntOrNull() }.maxOrNull() ?: 0
+        val hasNext = doc.selectFirst("a.next, a[rel=next], link[rel=next]") != null
+        // Sem paginação reconhecível, mas com jogos na página: tenta a próxima (um 404 encerra a lista).
+        val guessNext = hasCards && numbered == 0
+        return maxOf(page, numbered, if (hasNext || guessNext) page + 1 else page)
+    }
 
     /** Converte "9.14 MB" / "512 KB" / "1.2 GB" em bytes. */
     private fun parseSize(text: String?): Long? {

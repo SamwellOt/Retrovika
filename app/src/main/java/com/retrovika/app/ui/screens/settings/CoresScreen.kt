@@ -27,7 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +38,7 @@ import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.ui.components.Badge
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.components.IconTile
 import com.retrovika.app.ui.components.ScreenHeader
 import com.retrovika.app.ui.components.ambientGlow
@@ -52,17 +53,20 @@ import kotlinx.coroutines.launch
 @Composable
 fun CoresScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val cores = context.container.cores
-    val scope = rememberCoroutineScope()
+    val app = context.container
+    val cores = app.cores
     val states by cores.states.collectAsStateWithLifecycle()
 
-    // Um núcleo pode servir vários consoles (ex.: Genesis Plus GX).
-    val all = Systems.all.flatMap { s -> s.cores.map { it to s } }
-        .groupBy({ it.first.id }, { it.second })
-        .map { (id, systems) -> Triple(id, Systems.all.flatMap { it.cores }.first { it.id == id }, systems) }
+    // Um núcleo pode servir vários consoles (ex.: Genesis Plus GX). O catálogo é fixo: monta uma vez só,
+    // não a cada aviso de progresso de download.
+    val all = remember {
+        Systems.all.flatMap { s -> s.cores.map { it to s } }
+            .groupBy({ it.first.id }, { it })
+            .map { (id, pairs) -> Triple(id, pairs.first().first, pairs.map { it.second }) }
+    }
 
     val installed = all.count { states[it.first] is CoreState.Installed }
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan, secondary = Palette.Violet), contentPadding = PaddingValues(bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan, secondary = Palette.Violet), contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current)) {
         item {
             ScreenHeader(stringResource(R.string.cores_title), subtitle = stringResource(R.string.cores_subtitle, installed, all.size, cores.abi), onBack = onBack)
             Spacer(Modifier.height(10.dp))
@@ -88,7 +92,7 @@ fun CoresScreen(onBack: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(core.displayName, style = MaterialTheme.typography.titleMedium)
-                        if (core.experimental) { Spacer(Modifier.width(8.dp)); Badge("BETA", Palette.Sun) }
+                        if (core.experimental) { Spacer(Modifier.width(8.dp)); Badge(stringResource(R.string.common_beta), Palette.Sun) }
                     }
                     Text(systems.joinToString(" · ") { it.shortName }, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary)
                     val status = when (state) {
@@ -108,7 +112,8 @@ fun CoresScreen(onBack: () -> Unit) {
                     is CoreState.Downloading -> CircularProgressIndicator(progress = { state.progress }, modifier = Modifier.padding(12.dp).size(24.dp), strokeWidth = 3.dp, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
                     is CoreState.Installed -> if (!state.bundled) IconButton(onClick = { cores.uninstall(id) }) { Icon(Icons.Rounded.Delete, stringResource(R.string.common_remove), tint = Palette.TextMuted) }
                     else -> IconButton(
-                        onClick = { scope.launch { runCatching { cores.install(core) } } },
+                        // No escopo do app: a instalação continua se o usuário sair da tela.
+                        onClick = { app.scope.launch { runCatching { cores.install(core) } } },
                         modifier = Modifier.background(Palette.Cyan.copy(alpha = 0.14f), CircleShape),
                     ) { Icon(Icons.Rounded.Download, stringResource(R.string.common_download), tint = Palette.Cyan) }
                 }

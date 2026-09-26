@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import com.retrovika.app.core.library.Game
 import com.swordfish.libretrodroid.VirtualFile
+import java.io.FileNotFoundException
 
 /**
  * Prepara jogos vindos de pastas SAF (content://) para o LibretroDroid via arquivos virtuais.
@@ -16,9 +17,21 @@ object GameFiles {
     /** Extensões de arquivos-índice que apontam para outros arquivos do jogo. */
     val SHEET_EXTENSIONS = setOf("cue", "gdi", "m3u", "ccd")
 
+    /** Abre os descritores do jogo; se algo falhar no meio, os já abertos são fechados. */
     fun virtualFiles(resolver: ContentResolver, game: Game): List<VirtualFile> {
+        val files = mutableListOf<VirtualFile>()
+        try {
+            collect(resolver, game, files)
+        } catch (t: Throwable) {
+            files.forEach { runCatching { it.fileDescriptor.close() } }
+            throw t
+        }
+        return files
+    }
+
+    private fun collect(resolver: ContentResolver, game: Game, files: MutableList<VirtualFile>) {
         val main = Uri.parse(game.uri)
-        val files = mutableListOf(VirtualFile("$VFS_DIR/${game.fileName}", resolver.openFileDescriptor(main, "r")!!))
+        files += VirtualFile("$VFS_DIR/${game.fileName}", resolver.openFileDescriptor(main, "r") ?: throw FileNotFoundException(game.uri))
         val ext = game.fileName.substringAfterLast('.').lowercase()
         if (ext in SHEET_EXTENSIONS) {
             val text = resolver.openInputStream(main)?.bufferedReader()?.use { it.readText() }.orEmpty()
@@ -42,7 +55,6 @@ object GameFiles {
                 }
             }
         }
-        return files
     }
 
     /**

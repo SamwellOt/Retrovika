@@ -13,6 +13,9 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
+/** Resposta HTTP fora da faixa 2xx; [code] permite tratar casos como 404 sem depender da mensagem. */
+class HttpStatusException(val code: Int, url: String) : IOException("HTTP $code: $url")
+
 object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -31,7 +34,7 @@ object Http {
     suspend fun getString(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         client.newCall(request).execute().use { res ->
-            if (!res.isSuccessful) throw IOException("HTTP ${res.code}: $url")
+            if (!res.isSuccessful) throw HttpStatusException(res.code, url)
             res.body!!.string()
         }
     }
@@ -56,12 +59,16 @@ object Http {
         headers: Map<String, String> = emptyMap(),
         onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
-        val part = File(target.parentFile, target.name + ".part")
+        // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
+        // no mesmo .part ao mesmo tempo.
+        target.parentFile?.mkdirs()
+        val part = File.createTempFile("dl-" + target.name.take(60) + ".", ".part", target.parentFile)
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         // Falha ou cancelamento não deixam o .part ocupando espaço.
         try {
             client.newCall(request).execute().use { res ->
-                if (res.code == 403 && headers.isNotEmpty()) throw LocalizedException(R.string.download_forbidden)
+                // Só downloads do navegador interno levam cookies: aí o 403 costuma ser a sessão do site.
+                if (res.code == 403 && "Cookie" in headers) throw LocalizedException(R.string.download_forbidden)
                 if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
                 val body = res.body!!
                 val total = body.contentLength()
@@ -76,8 +83,11 @@ object Http {
                             if (n < 0) break
                             output.write(buffer, 0, n)
                             read += n
-                            if (read - lastReport > 256 * 1024) {
-                                lastReport = read
+                            // Por tempo, não por bytes: numa conexão rápida cada aviso recompõe as telas de
+                            // download dezenas de vezes por segundo.
+                            val now = System.nanoTime()
+                            if (now - lastReport > PROGRESS_INTERVAL_NS) {
+                                lastReport = now
                                 onProgress(if (total > 0) read.toFloat() / total else -1f)
                             }
                         }
@@ -93,4 +103,6 @@ object Http {
         if (!part.renameTo(target)) throw LocalizedException(R.string.download_move_failed, part.name)
         target
     }
+
+    private const val PROGRESS_INTERVAL_NS = 150_000_000L
 }

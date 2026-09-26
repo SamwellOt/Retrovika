@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -13,11 +14,17 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import java.io.IOException
 
 private val Context.dataStore by preferencesDataStore("retrovika_settings")
 
@@ -35,13 +42,13 @@ data class AppSettings(
     val autoLoad: Boolean = true,
     val fastForwardSpeed: Int = 2,
     val lowLatencyAudio: Boolean = true,
-    val hidePadWithController: Boolean = true,
+    val hidePadWithController: Boolean = false,
     val onboardingDone: Boolean = false,
     /** URIs de jogos removidos de pastas vinculadas: o rescan não os adiciona de novo. */
     val hiddenGames: Set<String> = emptySet(),
 )
 
-class SettingsRepository(private val context: Context) {
+class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     private object Keys {
         val folders = stringSetPreferencesKey("linked_folders")
@@ -63,7 +70,10 @@ class SettingsRepository(private val context: Context) {
 
     private val optionsSerializer = MapSerializer(String.serializer(), String.serializer())
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
+    // Um erro de leitura do arquivo de preferências não pode derrubar o app na abertura: usa os padrões.
+    private val data: Flow<Preferences> = context.dataStore.data.catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+
+    val settings: Flow<AppSettings> = data.map { p ->
         AppSettings(
             linkedFolders = p[Keys.folders].orEmpty(),
             shader = p[Keys.shader]?.let { runCatching { ShaderOption.valueOf(it) }.getOrNull() } ?: ShaderOption.DEFAULT,
@@ -74,11 +84,14 @@ class SettingsRepository(private val context: Context) {
             autoLoad = p[Keys.autoLoad] ?: true,
             fastForwardSpeed = p[Keys.ffSpeed] ?: 2,
             lowLatencyAudio = p[Keys.lowLatency] ?: true,
-            hidePadWithController = p[Keys.hidePad] ?: true,
+            hidePadWithController = p[Keys.hidePad] ?: false,
             onboardingDone = p[Keys.onboarding] ?: false,
             hiddenGames = p[Keys.hidden].orEmpty(),
         )
     }
+
+    /** Última leitura em memória, para telas que precisam desenhar sem esperar o DataStore. */
+    val cached: StateFlow<AppSettings> = settings.stateIn(scope, SharingStarted.Eagerly, AppSettings())
 
     suspend fun current(): AppSettings = settings.first()
 
@@ -109,23 +122,27 @@ class SettingsRepository(private val context: Context) {
             .forEach { p.remove(it) }
     }
 
-    fun coreFor(systemId: String): Flow<String?> = context.dataStore.data.map { it[Keys.core(systemId)] }
+    fun coreFor(systemId: String): Flow<String?> = data.map { it[Keys.core(systemId)] }
     suspend fun setCore(systemId: String, coreId: String) = set(Keys.core(systemId), coreId)
 
-    fun presetFor(systemId: String): Flow<Preset> = context.dataStore.data.map { p ->
+    fun presetFor(systemId: String): Flow<Preset> = data.map { p ->
         p[Keys.preset(systemId)]?.let { runCatching { Preset.valueOf(it) }.getOrNull() } ?: Preset.BALANCED
     }
     suspend fun setPreset(systemId: String, preset: Preset) = set(Keys.preset(systemId), preset.name)
 
     /** Opções de núcleo alteradas manualmente pelo usuário (sobrepõem os presets). */
     suspend fun coreOptions(coreId: String): Map<String, String> =
-        context.dataStore.data.first()[Keys.coreOptions(coreId)]
-            ?.let { runCatching { Http.json.decodeFromString(optionsSerializer, it) }.getOrNull() }
-            .orEmpty()
+        decodeOptions(data.first()[Keys.coreOptions(coreId)])
 
+    private fun decodeOptions(raw: String?): Map<String, String> =
+        raw?.let { runCatching { Http.json.decodeFromString(optionsSerializer, it) }.getOrNull() }.orEmpty()
+
+    /** Lê e grava na mesma transação: duas opções trocadas em seguida não se sobrescrevem. */
     suspend fun setCoreOption(coreId: String, key: String, value: String) {
-        val updated = coreOptions(coreId) + (key to value)
-        set(Keys.coreOptions(coreId), Http.json.encodeToString(optionsSerializer, updated))
+        context.dataStore.edit { p ->
+            val updated = decodeOptions(p[Keys.coreOptions(coreId)]) + (key to value)
+            p[Keys.coreOptions(coreId)] = Http.json.encodeToString(optionsSerializer, updated)
+        }
     }
 
     suspend fun resetCoreOptions(coreId: String) = context.dataStore.edit { it.remove(Keys.coreOptions(coreId)) }

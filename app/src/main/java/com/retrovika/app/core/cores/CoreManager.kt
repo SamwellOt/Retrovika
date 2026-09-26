@@ -1,14 +1,17 @@
 package com.retrovika.app.core.cores
 
 import com.retrovika.app.R
-import com.retrovika.app.core.settings.localized
 import android.content.Context
 import android.os.Build
+import android.os.Process
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.LocalizedException
+import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.storage.Zip
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.SystemAsset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +42,12 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
     private val _states = MutableStateFlow<Map<String, CoreState>>(emptyMap())
     val states: StateFlow<Map<String, CoreState>> = _states.asStateFlow()
 
-    val abi: String = Build.SUPPORTED_ABIS.firstOrNull { it in SUPPORTED_ABIS } ?: "arm64-v8a"
+    /**
+     * ABI do processo, não do aparelho: um .so só carrega se for da mesma arquitetura em que o app roda
+     * (num x86 que roda o APK ARM por tradução, por exemplo, o núcleo precisa ser ARM).
+     */
+    val abi: String = (if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS else Build.SUPPORTED_32_BIT_ABIS)
+        .firstOrNull { it in SUPPORTED_ABIS } ?: "arm64-v8a"
 
     init { refresh() }
 
@@ -93,8 +101,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             try {
                 installAssets(core)
             } catch (t: Throwable) {
-                setState(core.id, CoreState.Failed(t.message ?: context.localized().getString(R.string.cores_unknown_error)))
-                throw t
+                fail(core.id, t)
             }
             // Tira o estado "Baixando" deixado pelo progresso dos assets.
             refresh()
@@ -103,13 +110,17 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
         setState(core.id, CoreState.Downloading(0f))
         return try {
             val zip = File(paths.downloadsTmp, "${core.id}.zip")
-            Http.download(downloadUrl(core.id), zip) { p -> setState(core.id, CoreState.Downloading(p * 0.9f)) }
             val target = downloadedFile(core.id)
             val tmp = File(paths.cores, "${core.id}.tmp")
-            Zip.extractFirst(zip, tmp) { it.endsWith(".so") } ?: error(context.localized().getString(R.string.cores_no_library))
-            zip.delete()
+            try {
+                Http.download(downloadUrl(core.id), zip) { p -> setState(core.id, CoreState.Downloading(p * 0.9f)) }
+                Zip.extractFirst(zip, tmp) { it.endsWith(".so") } ?: throw LocalizedException(R.string.cores_no_library)
+            } finally {
+                // Um .zip que falhou na extração não serve para nada e ocuparia o cache.
+                zip.delete()
+            }
             target.delete()
-            tmp.renameTo(target)
+            if (!tmp.renameTo(target)) throw LocalizedException(R.string.download_move_failed, tmp.name)
             // Bibliotecas carregadas dinamicamente devem ser somente leitura (exigência do Android 14+).
             target.setWritable(false, false)
             target.setReadOnly()
@@ -117,9 +128,19 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             refresh()
             target.absolutePath
         } catch (t: Throwable) {
-            setState(core.id, CoreState.Failed(t.message ?: context.localized().getString(R.string.cores_unknown_error)))
-            throw t
+            fail(core.id, t)
         }
+    }
+
+    /** Cancelamento (o usuário saiu da tela) não é falha: o estado volta ao que está no disco. */
+    private fun fail(coreId: String, t: Throwable): Nothing {
+        if (t is CancellationException) {
+            _states.update { it - coreId }
+            refresh()
+        } else {
+            setState(coreId, CoreState.Failed(t.userMessage(context)))
+        }
+        throw t
     }
 
     private suspend fun installAssets(core: CoreInfo) {
@@ -148,6 +169,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
     private fun setState(coreId: String, state: CoreState) = _states.update { it + (coreId to state) }
 
     companion object {
-        val SUPPORTED_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        /** As mesmas de `abiFilters` no build.gradle.kts. */
+        val SUPPORTED_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
     }
 }

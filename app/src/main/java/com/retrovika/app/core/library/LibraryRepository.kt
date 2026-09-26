@@ -3,20 +3,37 @@ package com.retrovika.app.core.library
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import com.retrovika.app.R
+import com.retrovika.app.core.net.LocalizedException
+import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.settings.SettingsRepository
+import com.retrovika.app.core.storage.Archives
+import com.retrovika.app.core.storage.RomExtractor
 import com.retrovika.app.core.storage.FileNames
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameFiles
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Resultado da importação: arquivos sem console reconhecido e os que falharam, com o motivo. */
+data class ImportResult(val unknown: List<String>, val failed: List<Pair<String, String>>)
 
 data class ScanState(val running: Boolean = false, val found: Int = 0, val current: String? = null)
 
@@ -30,6 +47,7 @@ class LibraryRepository(
     private val dao: GameDao,
     private val paths: StoragePaths,
     private val settings: SettingsRepository,
+    private val scope: CoroutineScope,
 ) {
     private val resolver: ContentResolver = context.contentResolver
 
@@ -37,10 +55,14 @@ class LibraryRepository(
     val scan: StateFlow<ScanState> = _scan.asStateFlow()
 
     val all = dao.observeAll()
-    val recent = dao.observeRecent()
-    val favorites = dao.observeFavorites()
-    val newest = dao.observeNewest()
-    val counts = dao.observeCounts()
+    // Listas das abas mantidas em memória: ao voltar para uma aba os dados já estão prontos,
+    // sem refazer a consulta nem desenhar a tela vazia antes do resultado chegar.
+    val recent: StateFlow<List<Game>> = dao.observeRecent().cached()
+    val favorites: StateFlow<List<Game>> = dao.observeFavorites().cached()
+    val newest: StateFlow<List<Game>> = dao.observeNewest().cached()
+    val counts: StateFlow<List<SystemCount>> = dao.observeCounts().cached()
+
+    private fun <T> Flow<List<T>>.cached() = stateIn(scope, SharingStarted.Eagerly, emptyList())
     fun bySystem(systemId: String) = dao.observeBySystem(systemId)
     fun search(query: String) = dao.search(query)
     fun observe(id: Long) = dao.observe(id)
@@ -74,12 +96,43 @@ class LibraryRepository(
         file.delete()
     }
 
-    /** Varre todas as fontes, adiciona jogos novos e remove os que sumiram. */
+    private val startupScanDone = AtomicBoolean(false)
+
+    /** Varredura da abertura do app: só a primeira chamada do processo varre. */
+    suspend fun rescanOnStartup() {
+        if (startupScanDone.compareAndSet(false, true)) rescan()
+    }
+
+    private val scanLock = Mutex()
+    @Volatile private var rescanPending = false
+
+    /**
+     * Varre todas as fontes, adiciona jogos novos e remove os que sumiram. Um pedido feito durante
+     * uma varredura não se perde: a varredura em andamento roda mais uma vez ao terminar, já com as
+     * pastas e os jogos ocultos atualizados.
+     */
     suspend fun rescan() = withContext(Dispatchers.IO) {
-        if (_scan.value.running) return@withContext
+        rescanPending = true
+        // Rechecado depois de soltar a trava: um pedido que chegou entre o fim do laço e o unlock
+        // encontraria a trava ocupada e seria descartado.
+        while (rescanPending) {
+            if (!scanLock.tryLock()) return@withContext
+            try {
+                while (rescanPending) {
+                    rescanPending = false
+                    scanOnce()
+                }
+            } finally {
+                scanLock.unlock()
+            }
+        }
+    }
+
+    private suspend fun scanOnce() {
         _scan.value = ScanState(running = true)
+        lastProgress = 0L
+        val found = mutableListOf<Game>()
         try {
-            val found = mutableListOf<Game>()
             scanInternal(found)
             val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
@@ -98,7 +151,7 @@ class LibraryRepository(
             }
             if (missing.isNotEmpty()) dao.deleteByUris(missing)
         } finally {
-            _scan.value = ScanState(running = false, found = _scan.value.found)
+            _scan.value = ScanState(running = false, found = found.size)
         }
     }
 
@@ -152,6 +205,8 @@ class LibraryRepository(
             if (folders.size > 6) continue
             val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
             val entries = mutableListOf<Triple<String, String, Long>>()
+            // Null significa que o provedor não achou a pasta (cartão removido, app desinstalado):
+            // tratá-la como vazia apagaria os jogos dela, então a árvore é marcada como ilegível.
             resolver.query(
                 children,
                 arrayOf(
@@ -169,7 +224,7 @@ class LibraryRepository(
                     if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) queue += id to (folders + name)
                     else entries += Triple(id, name, c.getLong(3))
                 }
-            }
+            } ?: throw IOException("Pasta inacessível: $docId")
             val folderKey = folders.joinToString("/")
             var sheetsKnown = true
             entries.filter { it.second.substringAfterLast('.', "").lowercase() in GameFiles.SHEET_EXTENSIONS }.forEach { (id, name, size) ->
@@ -192,7 +247,14 @@ class LibraryRepository(
         }
     }
 
+    private var lastProgress = 0L
+
     private fun progress(count: Int, name: String) {
+        // No máximo ~6 atualizações por segundo: cada uma recompõe as telas que mostram o progresso,
+        // e emitir a cada arquivo travava o menu durante a varredura de coleções grandes.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastProgress < PROGRESS_INTERVAL_MS) return
+        lastProgress = now
         _scan.value = _scan.value.copy(found = count, current = name)
     }
 
@@ -216,16 +278,33 @@ class LibraryRepository(
      * Se [forcedSystem] for nulo, o sistema é detectado pela extensão.
      * Retorna os arquivos que não puderam ser identificados.
      */
-    suspend fun importFiles(uris: List<Uri>, forcedSystem: GameSystem?): List<String> = withContext(Dispatchers.IO) {
+    suspend fun importFiles(uris: List<Uri>, forcedSystem: GameSystem?): ImportResult = withContext(Dispatchers.IO) {
         val unknown = mutableListOf<String>()
+        val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
         uris.forEach { uri ->
             val name = FileNames.safe(displayName(uri) ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
             val dest = File(paths.romsFor(system.id), name)
-            resolver.openInputStream(uri)?.use { input -> dest.outputStream().use { input.copyTo(it) } } ?: return@forEach
-            copied += system to dest
+            // A cópia vai para um temporário e só substitui o destino no fim: reimportar um jogo que já
+            // está na biblioteca e falhar no meio não pode apagar a ROM que já existia.
+            val part = File(dest.parentFile, "$name.part")
+            // Um arquivo com problema (sem espaço, compactado corrompido…) não derruba os outros:
+            // o motivo volta para a tela junto com o nome.
+            try {
+                val input = resolver.openInputStream(uri) ?: throw LocalizedException(R.string.system_import_unreadable)
+                input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
+                if (!part.renameTo(dest)) throw IOException("rename ${part.name}")
+                val file = if (Archives.isArchive(dest) && !system.keepArchives) RomExtractor.extract(dest, dest.parentFile!!, system) else dest
+                copied += system to file
+            } catch (c: CancellationException) {
+                part.delete()
+                throw c
+            } catch (t: Throwable) {
+                part.delete()
+                failed += name to t.userMessage(context)
+            }
         }
         // Os arquivos escolhidos juntos são irmãos: um .cue com seus .bin vira um jogo só.
         val siblings = copied.map { it.second.name.lowercase() }.toSet()
@@ -236,7 +315,7 @@ class LibraryRepository(
             val auxiliary = RomNaming.isAuxiliaryFile(file.name, siblings, file.name.lowercase() in referenced, sheetsKnown = true)
             if (!auxiliary) dao.insert(buildGame(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED))
         }
-        unknown
+        ImportResult(unknown, failed)
     }
 
     /** Registra um arquivo baixado pelo gerenciador de downloads. */
@@ -268,5 +347,6 @@ class LibraryRepository(
     private companion object {
         /** Índices maiores que isso não são .cue/.m3u de verdade; não vale abri-los na varredura. */
         const val MAX_SHEET_BYTES = 256L * 1024
+        const val PROGRESS_INTERVAL_MS = 160L
     }
 }

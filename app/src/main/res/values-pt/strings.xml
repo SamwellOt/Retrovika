@@ -50,4 +50,11 @@
     <string name="region_brazil">Brasil</string>
     <string name="region_korea">Coreia</string>
     <string name="region_china">China</string>
+    <string name="common_error_no_internet">Sem conexão com a internet (ou o servidor está fora do ar)</string>
+    <string name="common_error_timeout">O servidor demorou demais para responder. Tente de novo.</string>
+    <string name="common_error_secure_connection">Não foi possível estabelecer uma conexão segura com o servidor</string>
+    <string name="common_error_no_space">Espaço de armazenamento insuficiente</string>
+    <string name="common_error_memory">Memória insuficiente para concluir a operação</string>
+    <string name="common_error_unknown">Erro inesperado (%s)</string>
+    <string name="common_beta">BETA</string>
 </resources>

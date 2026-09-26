@@ -378,8 +378,9 @@ private fun AnalogStick(size: Dp, source: Int, listener: PadListener) {
         Modifier
             .size(size)
             .pointerInput(Unit) {
-                val radius = min(this.size.width, this.size.height) / 2f
                 fun emit(p: Offset) {
+                    // Lido a cada movimento: o tamanho muda sem reiniciar o bloco (tela dividida, dobráveis).
+                    val radius = min(this.size.width, this.size.height) / 2f
                     val v = Offset(p.x - radius, p.y - radius)
                     val len = v.getDistance()
                     val clamped = if (len > radius) v * (radius / len) else v

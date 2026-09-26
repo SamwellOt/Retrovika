@@ -1,44 +1,53 @@
 package com.retrovika.app.core.storage
 
+import org.apache.commons.compress.archivers.zip.ZipFile
 import java.io.File
 import java.io.IOException
-import java.util.zip.ZipInputStream
 
+/**
+ * Pacotes .zip de núcleos e arquivos de sistema. Usa o ZipFile do commons-compress (lê o diretório
+ * central): aceita Deflate64, ZIP64 e entradas com "data descriptor", que o ZipInputStream recusa.
+ * Uma extração que falha no meio apaga o que já tinha escrito, para não deixar arquivos pela metade.
+ */
 object Zip {
     /** Extrai todo o conteúdo de [zip] em [destDir], protegendo contra "zip slip". */
     fun extractAll(zip: File, destDir: File): List<File> {
         val out = mutableListOf<File>()
         val canonicalDest = destDir.canonicalPath + File.separator
-        ZipInputStream(zip.inputStream().buffered()).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                val file = File(destDir, entry.name)
-                if (!file.canonicalPath.startsWith(canonicalDest)) throw IOException("Entrada inválida: ${entry.name}")
-                if (entry.isDirectory) file.mkdirs() else {
+        try {
+            open(zip).use { zf ->
+                for (entry in zf.entries.toList()) {
+                    val file = File(destDir, entry.name)
+                    if (!file.canonicalPath.startsWith(canonicalDest)) throw IOException("Entrada inválida: ${entry.name}")
+                    if (entry.isDirectory) { file.mkdirs(); continue }
+                    if (!zf.canReadEntryData(entry)) throw IOException("Compressão não suportada: ${entry.name}")
                     file.parentFile?.mkdirs()
-                    file.outputStream().use { zis.copyTo(it) }
                     out += file
+                    zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
                 }
             }
+        } catch (t: Throwable) {
+            out.forEach { it.delete() }
+            throw t
         }
         return out
     }
 
     /** Extrai apenas a primeira entrada que satisfaz [predicate]. */
-    fun extractFirst(zip: File, target: File, predicate: (String) -> Boolean): File? {
-        ZipInputStream(zip.inputStream().buffered()).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: return null
-                if (!entry.isDirectory && predicate(entry.name)) {
-                    target.parentFile?.mkdirs()
-                    target.outputStream().use { zis.copyTo(it) }
-                    return target
-                }
-            }
+    fun extractFirst(zip: File, target: File, predicate: (String) -> Boolean): File? = open(zip).use { zf ->
+        val entry = zf.entries.toList().firstOrNull { !it.isDirectory && predicate(it.name) } ?: return null
+        if (!zf.canReadEntryData(entry)) throw IOException("Compressão não suportada: ${entry.name}")
+        target.parentFile?.mkdirs()
+        try {
+            zf.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+        } catch (t: Throwable) {
+            target.delete()
+            throw t
         }
+        target
     }
 
-    fun entryNames(zip: File): List<String> = ZipInputStream(zip.inputStream().buffered()).use { zis ->
-        generateSequence { zis.nextEntry }.filterNot { it.isDirectory }.map { it.name }.toList()
-    }
+    fun entryNames(zip: File): List<String> = open(zip).use { zf -> zf.entries.toList().filterNot { it.isDirectory }.map { it.name } }
+
+    private fun open(file: File): ZipFile = ZipFile.builder().setFile(file).get()
 }

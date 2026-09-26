@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -54,17 +53,17 @@ import kotlinx.coroutines.launch
 fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
-    val library = context.container.library
-    val scope = rememberCoroutineScope()
-    val counts by library.counts.collectAsStateWithLifecycle(emptyList())
+    val app = context.container
+    val library = app.library
+    val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var onlyWithGames by rememberSaveable { mutableStateOf(false) }
     val results by remember(query) { if (query.isBlank()) flowOf(emptyList()) else library.search(query) }
         .collectAsStateWithLifecycle(emptyList())
 
-    val countMap = counts.associate { it.systemId to it.count }
-    val systems = Systems.all.filter { !onlyWithGames || (countMap[it.id] ?: 0) > 0 }
+    val countMap = remember(counts) { counts.associate { it.systemId to it.count } }
+    val systems = remember(countMap, onlyWithGames) { Systems.all.filter { !onlyWithGames || (countMap[it.id] ?: 0) > 0 } }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
@@ -87,7 +86,7 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
                     },
                 ) {
                     IconButton(
-                        onClick = { scope.launch { library.rescan() } },
+                        onClick = { app.scope.launch { library.rescan() } },
                         enabled = !scan.running,
                         modifier = Modifier.background(Palette.SurfaceHigh, CircleShape),
                     ) {

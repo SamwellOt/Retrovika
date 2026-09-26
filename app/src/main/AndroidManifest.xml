@@ -12,6 +12,8 @@
     <application
         android:name=".RetrovikaApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -41,7 +43,7 @@
             android:launchMode="singleTask"
             android:taskAffinity="com.retrovika.app.game"
             android:autoRemoveFromRecents="true"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
             android:resizeableActivity="true"
             android:theme="@style/Theme.Retrovika.Game" />

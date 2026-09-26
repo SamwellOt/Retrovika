@@ -1,14 +1,16 @@
 package com.retrovika.app.core.catalog
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 class CatalogRepository {
+    // A ordem aqui é a dos filtros no Explorar e a do rodízio em "Todas as fontes".
     val sources: List<CatalogSource> = listOf(
+        CdRomanceSource(),
         HomebrewHubSource(),
         InternetArchiveSource(),
-        CdRomanceSource(),
     )
 
     val supportedSystems: Set<String> get() = sources.flatMap { it.systems }.toSet()
@@ -37,10 +39,14 @@ class CatalogRepository {
                 else -> true
             }
         }
-        val pages = applicable
-            .map { src -> async { runCatching { src.search(query, systemId, page, null) }.getOrNull() } }
+        val results = applicable
+            .map { src -> async { runCatching { src.search(query, systemId, page, null) } } }
             .awaitAll()
-            .filterNotNull()
+        results.forEach { r -> r.exceptionOrNull()?.let { if (it is CancellationException) throw it } }
+        val pages = results.mapNotNull { it.getOrNull() }
+        // Uma fonte fora do ar não esconde as outras; mas se todas falharam (sem internet, por
+        // exemplo), o motivo precisa chegar à tela em vez de uma lista vazia.
+        if (pages.isEmpty()) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
         CatalogPage(
             entries = interleave(pages.map { it.entries }),
             page = page,
