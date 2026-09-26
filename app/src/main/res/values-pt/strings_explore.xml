@@ -45,6 +45,8 @@
     <string name="browser_close_site">Fechar site</string>
     <string name="browser_loading">Carregando…</string>
     <string name="browser_reload">Recarregar</string>
+    <string name="browser_open_external">Abrir no navegador</string>
+    <string name="browser_no_external">Nenhum navegador encontrado para abrir a página</string>
     <string name="browser_add_to_library">Adicionar à biblioteca</string>
     <string name="browser_console">Console</string>
     <string name="browser_console_unknown">Não deu para identificar o console pelo arquivo; escolha na lista.</string>

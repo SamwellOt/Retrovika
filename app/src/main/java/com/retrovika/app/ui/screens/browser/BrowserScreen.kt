@@ -11,6 +11,8 @@ import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -35,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.Language
@@ -234,6 +237,9 @@ private fun BrowserView(
     val webView = remember {
         WebView(context).apply {
             settings.javaScriptEnabled = true
+            // O WebView se identifica com "; wv" e "Version/4.0" no User-Agent; alguns sites (Vimm's Lair
+            // entre eles) escondem o conteúdo ou os downloads para WebViews. Aqui ele se apresenta como o Chrome.
+            settings.userAgentString = chromeUserAgent(settings.userAgentString)
             settings.domStorageEnabled = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
@@ -301,6 +307,14 @@ private fun BrowserView(
                 )
             }
             IconButton(onClick = { webView.reload() }) { Icon(Icons.Rounded.Refresh, stringResource(R.string.browser_reload)) }
+            // Plano B para sites que não funcionam no navegador interno.
+            IconButton(onClick = {
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pageUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(context, R.string.browser_no_external, Toast.LENGTH_SHORT).show()
+                }
+            }) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.browser_open_external)) }
             IconButton(onClick = onOpenDownloads) {
                 BadgedBox(badge = { if (activeDownloads > 0) androidx.compose.material3.Badge { Text("$activeDownloads") } }) {
                     Icon(Icons.Rounded.Downloading, stringResource(R.string.explore_downloads))
@@ -375,3 +389,7 @@ private fun fileNameFor(url: String, contentDisposition: String?, mimeType: Stri
     val name = (fromHeader ?: fromUrl ?: URLUtil.guessFileName(url, contentDisposition, mimeType)).trim()
     return name.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { "jogo" }
 }
+
+/** User-Agent do WebView sem as marcas de WebView ("; wv" e "Version/x.y"), igual ao do Chrome no mesmo aparelho. */
+internal fun chromeUserAgent(webView: String): String =
+    webView.replace("; wv)", ")").replace(Regex("""Version/[\d.]+ """), "")
