@@ -25,6 +25,8 @@
     <string name="game_state_saved">Estado salvo no slot %d</string>
     <string name="game_state_loaded">Estado carregado</string>
     <string name="game_state_load_failed">Não foi possível carregar este estado</string>
+    <string name="game_state_save_failed">Não foi possível salvar o estado: %1$s</string>
+    <string name="game_autosave_incompatible">O salvamento automático não é compatível com este núcleo e não foi carregado. Ele foi guardado como cópia de segurança.</string>
     <string name="game_disk_inserted">Disco %d inserido</string>
     <string name="game_menu">Menu</string>
     <string name="game_fast_forward">Avanço rápido</string>

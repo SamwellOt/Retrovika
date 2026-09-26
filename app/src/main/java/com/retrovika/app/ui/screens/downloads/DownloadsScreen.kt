@@ -64,6 +64,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
 
 @Composable
@@ -73,7 +74,7 @@ fun DownloadsScreen(onBack: () -> Unit) {
     val tasks by manager.tasks.collectAsStateWithLifecycle()
     var showLinkDialog by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan), contentPadding = PaddingValues(bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan), contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current)) {
         item {
             ScreenHeader(
                 stringResource(R.string.downloads_title),

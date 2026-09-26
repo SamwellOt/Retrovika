@@ -59,7 +59,10 @@ object Http {
         headers: Map<String, String> = emptyMap(),
         onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
-        val part = File(target.parentFile, target.name + ".part")
+        // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
+        // no mesmo .part ao mesmo tempo.
+        target.parentFile?.mkdirs()
+        val part = File.createTempFile("dl-" + target.name.take(60) + ".", ".part", target.parentFile)
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         // Falha ou cancelamento não deixam o .part ocupando espaço.
         try {
@@ -80,8 +83,11 @@ object Http {
                             if (n < 0) break
                             output.write(buffer, 0, n)
                             read += n
-                            if (read - lastReport > 256 * 1024) {
-                                lastReport = read
+                            // Por tempo, não por bytes: numa conexão rápida cada aviso recompõe as telas de
+                            // download dezenas de vezes por segundo.
+                            val now = System.nanoTime()
+                            if (now - lastReport > PROGRESS_INTERVAL_NS) {
+                                lastReport = now
                                 onProgress(if (total > 0) read.toFloat() / total else -1f)
                             }
                         }
@@ -97,4 +103,6 @@ object Http {
         if (!part.renameTo(target)) throw LocalizedException(R.string.download_move_failed, part.name)
         target
     }
+
+    private const val PROGRESS_INTERVAL_NS = 150_000_000L
 }

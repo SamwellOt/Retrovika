@@ -79,7 +79,9 @@ import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCard
 import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.readableAccent
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
@@ -88,7 +90,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val context = LocalContext.current
     val app = context.container
     val scope = rememberCoroutineScope()
-    val games by remember(systemId) { app.library.bySystem(systemId) }.collectAsStateWithLifecycle(emptyList())
+    // Null até o Room responder: começar com lista vazia mostrava "nenhum jogo" durante a transição.
+    val loaded by remember(systemId) { app.library.bySystem(systemId) }.collectAsStateWithLifecycle(null)
+    val games = loaded.orEmpty()
     val selectedCore by remember(systemId) { app.settings.coreFor(systemId) }.collectAsStateWithLifecycle(null)
     val preset by remember(systemId) { app.settings.presetFor(systemId) }.collectAsStateWithLifecycle(Preset.BALANCED)
     // BIOS com hash errado também contam como ausentes; em grupos, basta uma alternativa válida.
@@ -101,7 +105,8 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        scope.launch {
+        // No escopo do app: sair da tela no meio da cópia não a interrompe nem deixa arquivos pela metade.
+        app.scope.launch(Dispatchers.Main) {
             importMessage = context.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
             importErrors = null
             val result = app.library.importFiles(uris, system)
@@ -119,7 +124,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     LazyVerticalGrid(
         columns = GridCells.Adaptive(118.dp),
         modifier = Modifier.fillMaxSize().ambientGlow(primary = accent, secondary = Palette.Violet, height = 520.dp),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp + LocalBottomInset.current),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -139,7 +144,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     ScreenHeader(
                         system.name,
                         kicker = "${system.manufacturer} · ${system.year}",
-                        subtitle = pluralStringResource(R.plurals.games_count, games.size, games.size),
+                        subtitle = if (loaded == null) null else pluralStringResource(R.plurals.games_count, games.size, games.size),
                         onBack = onBack,
                         inset = 4.dp,
                     ) { if (system.experimental) Badge(stringResource(R.string.system_experimental), Palette.Sun) }
@@ -232,7 +237,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
             }
         }
 
-        if (games.isEmpty()) {
+        if (loaded != null && games.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth()) {
                     EmptyState(

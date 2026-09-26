@@ -36,7 +36,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,14 +58,16 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
 fun BiosScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val bios = context.container.bios
-    val scope = rememberCoroutineScope()
+    val app = context.container
+    val bios = app.bios
     var version by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     val systems = remember { Systems.all.filter { it.bios.isNotEmpty() } }
@@ -76,7 +77,7 @@ fun BiosScreen(onBack: () -> Unit) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        scope.launch {
+        app.scope.launch(Dispatchers.Main) {
             val found = bios.import(uris)
             message = if (found.isEmpty()) context.getString(R.string.bios_ui_none_recognized)
             else context.getString(R.string.bios_ui_imported, found.joinToString())
@@ -84,7 +85,7 @@ fun BiosScreen(onBack: () -> Unit) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Sun, secondary = Palette.Neon), contentPadding = PaddingValues(bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Sun, secondary = Palette.Neon), contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current)) {
         item {
             val ready = systems.count { sys -> checks[sys].orEmpty().let { c -> c.isNotEmpty() && BiosManager.unsatisfied(sys.bios) { b -> c.any { it.bios == b && it.status == BiosStatus.OK } }.isEmpty() } }
             ScreenHeader(stringResource(R.string.bios_ui_title), subtitle = stringResource(R.string.bios_ui_subtitle, ready, systems.size), onBack = onBack)

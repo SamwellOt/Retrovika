@@ -59,4 +59,5 @@
     <string name="common_error_no_space">Not enough free storage space</string>
     <string name="common_error_memory">Not enough memory to finish the operation</string>
     <string name="common_error_unknown">Unexpected error (%s)</string>
+    <string name="common_beta">BETA</string>
 </resources>

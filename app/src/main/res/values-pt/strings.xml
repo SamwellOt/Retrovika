@@ -56,4 +56,5 @@
     <string name="common_error_no_space">Espaço de armazenamento insuficiente</string>
     <string name="common_error_memory">Memória insuficiente para concluir a operação</string>
     <string name="common_error_unknown">Erro inesperado (%s)</string>
+    <string name="common_beta">BETA</string>
 </resources>

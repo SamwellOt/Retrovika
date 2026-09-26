@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -54,8 +53,8 @@ import kotlinx.coroutines.launch
 fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
-    val library = context.container.library
-    val scope = rememberCoroutineScope()
+    val app = context.container
+    val library = app.library
     val counts by library.counts.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
@@ -87,7 +86,7 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
                     },
                 ) {
                     IconButton(
-                        onClick = { scope.launch { library.rescan() } },
+                        onClick = { app.scope.launch { library.rescan() } },
                         enabled = !scan.running,
                         modifier = Modifier.background(Palette.SurfaceHigh, CircleShape),
                     ) {

@@ -412,7 +412,7 @@ fun SystemTile(system: GameSystem, count: Int, onClick: () -> Unit, modifier: Mo
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(system.shortName, fontFamily = DisplayFamily, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
-                if (system.experimental) Badge("BETA", Palette.Sun)
+                if (system.experimental) Badge(stringResource(R.string.common_beta), Palette.Sun)
             }
             Spacer(Modifier.height(20.dp))
             Text(system.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

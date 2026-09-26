@@ -3,6 +3,7 @@ package com.retrovika.app.core.storage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -42,16 +43,41 @@ class ArchivesTest {
     }
 
     @Test
-    fun `extrai sem subpastas e so as entradas pedidas`() {
+    fun `extrai sem a pasta comum e so as entradas pedidas`() {
         val archive = zip(
             "disco.zip",
             mapOf("Jogo (USA)/Jogo (USA).cue" to "FILE \"Jogo (USA).bin\" BINARY", "Jogo (USA)/Jogo (USA).bin" to "dados", "leia.txt" to "oi"),
         )
         val dest = tmp.newFolder("roms")
         val out = Archives.extract(archive, dest, setOf("Jogo (USA)/Jogo (USA).cue", "Jogo (USA)/Jogo (USA).bin"))
-        assertEquals(listOf("Jogo (USA).cue", "Jogo (USA).bin"), out.map { it.name })
-        assertTrue(out.all { it.parentFile == dest && it.exists() })
+        assertEquals(listOf("Jogo (USA).cue", "Jogo (USA).bin"), out.values.map { it.name })
+        assertTrue(out.values.all { it.parentFile == dest && it.exists() })
         assertFalse(File(dest, "leia.txt").exists())
+    }
+
+    @Test
+    fun `mantem subpastas de discos citadas pelo m3u`() {
+        val archive = zip(
+            "multi.zip",
+            mapOf(
+                "Jogo.m3u" to "Disco 1/Jogo.cue\nDisco 2/Jogo.cue",
+                "Disco 1/Jogo.cue" to "1",
+                "Disco 2/Jogo.cue" to "2",
+            ),
+        )
+        val dest = tmp.newFolder("psx")
+        val out = Archives.extract(archive, dest, setOf("Jogo.m3u", "Disco 1/Jogo.cue", "Disco 2/Jogo.cue"))
+        assertEquals(File(dest, "Jogo.m3u"), out["Jogo.m3u"])
+        assertEquals("1", File(dest, "Disco 1/Jogo.cue").readText())
+        assertEquals("2", File(dest, "Disco 2/Jogo.cue").readText())
+    }
+
+    @Test
+    fun `recusa entradas que escapam da pasta`() {
+        val archive = zip("mal.zip", mapOf("../fora.bin" to "x", "ok.bin" to "y"))
+        val dest = tmp.newFolder("roms2")
+        assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("../fora.bin", "ok.bin")) }
+        assertFalse(File(dest.parentFile, "fora.bin").exists())
     }
 
     @Test

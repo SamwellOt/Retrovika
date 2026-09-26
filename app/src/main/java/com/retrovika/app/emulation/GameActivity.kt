@@ -170,7 +170,9 @@ class GameActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val newId = intent.getLongExtra(EXTRA_GAME_ID, -1)
-        if (::game.isInitialized && newId == game.id) return
+        // Compara com o pedido atual, não com o jogo carregado: durante a preparação ele ainda não
+        // existe, e um toque duplo em "Jogar" reiniciava a instalação do núcleo.
+        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1)) return
         persist(auto = settings.autoSave)
         setIntent(intent)
         recreate()
@@ -202,6 +204,8 @@ class GameActivity : ComponentActivity() {
             }
             try {
                 app.cores.install(core)
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 return fail(getString(R.string.game_core_install_failed), getString(R.string.game_core_install_failed_message, t.userMessage(this)))
             } finally {
@@ -232,7 +236,9 @@ class GameActivity : ComponentActivity() {
         val data = GLRetroViewData(this).apply {
             coreFilePath = corePath
             if (game.isContentUri) {
-                gameVirtualFiles = runCatching { GameFiles.virtualFiles(contentResolver, game) }.getOrElse {
+                // IPC com o provedor SAF: fora da thread principal.
+                gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
                     return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
                 }
             } else {
@@ -277,21 +283,28 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (settings.autoLoad) {
-                withContext(Dispatchers.IO) { states.read(SaveStates.AUTO_SLOT) }?.let { data ->
-                    view.unserializeState(data)
-                    toast = getString(R.string.game_progress_restored)
+                withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
+                    if (view.unserializeState(data)) {
+                        toast = getString(R.string.game_progress_restored)
+                    } else {
+                        // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
+                        // senão o próximo salvamento automático gravaria a tela de início por cima dele.
+                        withContext(Dispatchers.IO) { runCatching { states.backup(SaveStates.AUTO_SLOT) } }
+                        toast = getString(R.string.game_autosave_incompatible)
+                    }
                 }
             }
             autoSaveReady = true
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
-            val vibrator = vibrator()
+            val vibrator = rumbleVibrator ?: return@launch
+            // O núcleo só avisa quando a força muda: a vibração dura até chegar força zero (ou o jogo pausar),
+            // não um pulso curto por aviso, que fazia o Rumble Pak parar em 60 ms.
             view.getRumbleEvents().collect { e ->
                 val strength = maxOf(e.strengthStrong, e.strengthWeak)
-                if (strength > 0f && vibrator?.hasVibrator() == true) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(60, (strength * 255).toInt().coerceIn(1, 255)))
-                }
+                if (strength > 0f) vibrator.vibrate(VibrationEffect.createOneShot(RUMBLE_MAX_MS, (strength * 255).toInt().coerceIn(1, 255)))
+                else vibrator.cancel()
             }
         }
     }
@@ -362,7 +375,10 @@ class GameActivity : ComponentActivity() {
         val running = activityResumed && !menuOpen && ui is EmulationUi.Running
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
         if (running && sessionStart == 0L) sessionStart = System.currentTimeMillis()
-        if (!running) flushPlayTime()
+        if (!running) {
+            flushPlayTime()
+            rumbleVibrator?.cancel()
+        }
         emulationOwner.registry.currentState = target
     }
 
@@ -403,19 +419,45 @@ class GameActivity : ComponentActivity() {
         override fun slots() = if (::states.isInitialized) states.slots() else emptyList()
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
 
-        override fun save(slot: Int) {
+        override fun save(slot: Int, onDone: () -> Unit) {
             val view = retroView ?: return
             val data = view.serializeState(false)
-            states.write(slot, data, menuSnapshot)
-            toast = getString(R.string.game_state_saved, slot)
+            // Núcleo que não gera estado: gravar o vazio apagaria um save bom do slot.
+            if (data.isEmpty()) {
+                toast = getString(R.string.game_state_save_failed, getString(R.string.game_error_serialization))
+                return
+            }
+            val thumbnail = menuSnapshot
+            // Estados de PS2/GameCube passam de dezenas de MB: a gravação sai da thread principal.
+            lifecycleScope.launch {
+                toast = try {
+                    withContext(Dispatchers.IO) { states.write(slot, data, thumbnail) }
+                    getString(R.string.game_state_saved, slot)
+                } catch (c: kotlinx.coroutines.CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    getString(R.string.game_state_save_failed, t.userMessage(this@GameActivity))
+                }
+                onDone()
+            }
         }
 
         override fun load(slot: Int) {
             val view = retroView ?: return
-            val data = states.read(slot) ?: return
-            val ok = view.unserializeState(data, false)
-            toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
-            if (ok) close()
+            lifecycleScope.launch {
+                val data = try {
+                    withContext(Dispatchers.IO) { states.read(slot) }
+                } catch (c: kotlinx.coroutines.CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    null
+                }
+                // A Activity pode ter trocado de jogo ou fechado durante a leitura.
+                if (retroView !== view) return@launch
+                val ok = data != null && data.isNotEmpty() && view.unserializeState(data, false)
+                toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
+                if (ok) close()
+            }
         }
 
         override fun toggleFastForward() {
@@ -453,6 +495,12 @@ class GameActivity : ComponentActivity() {
 
         override fun exit() {
             persist(auto = settings.autoSave)
+            // O LibretroDroid é global e o onDestroy desta Activity roda só depois que a próxima tela
+            // aparece: abrir outro jogo logo em seguida teria o emulador novo destruído por este.
+            // Encerrar aqui, de forma síncrona, fecha essa janela.
+            flushPlayTime()
+            retroView = null
+            emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
             finish()
         }
     }
@@ -465,6 +513,9 @@ class GameActivity : ComponentActivity() {
         if (menuOpen) return
         val view = retroView
         if (view == null || ui !is EmulationUi.Running) { finish(); return }
+        // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
+        // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
+        releaseAllInputs(view)
         // Captura a tela antes de pausar: vira a miniatura dos save states.
         captureFrame(view) { bmp ->
             menuSnapshot = bmp
@@ -530,6 +581,17 @@ class GameActivity : ComponentActivity() {
         return super.dispatchGenericMotionEvent(event)
     }
 
+    private fun releaseAllInputs(view: GLRetroView) {
+        val ports = (InputDevice.getDeviceIds().mapNotNull { id ->
+            InputDevice.getDevice(id)?.takeIf { isPhysicalController(it) }?.controllerNumber?.takeIf { it > 0 }?.minus(1)
+        } + 0).toSet()
+        ports.forEach { port ->
+            RETROPAD_KEYS.forEach { view.sendKeyEvent(KeyEvent.ACTION_UP, it, port) }
+            listOf(GLRetroView.MOTION_SOURCE_DPAD, GLRetroView.MOTION_SOURCE_ANALOG_LEFT, GLRetroView.MOTION_SOURCE_ANALOG_RIGHT)
+                .forEach { view.sendMotionEvent(it, 0f, 0f, port) }
+        }
+    }
+
     private fun isGamepadEvent(event: KeyEvent): Boolean {
         val src = event.source
         return KeyEvent.isGamepadButton(event.keyCode) ||
@@ -553,16 +615,27 @@ class GameActivity : ComponentActivity() {
         }
     }
 
-    private fun vibrator(): Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        getSystemService(VibratorManager::class.java)?.defaultVibrator
-    } else {
-        @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as? Vibrator
+    private val rumbleVibrator: Vibrator? by lazy {
+        val v = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as? Vibrator
+        }
+        v?.takeIf { it.hasVibrator() }
     }
 
     companion object {
         private const val EXTRA_GAME_ID = "game_id"
         private const val BLACK_SCREEN_CHECKS = 4
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
+        /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
+        private const val RUMBLE_MAX_MS = 10_000L
+        private val RETROPAD_KEYS = listOf(
+            KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y,
+            KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,
+            KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_SELECT,
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+        )
 
         fun launch(context: Context, gameId: Long) {
             context.startActivity(
@@ -586,7 +659,7 @@ interface MenuActions {
     fun close()
     fun slots(): List<SaveSlot>
     fun thumbnail(slot: Int): Bitmap?
-    fun save(slot: Int)
+    fun save(slot: Int, onDone: () -> Unit)
     fun load(slot: Int)
     fun toggleFastForward()
     fun setShader(option: ShaderOption)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: mesmas regras de backup_rules.xml, para a nuvem e para a transferência entre aparelhos. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="cores/" />
+        <exclude domain="external" path="Retrovika/roms/" />
+        <exclude domain="external" path="Retrovika/states/" />
+        <exclude domain="external" path="Retrovika/system/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="cores/" />
+    </device-transfer>
+</data-extraction-rules>

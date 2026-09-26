@@ -126,16 +126,18 @@ class CdRomanceSource : CatalogSource {
     private fun classify(section: String): String? {
         systemBySection[section]?.let { return it }
         val s = section.lowercase()
+        // Do mais específico para o mais genérico: "genesis" e "snes" contêm "nes", e
+        // "gameboy-advance" contém "gameboy".
         return when {
             "gameboy-color" in s || "gbc" in s -> "gbc"
-            "gameboy" in s || s == "gb-roms" -> "gb"
             "gba" in s || "advance" in s -> "gba"
+            "gameboy" in s || s == "gb-roms" -> "gb"
             "n64" in s || "nintendo-64" in s -> "n64"
             "gamecube" in s || "gcn" in s -> "gc"
-            "nes" in s -> "nes"
             "snes" in s || "super-nintendo" in s -> "snes"
             "nds" in s || "nintendo-ds" in s -> "nds"
             "megadrive" in s || "mega-drive" in s || "genesis" in s -> "genesis"
+            "nes" in s -> "nes"
             "master-system" in s || s == "sms" -> "sms"
             "sega-cd" in s || "segacd" in s || "mega-cd" in s -> "segacd"
             "32x" in s -> "32x"

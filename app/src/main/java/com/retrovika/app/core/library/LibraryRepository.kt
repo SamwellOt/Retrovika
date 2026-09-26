@@ -26,8 +26,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Resultado da importação: arquivos sem console reconhecido e os que falharam, com o motivo. */
 data class ImportResult(val unknown: List<String>, val failed: List<Pair<String, String>>)
@@ -93,9 +96,39 @@ class LibraryRepository(
         file.delete()
     }
 
-    /** Varre todas as fontes, adiciona jogos novos e remove os que sumiram. */
+    private val startupScanDone = AtomicBoolean(false)
+
+    /** Varredura da abertura do app: só a primeira chamada do processo varre. */
+    suspend fun rescanOnStartup() {
+        if (startupScanDone.compareAndSet(false, true)) rescan()
+    }
+
+    private val scanLock = Mutex()
+    @Volatile private var rescanPending = false
+
+    /**
+     * Varre todas as fontes, adiciona jogos novos e remove os que sumiram. Um pedido feito durante
+     * uma varredura não se perde: a varredura em andamento roda mais uma vez ao terminar, já com as
+     * pastas e os jogos ocultos atualizados.
+     */
     suspend fun rescan() = withContext(Dispatchers.IO) {
-        if (_scan.value.running) return@withContext
+        rescanPending = true
+        // Rechecado depois de soltar a trava: um pedido que chegou entre o fim do laço e o unlock
+        // encontraria a trava ocupada e seria descartado.
+        while (rescanPending) {
+            if (!scanLock.tryLock()) return@withContext
+            try {
+                while (rescanPending) {
+                    rescanPending = false
+                    scanOnce()
+                }
+            } finally {
+                scanLock.unlock()
+            }
+        }
+    }
+
+    private suspend fun scanOnce() {
         _scan.value = ScanState(running = true)
         lastProgress = 0L
         val found = mutableListOf<Game>()
@@ -172,6 +205,8 @@ class LibraryRepository(
             if (folders.size > 6) continue
             val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
             val entries = mutableListOf<Triple<String, String, Long>>()
+            // Null significa que o provedor não achou a pasta (cartão removido, app desinstalado):
+            // tratá-la como vazia apagaria os jogos dela, então a árvore é marcada como ilegível.
             resolver.query(
                 children,
                 arrayOf(
@@ -189,7 +224,7 @@ class LibraryRepository(
                     if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) queue += id to (folders + name)
                     else entries += Triple(id, name, c.getLong(3))
                 }
-            }
+            } ?: throw IOException("Pasta inacessível: $docId")
             val folderKey = folders.joinToString("/")
             var sheetsKnown = true
             entries.filter { it.second.substringAfterLast('.', "").lowercase() in GameFiles.SHEET_EXTENSIONS }.forEach { (id, name, size) ->
@@ -252,18 +287,22 @@ class LibraryRepository(
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
             val dest = File(paths.romsFor(system.id), name)
+            // A cópia vai para um temporário e só substitui o destino no fim: reimportar um jogo que já
+            // está na biblioteca e falhar no meio não pode apagar a ROM que já existia.
+            val part = File(dest.parentFile, "$name.part")
             // Um arquivo com problema (sem espaço, compactado corrompido…) não derruba os outros:
             // o motivo volta para a tela junto com o nome.
             try {
                 val input = resolver.openInputStream(uri) ?: throw LocalizedException(R.string.system_import_unreadable)
-                input.use { stream -> dest.outputStream().use { stream.copyTo(it) } }
+                input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
+                if (!part.renameTo(dest)) throw IOException("rename ${part.name}")
                 val file = if (Archives.isArchive(dest) && !system.keepArchives) RomExtractor.extract(dest, dest.parentFile!!, system) else dest
                 copied += system to file
             } catch (c: CancellationException) {
-                dest.delete()
+                part.delete()
                 throw c
             } catch (t: Throwable) {
-                dest.delete()
+                part.delete()
                 failed += name to t.userMessage(context)
             }
         }

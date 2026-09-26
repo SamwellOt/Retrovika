@@ -66,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -158,7 +159,8 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = {
-                        scope.launch {
+                        // Varreduras no escopo do app: trocar de aba no meio não as interrompe.
+                        app.scope.launch {
                             runCatching { context.contentResolver.releasePersistableUriPermission(Uri.parse(uri), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                             repo.removeFolder(uri)
                             app.library.rescan()
@@ -174,14 +176,14 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                 trailing = if (scan.running) {
                     { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Cyan) }
                 } else null,
-            ) { if (!scan.running) scope.launch { app.library.rescan() } }
+            ) { if (!scan.running) app.scope.launch { app.library.rescan() } }
             if (s.hiddenGames.isNotEmpty()) {
                 RowDivider()
                 NavRow(
                     Icons.Rounded.VisibilityOff, Palette.Violet,
                     stringResource(R.string.settings_hidden_games, s.hiddenGames.size),
                     stringResource(R.string.settings_hidden_games_subtitle),
-                ) { scope.launch { app.library.unhideAll() } }
+                ) { app.scope.launch { app.library.unhideAll() } }
             }
         }
 
@@ -192,9 +194,17 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
         }
 
         group(R.string.settings_group_pad) {
-            PadPreview(s.padOpacity, s.padScale)
-            SliderRow(stringResource(R.string.settings_pad_opacity), s.padOpacity, 0.2f..1f) { v -> scope.launch { repo.setPadOpacity(v) } }
-            SliderRow(stringResource(R.string.settings_pad_size), s.padScale, 0.7f..1.4f) { v -> scope.launch { repo.setPadScale(v) } }
+            // O valor arrastado fica na tela e só é gravado ao soltar: gravar no DataStore a cada quadro
+            // do arraste enfileirava dezenas de escritas por segundo e o controle travava.
+            var opacity by remember(s.padOpacity) { mutableFloatStateOf(s.padOpacity) }
+            var padScale by remember(s.padScale) { mutableFloatStateOf(s.padScale) }
+            PadPreview(opacity, padScale)
+            SliderRow(stringResource(R.string.settings_pad_opacity), opacity, 0.2f..1f, onChange = { opacity = it }) {
+                scope.launch { repo.setPadOpacity(opacity) }
+            }
+            SliderRow(stringResource(R.string.settings_pad_size), padScale, 0.7f..1.4f, onChange = { padScale = it }) {
+                scope.launch { repo.setPadScale(padScale) }
+            }
             RowDivider()
             SwitchRow(Icons.Rounded.Vibration, Palette.Neon, stringResource(R.string.settings_haptics), stringResource(R.string.settings_haptics_subtitle), s.haptics) { scope.launch { repo.setHaptics(it) } }
             RowDivider()
@@ -381,7 +391,7 @@ private fun SwitchRow(icon: ImageVector, tint: Color, title: String, subtitle: S
 }
 
 @Composable
-private fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+private fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, onDone: () -> Unit) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
@@ -392,7 +402,7 @@ private fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRan
             )
         }
         Slider(
-            value = value, onValueChange = onChange, valueRange = range,
+            value = value, onValueChange = onChange, onValueChangeFinished = onDone, valueRange = range,
             colors = SliderDefaults.colors(thumbColor = Palette.Neon, activeTrackColor = Palette.Neon, inactiveTrackColor = Palette.SurfaceHighest),
         )
     }

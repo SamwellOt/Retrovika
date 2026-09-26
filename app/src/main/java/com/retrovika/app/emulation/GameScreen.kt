@@ -355,7 +355,7 @@ private fun StatesList(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
 @Composable
 private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit, stacked: Boolean) {
     val save: @Composable (Modifier) -> Unit = { m ->
-        FilledTonalButton(onClick = { menu.save(slot.index); onChanged() }, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+        FilledTonalButton(onClick = { menu.save(slot.index, onChanged) }, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
             Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_save), maxLines = 1)
         }
     }
@@ -406,7 +406,7 @@ private fun StatesTab(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
 @Composable
 private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOption) {
     var currentShader by remember { mutableStateOf(shader) }
-    val disks = remember { menu.disks() }
+    var disks by remember { mutableStateOf(menu.disks()) }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             SettingRow(stringResource(R.string.game_fast_forward), stringResource(R.string.game_fast_forward_subtitle)) {
@@ -430,7 +430,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                 Spacer(Modifier.height(8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     repeat(disks.first) { i ->
-                        SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i) })
+                        SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i); disks = disks.first to i })
                     }
                 }
             }

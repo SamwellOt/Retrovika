@@ -71,6 +71,7 @@ import com.retrovika.app.container
 import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.DownloadManager
+import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.catalog.DownloadStatus
 import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.systems.Systems
@@ -107,6 +108,9 @@ fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
     val prompt by vm.prompt.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val active = downloads.count { it.status in DownloadManager.ACTIVE }
+    // Um mapa por lista de downloads, não uma busca por card: títulos se repetem entre consoles e
+    // fontes, e a lista muda a cada aviso de progresso. A lista vem do mais novo para o mais antigo.
+    val downloadsByEntry = remember(downloads) { downloads.asReversed().filter { it.entryKey != null }.associateBy { it.entryKey } }
 
     val nearEnd by remember {
         derivedStateOf {
@@ -180,7 +184,7 @@ fun ExploreScreen(onOpenDownloads: () -> Unit, onOpenBrowser: () -> Unit) {
         }
 
         items(state.entries, key = { it.sourceId + it.id }) { entry ->
-            val task = downloads.firstOrNull { it.title == entry.title }
+            val task = downloadsByEntry[entry.downloadKey]
             CatalogCard(
                 entry, task,
                 sourceLabel = if (state.aggregated) vm.sourceName(entry.sourceId) else null,

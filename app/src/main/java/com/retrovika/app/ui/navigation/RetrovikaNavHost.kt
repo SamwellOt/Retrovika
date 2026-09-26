@@ -54,10 +54,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -100,7 +101,6 @@ fun RetrovikaNavHost() {
     val nav = rememberNavController()
     val context = LocalContext.current
     val app = context.container
-    val scope = rememberCoroutineScope()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
 
@@ -114,7 +114,8 @@ fun RetrovikaNavHost() {
             Toast.makeText(context, R.string.folder_link_failed, Toast.LENGTH_LONG).show()
         }
         if (uri != null && granted) {
-            scope.launch {
+            // No escopo do app: trocar de aba durante a varredura não a interrompe.
+            app.scope.launch {
                 app.settings.addFolder(uri.toString())
                 app.library.rescan()
             }
@@ -122,7 +123,9 @@ fun RetrovikaNavHost() {
     }
     val addFolder = { folderPicker.launch(null) }
 
-    LaunchedEffect(Unit) { app.library.rescan() }
+    // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
+    // de todas as pastas a cada vez deixava o menu lento.
+    LaunchedEffect(Unit) { app.library.rescanOnStartup() }
 
     Scaffold(
         containerColor = Palette.Ink,
@@ -154,41 +157,43 @@ fun RetrovikaNavHost() {
                     else fadeOut(tween(EXIT_FADE_MS)) + slideOutHorizontally(tween(PUSH_MS)) { it / 10 }
                 },
             ) {
-                composable("home") {
+                composable("home") { entry ->
                     HomeScreen(
-                        onOpenGame = { nav.navigate("game/$it") },
-                        onOpenSystem = { nav.navigate("system/$it") },
+                        onOpenGame = { nav.open(entry, "game/$it") },
+                        onOpenSystem = { nav.open(entry, "system/$it") },
                         onExplore = { nav.navigateTab("explore") },
                         onAddFolder = addFolder,
                     )
                 }
-                composable("library") {
-                    LibraryScreen(onOpenSystem = { nav.navigate("system/$it") }, onOpenGame = { nav.navigate("game/$it") })
+                composable("library") { entry ->
+                    LibraryScreen(onOpenSystem = { nav.open(entry, "system/$it") }, onOpenGame = { nav.open(entry, "game/$it") })
                 }
-                composable("explore") {
-                    ExploreScreen(onOpenDownloads = { nav.navigate("downloads") }, onOpenBrowser = { nav.navigate("browser") })
+                composable("explore") { entry ->
+                    ExploreScreen(onOpenDownloads = { nav.open(entry, "downloads") }, onOpenBrowser = { nav.open(entry, "browser") })
                 }
-                composable("browser") { BrowserScreen(onBack = nav::popBackStack, onOpenDownloads = { nav.navigate("downloads") }) }
-                composable("settings") {
+                composable("browser") { entry ->
+                    BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = { nav.open(entry, "downloads") })
+                }
+                composable("settings") { entry ->
                     SettingsScreen(
                         onAddFolder = addFolder,
-                        onOpenCores = { nav.navigate("settings/cores") },
-                        onOpenBios = { nav.navigate("settings/bios") },
+                        onOpenCores = { nav.open(entry, "settings/cores") },
+                        onOpenBios = { nav.open(entry, "settings/bios") },
                     )
                 }
-                composable("downloads") { DownloadsScreen(onBack = nav::popBackStack) }
-                composable("settings/cores") { CoresScreen(onBack = nav::popBackStack) }
-                composable("settings/bios") { BiosScreen(onBack = nav::popBackStack) }
+                composable("downloads") { entry -> DownloadsScreen(onBack = { nav.back(entry) }) }
+                composable("settings/cores") { entry -> CoresScreen(onBack = { nav.back(entry) }) }
+                composable("settings/bios") { entry -> BiosScreen(onBack = { nav.back(entry) }) }
                 composable("system/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
                     SystemScreen(
                         systemId = entry.arguments?.getString("id").orEmpty(),
-                        onBack = nav::popBackStack,
-                        onOpenGame = { nav.navigate("game/$it") },
-                        onOpenBios = { nav.navigate("settings/bios") },
+                        onBack = { nav.back(entry) },
+                        onOpenGame = { nav.open(entry, "game/$it") },
+                        onOpenBios = { nav.open(entry, "settings/bios") },
                     )
                 }
                 composable("game/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                    GameDetailsScreen(gameId = entry.arguments?.getLong("id") ?: -1, onBack = nav::popBackStack)
+                    GameDetailsScreen(gameId = entry.arguments?.getLong("id") ?: -1, onBack = { nav.back(entry) })
                 }
             }
           }
@@ -199,6 +204,21 @@ fun RetrovikaNavHost() {
             )
         }
     }
+}
+
+/**
+ * Navega só se a tela de origem ainda é a ativa. A tela que está saindo continua clicável durante a
+ * transição: sem isso, um toque duplo empilhava o mesmo jogo duas vezes.
+ */
+private fun NavHostController.open(from: NavBackStackEntry, route: String) {
+    if (from.lifecycle.currentState != Lifecycle.State.RESUMED) return
+    navigate(route) { launchSingleTop = true }
+}
+
+/** Voltar pela tela que pediu: um toque duplo em "voltar" não desempilha também a tela de baixo (nem esvazia a pilha). */
+private fun NavHostController.back(from: NavBackStackEntry) {
+    if (from.lifecycle.currentState != Lifecycle.State.RESUMED) return
+    popBackStack()
 }
 
 private fun NavHostController.navigateTab(route: String) {

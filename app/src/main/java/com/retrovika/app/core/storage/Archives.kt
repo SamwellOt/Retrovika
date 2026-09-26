@@ -45,14 +45,27 @@ object Archives {
     fun entryNames(archive: File): List<String> = entries(archive).map { it.name }
 
     /**
-     * Extrai as entradas [names] direto em [destDir], sem subpastas (só o nome do arquivo),
-     * o que também impede "zip slip". Retorna os arquivos criados, na ordem do arquivo compactado.
+     * Extrai as entradas [names] em [destDir] e devolve, na ordem do arquivo compactado, o arquivo
+     * criado para cada entrada. A pasta comum a todas as entradas (o "Jogo (USA)/" que muitos sites
+     * põem por fora) é descartada; subpastas abaixo dela ficam, porque um .m3u cita os discos pelo
+     * caminho relativo ("Disco 1/Jogo.cue") e achatar tudo quebraria a referência (ou faria discos de
+     * mesmo nome se sobrescreverem). Caminhos que escapariam de [destDir] ("zip slip") são recusados.
      * Se algo falhar no meio, os arquivos já extraídos são apagados.
      */
-    fun extract(archive: File, destDir: File, names: Set<String>): List<File> {
+    fun extract(archive: File, destDir: File, names: Set<String>): Map<String, File> {
         destDir.mkdirs()
-        val out = mutableListOf<File>()
-        fun target(name: String) = File(destDir, name.substringAfterLast('/').substringAfterLast('\\'))
+        val out = LinkedHashMap<String, File>()
+        val canonicalDest = destDir.canonicalPath + File.separator
+        val prefix = commonFolder(names)
+        fun target(name: String): File {
+            val relative = name.replace('\\', '/').removePrefix(prefix).trimStart('/')
+            val file = File(destDir, relative)
+            if (relative.isEmpty() || !file.canonicalPath.startsWith(canonicalDest)) {
+                throw LocalizedException(R.string.download_extract_failed, name)
+            }
+            file.parentFile?.mkdirs()
+            return file
+        }
         try {
             when (formatOf(archive)) {
                 // ZipFile lê o diretório central: aceita Deflate64, ZIP64 e entradas com "data descriptor",
@@ -62,7 +75,7 @@ object Archives {
                         if (entry.isDirectory || entry.name !in names) continue
                         if (!zf.canReadEntryData(entry)) throw LocalizedException(R.string.download_unsupported_format, entry.name)
                         val file = target(entry.name)
-                        out += file
+                        out[entry.name] = file
                         zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
                     }
                 }
@@ -71,17 +84,23 @@ object Archives {
                         val entry = sz.nextEntry ?: break
                         if (entry.isDirectory || entry.name !in names) continue
                         val file = target(entry.name)
-                        out += file
+                        out[entry.name] = file
                         sz.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
                     }
                 }
                 null -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
             }
         } catch (t: Throwable) {
-            out.forEach { it.delete() }
+            out.values.forEach { it.delete() }
             throw t
         }
         return out
+    }
+
+    /** Pasta de primeiro nível comum a todas as entradas ("Jogo (USA)/"), ou "" se não houver. */
+    internal fun commonFolder(names: Collection<String>): String {
+        val firsts = names.map { it.replace('\\', '/') }.map { if ('/' in it) it.substringBefore('/') + "/" else "" }.toSet()
+        return firsts.singleOrNull().orEmpty()
     }
 
     private fun readHead(file: File, n: Int): ByteArray = runCatching {

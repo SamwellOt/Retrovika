@@ -36,9 +36,8 @@ object RomExtractor {
             }
             val extracted = Archives.extract(archive, dir, wanted)
             archive.delete()
-            val mainName = main.substringAfterLast('/').substringAfterLast('\\')
-            return extracted.firstOrNull { it.name == mainName }
-                ?: throw LocalizedException(R.string.download_extract_failed, mainName)
+            return extracted[main]
+                ?: throw LocalizedException(R.string.download_extract_failed, main.substringAfterLast('/'))
         } catch (t: Throwable) {
             archive.delete()
             throw when (t) {

@@ -85,6 +85,7 @@ import androidx.compose.material.icons.rounded.Storage
 import com.retrovika.app.ui.components.Pill
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.screens.home.formatPlayTime
+import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -265,7 +266,7 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(40.dp + LocalBottomInset.current))
         }
     }
 
@@ -305,8 +306,9 @@ private fun CoreNotice(core: CoreInfo) {
     val app = LocalContext.current.container
     val states by app.cores.states.collectAsStateWithLifecycle()
     val state = states[core.id] ?: CoreState.NotInstalled
-    // needsInstall confere o .so e os pacotes de sistema; é refeito quando o estado dos núcleos muda.
-    val missing = remember(states, core.id) { app.cores.needsInstall(core) }
+    // needsInstall confere o .so e os pacotes de sistema no disco: refeito só quando o tipo de estado
+    // muda (instalado, falhou…), não a cada aviso de progresso do download.
+    val missing = remember(state::class, core.id) { app.cores.needsInstall(core) }
     if (!missing && state !is CoreState.Downloading) return
     Row(
         Modifier

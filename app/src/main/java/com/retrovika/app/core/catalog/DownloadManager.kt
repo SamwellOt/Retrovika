@@ -39,7 +39,12 @@ data class DownloadTask(
     val status: DownloadStatus = DownloadStatus.QUEUED,
     val error: String? = null,
     val gameId: Long? = null,
+    /** Fonte + entrada do catálogo ("fonte|id"), para ligar o download ao card certo no Explorar. */
+    val entryKey: String? = null,
 )
+
+/** Chave que liga uma entrada do catálogo aos seus downloads (títulos se repetem entre consoles e fontes). */
+val CatalogEntry.downloadKey: String get() = "$sourceId|$id"
 
 class DownloadManager(
     private val context: Context,
@@ -56,8 +61,8 @@ class DownloadManager(
 
     fun enqueue(entry: CatalogEntry) {
         val system = Systems.byId(entry.systemId) ?: return
-        if (_tasks.value.any { it.title == entry.title && it.status in ACTIVE }) return
-        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl)
+        if (isActive(entry)) return
+        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) {
             val resolved = resolve(entry)
             runDownload(task.id, resolved.downloadUrl, resolved.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
@@ -67,16 +72,20 @@ class DownloadManager(
     /** Baixa a variante (região/revisão) escolhida pelo usuário para uma entrada. */
     fun enqueue(entry: CatalogEntry, variant: RomVariant) {
         val system = Systems.byId(entry.systemId) ?: return
-        if (_tasks.value.any { it.title == entry.title && it.status in ACTIVE }) return
-        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl)
+        if (isActive(entry)) return
+        val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) {
             runDownload(task.id, variant.downloadUrl, variant.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
         }
     }
 
+    private fun isActive(entry: CatalogEntry) = _tasks.value.any { it.entryKey == entry.downloadKey && it.status in ACTIVE }
+
     /** Download a partir de um link fornecido pelo próprio usuário (ex.: link direto na nuvem). */
     fun enqueueUrl(url: String, system: GameSystem) {
-        val name = url.substringAfterLast('/').substringBefore('?').ifBlank { context.localized().getString(R.string.download_default_name) }.let { java.net.URLDecoder.decode(it, "UTF-8") }
+        // Uri.decode não lança exceção com um "%" solto (URLDecoder derrubaria o app) nem troca "+" por espaço.
+        val name = url.substringAfterLast('/').substringBefore('?').substringBefore('#').let { android.net.Uri.decode(it) }
+            .ifBlank { context.localized().getString(R.string.download_default_name) }
         val task = DownloadTask(title = name.substringBeforeLast('.'), systemId = system.id, coverUrl = null)
         launchTask(task) { runDownload(task.id, url, name, system, task.title, null, null, null) }
     }
