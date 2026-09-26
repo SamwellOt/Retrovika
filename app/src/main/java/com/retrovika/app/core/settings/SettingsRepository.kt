@@ -39,7 +39,7 @@ data class AppSettings(
     val autoLoad: Boolean = true,
     val fastForwardSpeed: Int = 2,
     val lowLatencyAudio: Boolean = true,
-    val hidePadWithController: Boolean = true,
+    val hidePadWithController: Boolean = false,
     val onboardingDone: Boolean = false,
     /** URIs de jogos removidos de pastas vinculadas: o rescan não os adiciona de novo. */
     val hiddenGames: Set<String> = emptySet(),
@@ -78,7 +78,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             autoLoad = p[Keys.autoLoad] ?: true,
             fastForwardSpeed = p[Keys.ffSpeed] ?: 2,
             lowLatencyAudio = p[Keys.lowLatency] ?: true,
-            hidePadWithController = p[Keys.hidePad] ?: true,
+            hidePadWithController = p[Keys.hidePad] ?: false,
             onboardingDone = p[Keys.onboarding] ?: false,
             hiddenGames = p[Keys.hidden].orEmpty(),
         )

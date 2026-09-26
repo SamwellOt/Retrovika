@@ -17,6 +17,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -248,23 +253,43 @@ private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastF
     var tab by remember { mutableStateOf(MenuTab.STATES) }
     var refresh by remember { mutableIntStateOf(0) }
 
-    Box(
+    // Fundo opaco: o controle virtual e o HUD não aparecem por trás do menu.
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xF02A0C52), Color(0xF00B0714), Color(0xF50B0714))))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A0C52), Palette.Ink, Palette.Ink)))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
     ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Kicker(listOfNotNull(system?.shortName, menu.coreName().takeIf { it.isNotBlank() }).joinToString(" · "))
-                    Spacer(Modifier.height(8.dp))
-                    Text(game?.title.orEmpty(), style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        // Em retrato (ou telas estreitas) o cabeçalho empilha e os estados viram lista vertical.
+        val compact = maxWidth < 600.dp || maxHeight > maxWidth
+        Column(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = if (compact) 20.dp else 24.dp, vertical = if (compact) 16.dp else 20.dp),
+        ) {
+            val kicker = listOfNotNull(system?.shortName, menu.coreName().takeIf { it.isNotBlank() }).joinToString(" · ")
+            if (compact) {
+                Kicker(kicker)
+                Spacer(Modifier.height(8.dp))
+                Text(game?.title.orEmpty(), style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GradientButton(stringResource(R.string.common_continue), menu::close, Modifier.weight(1f), icon = Icons.Rounded.PlayArrow, height = 48.dp)
+                    GhostButton(stringResource(R.string.game_exit), menu::exit, icon = Icons.AutoMirrored.Rounded.ExitToApp)
                 }
-                Spacer(Modifier.width(12.dp))
-                GhostButton(stringResource(R.string.game_exit), menu::exit, icon = Icons.AutoMirrored.Rounded.ExitToApp)
-                Spacer(Modifier.width(10.dp))
-                GradientButton(stringResource(R.string.common_continue), menu::close, icon = Icons.Rounded.PlayArrow, height = 44.dp)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Kicker(kicker)
+                        Spacer(Modifier.height(8.dp))
+                        Text(game?.title.orEmpty(), style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    GhostButton(stringResource(R.string.game_exit), menu::exit, icon = Icons.AutoMirrored.Rounded.ExitToApp)
+                    Spacer(Modifier.width(10.dp))
+                    GradientButton(stringResource(R.string.common_continue), menu::close, icon = Icons.Rounded.PlayArrow, height = 44.dp)
+                }
             }
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -273,7 +298,7 @@ private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastF
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    MenuTab.STATES -> StatesTab(menu, refresh) { refresh++ }
+                    MenuTab.STATES -> if (compact) StatesList(menu, refresh) { refresh++ } else StatesTab(menu, refresh) { refresh++ }
                     MenuTab.OPTIONS -> OptionsTab(menu, fastForward, shader)
                     MenuTab.CORE -> CoreTab(menu)
                 }
@@ -283,11 +308,81 @@ private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastF
 }
 
 @Composable
+private fun slotTitle(slot: SaveSlot) =
+    if (slot.index == SaveStates.AUTO_SLOT) stringResource(R.string.game_slot_auto) else stringResource(R.string.game_slot_n, slot.index)
+
+private fun slotTime(slot: SaveSlot) =
+    slot.timestamp?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)) } ?: "—"
+
+@Composable
+private fun SlotThumb(menu: MenuActions, slot: SaveSlot, refresh: Int, modifier: Modifier) {
+    val thumb = remember(refresh, slot.index) { menu.thumbnail(slot.index) }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Palette.Ink), contentAlignment = Alignment.Center) {
+        if (thumb != null) Image(thumb.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Text(stringResource(if (slot.exists) R.string.game_slot_no_image else R.string.game_slot_empty), color = Palette.TextMuted, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** Retrato: um estado por linha, miniatura à esquerda e botões empilhados à direita. */
+@Composable
+private fun StatesList(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
+    val slots = remember(refresh) { menu.slots() }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
+        items(slots, key = { it.index }) { slot ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Palette.SurfaceHigh)
+                    .border(1.dp, Palette.Outline, RoundedCornerShape(18.dp))
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SlotThumb(menu, slot, refresh, Modifier.width(132.dp).aspectRatio(4f / 3f))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(slotTitle(slot), style = MaterialTheme.typography.titleSmall)
+                    Text(slotTime(slot), style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1)
+                    Spacer(Modifier.height(8.dp))
+                    SlotButtons(menu, slot, onChanged, stacked = true)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit, stacked: Boolean) {
+    val save: @Composable (Modifier) -> Unit = { m ->
+        FilledTonalButton(onClick = { menu.save(slot.index); onChanged() }, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_save), maxLines = 1)
+        }
+    }
+    val load: @Composable (Modifier) -> Unit = { m ->
+        OutlinedButton(onClick = { menu.load(slot.index) }, enabled = slot.exists, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Icon(Icons.Rounded.Upload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_load), maxLines = 1)
+        }
+    }
+    val canSave = slot.index != SaveStates.AUTO_SLOT
+    if (stacked) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (canSave) save(Modifier.fillMaxWidth())
+            load(Modifier.fillMaxWidth())
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (canSave) save(Modifier.weight(1f))
+            load(Modifier.weight(1f))
+        }
+    }
+}
+
+/** Paisagem: cartões lado a lado; a miniatura encolhe para os botões continuarem visíveis. */
+@Composable
 private fun StatesTab(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
     val slots = remember(refresh) { menu.slots() }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         items(slots, key = { it.index }) { slot ->
-            val thumb = remember(refresh, slot.index) { menu.thumbnail(slot.index) }
             Column(
                 Modifier
                     .width(200.dp)
@@ -296,32 +391,12 @@ private fun StatesTab(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
                     .border(1.dp, Palette.Outline, RoundedCornerShape(18.dp))
                     .padding(10.dp),
             ) {
-                // Em paisagem a altura é curta: a miniatura encolhe para os botões continuarem visíveis.
-                Box(
-                    Modifier.weight(1f, fill = false).aspectRatio(4f / 3f).align(Alignment.CenterHorizontally)
-                        .clip(RoundedCornerShape(12.dp)).background(Palette.Ink),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (thumb != null) Image(thumb.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    else Text(stringResource(if (slot.exists) R.string.game_slot_no_image else R.string.game_slot_empty), color = Palette.TextMuted, style = MaterialTheme.typography.labelMedium)
-                }
+                SlotThumb(menu, slot, refresh, Modifier.weight(1f, fill = false).aspectRatio(4f / 3f).align(Alignment.CenterHorizontally))
                 Spacer(Modifier.height(8.dp))
-                Text(if (slot.index == SaveStates.AUTO_SLOT) stringResource(R.string.game_slot_auto) else stringResource(R.string.game_slot_n, slot.index), style = MaterialTheme.typography.titleSmall)
-                Text(
-                    slot.timestamp?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)) } ?: "—",
-                    style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary,
-                )
+                Text(slotTitle(slot), style = MaterialTheme.typography.titleSmall)
+                Text(slotTime(slot), style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (slot.index != SaveStates.AUTO_SLOT) {
-                        FilledTonalButton(onClick = { menu.save(slot.index); onChanged() }, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                            Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_save))
-                        }
-                    }
-                    OutlinedButton(onClick = { menu.load(slot.index) }, enabled = slot.exists, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                        Icon(Icons.Rounded.Upload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_load))
-                    }
-                }
+                SlotButtons(menu, slot, onChanged, stacked = false)
             }
         }
     }
@@ -341,7 +416,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
             Column {
                 Text(stringResource(R.string.game_video_filter), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ShaderOption.entries.forEach { opt ->
                         SelectChip(stringResource(opt.label), currentShader == opt, onClick = { currentShader = opt; menu.setShader(opt) })
                     }
@@ -352,7 +427,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
             Column {
                 Text(stringResource(R.string.game_change_disc), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     repeat(disks.first) { i ->
                         SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i) })
                     }

@@ -41,7 +41,7 @@
             android:launchMode="singleTask"
             android:taskAffinity="com.retrovika.app.game"
             android:autoRemoveFromRecents="true"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
             android:resizeableActivity="true"
             android:theme="@style/Theme.Retrovika.Game" />

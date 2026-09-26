@@ -168,9 +168,10 @@ class GameActivity : ComponentActivity() {
         system = Systems.byId(game.systemId) ?: return fail(getString(R.string.game_unknown_system), game.systemId)
         states = SaveStates(app.paths, game)
         settings = app.settings.current()
+        // A tela acompanha o sensor: girar o celular alterna entre retrato e paisagem em qualquer console.
         requestedOrientation = when (system.orientation) {
-            Orientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
-            Orientation.LANDSCAPE, Orientation.ANY -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            Orientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            Orientation.PORTRAIT, Orientation.ANY -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
 
         val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
