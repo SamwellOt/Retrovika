@@ -3,53 +3,97 @@ package com.retrovika.app.core.storage
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import org.apache.commons.compress.archivers.zip.ZipFile
 import java.io.File
-import java.io.IOException
-import java.util.zip.ZipInputStream
 
 /** Leitura de ROMs compactadas (.zip e .7z), formatos comuns em sites de download. */
 object Archives {
     private val supported = setOf("zip", "7z")
 
+    enum class Format { ZIP, SEVEN_Z }
+
+    /** Uma entrada do arquivo compactado; [size] é o tamanho descompactado (-1 se desconhecido). */
+    data class Entry(val name: String, val size: Long)
+
     fun isArchive(file: File): Boolean = file.extension.lowercase() in supported
 
-    fun entryNames(archive: File): List<String> = when (archive.extension.lowercase()) {
-        "zip" -> Zip.entryNames(archive)
-        "7z" -> sevenZ(archive).use { sz -> sz.entries.filterNot { it.isDirectory }.map { it.name } }
-        else -> emptyList()
+    /**
+     * Formato real pelos primeiros bytes, não pela extensão: sites às vezes servem um .7z com nome
+     * .zip (ou o contrário). Null quando não é ZIP nem 7z.
+     */
+    fun formatOf(file: File): Format? {
+        val head = readHead(file, 6)
+        return when {
+            head.size >= 4 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte() -> Format.ZIP
+            head.size >= 6 && head.contentEquals(SEVEN_Z_MAGIC) -> Format.SEVEN_Z
+            else -> null
+        }
     }
+
+    /** Verdadeiro se o arquivo é uma página HTML (o site devolveu erro/aviso em vez do arquivo). */
+    fun isHtml(file: File): Boolean {
+        val text = String(readHead(file, 512), Charsets.ISO_8859_1).trimStart('﻿', ' ', '\n', '\r', '\t').lowercase()
+        return text.startsWith("<!doctype html") || text.startsWith("<html") || text.startsWith("<head")
+    }
+
+    fun entries(archive: File): List<Entry> = when (formatOf(archive)) {
+        Format.ZIP -> zip(archive).use { zf -> zf.entries.toList().filterNot { it.isDirectory }.map { Entry(it.name, it.size) } }
+        Format.SEVEN_Z -> sevenZ(archive).use { sz -> sz.entries.filterNot { it.isDirectory }.map { Entry(it.name, if (it.hasStream()) it.size else 0L) } }
+        null -> emptyList()
+    }
+
+    fun entryNames(archive: File): List<String> = entries(archive).map { it.name }
 
     /**
      * Extrai as entradas [names] direto em [destDir], sem subpastas (só o nome do arquivo),
      * o que também impede "zip slip". Retorna os arquivos criados, na ordem do arquivo compactado.
+     * Se algo falhar no meio, os arquivos já extraídos são apagados.
      */
     fun extract(archive: File, destDir: File, names: Set<String>): List<File> {
         destDir.mkdirs()
         val out = mutableListOf<File>()
         fun target(name: String) = File(destDir, name.substringAfterLast('/').substringAfterLast('\\'))
-        when (archive.extension.lowercase()) {
-            "zip" -> ZipInputStream(archive.inputStream().buffered()).use { zis ->
-                while (true) {
-                    val entry = zis.nextEntry ?: break
-                    if (entry.isDirectory || entry.name !in names) continue
-                    val file = target(entry.name)
-                    file.outputStream().use { zis.copyTo(it) }
-                    out += file
+        try {
+            when (formatOf(archive)) {
+                // ZipFile lê o diretório central: aceita Deflate64, ZIP64 e entradas com "data descriptor",
+                // que o ZipInputStream do Java recusa (zips grandes feitos no Windows, por exemplo).
+                Format.ZIP -> zip(archive).use { zf ->
+                    for (entry in zf.entries.toList()) {
+                        if (entry.isDirectory || entry.name !in names) continue
+                        if (!zf.canReadEntryData(entry)) throw LocalizedException(R.string.download_unsupported_format, entry.name)
+                        val file = target(entry.name)
+                        out += file
+                        zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
+                    }
                 }
-            }
-            "7z" -> sevenZ(archive).use { sz ->
-                while (true) {
-                    val entry = sz.nextEntry ?: break
-                    if (entry.isDirectory || entry.name !in names) continue
-                    val file = target(entry.name)
-                    sz.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
-                    out += file
+                Format.SEVEN_Z -> sevenZ(archive).use { sz ->
+                    while (true) {
+                        val entry = sz.nextEntry ?: break
+                        if (entry.isDirectory || entry.name !in names) continue
+                        val file = target(entry.name)
+                        out += file
+                        sz.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
+                    }
                 }
+                null -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
             }
-            else -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
+        } catch (t: Throwable) {
+            out.forEach { it.delete() }
+            throw t
         }
         return out
     }
 
+    private fun readHead(file: File, n: Int): ByteArray = runCatching {
+        file.inputStream().use { input ->
+            val buf = ByteArray(n)
+            val read = input.read(buf)
+            if (read <= 0) ByteArray(0) else buf.copyOf(read)
+        }
+    }.getOrDefault(ByteArray(0))
+
+    private val SEVEN_Z_MAGIC = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
+
+    private fun zip(file: File): ZipFile = ZipFile.builder().setFile(file).get()
     private fun sevenZ(file: File): SevenZFile = SevenZFile.builder().setFile(file).get()
 }

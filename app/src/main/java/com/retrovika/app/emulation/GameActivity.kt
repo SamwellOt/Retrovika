@@ -33,6 +33,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.lifecycleScope
 import com.retrovika.app.container
+import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
@@ -49,6 +50,9 @@ import com.swordfish.libretrodroid.GLRetroViewData
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
@@ -147,7 +151,16 @@ class GameActivity : ComponentActivity() {
             }
         }
 
-        lifecycleScope.launch { prepare(intent.getLongExtra(EXTRA_GAME_ID, -1)) }
+        lifecycleScope.launch {
+            // Qualquer falha inesperada na preparação vira a tela de erro com o motivo, em vez de fechar o app.
+            try {
+                prepare(intent.getLongExtra(EXTRA_GAME_ID, -1))
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                fail(getString(R.string.game_cant_run), t.userMessage(this@GameActivity))
+            }
+        }
     }
 
     /**
@@ -190,7 +203,7 @@ class GameActivity : ComponentActivity() {
             try {
                 app.cores.install(core)
             } catch (t: Throwable) {
-                return fail(getString(R.string.game_core_install_failed), getString(R.string.game_core_install_failed_message, t.message.orEmpty()))
+                return fail(getString(R.string.game_core_install_failed), getString(R.string.game_core_install_failed_message, t.userMessage(this)))
             } finally {
                 progressJob.cancel()
             }
@@ -271,6 +284,7 @@ class GameActivity : ComponentActivity() {
             }
             autoSaveReady = true
         }
+        lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
             val vibrator = vibrator()
             view.getRumbleEvents().collect { e ->
@@ -280,6 +294,39 @@ class GameActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Núcleo carregado mas imagem toda preta (jogo incompatível com o núcleo, BIOS faltando…): sem aviso,
+     * parece que o app travou. Aberturas escuras são comuns, então só avisa se continuar preto em duas
+     * checagens seguidas.
+     */
+    private suspend fun watchForBlackScreen(view: GLRetroView) {
+        view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
+        var black = 0
+        repeat(BLACK_SCREEN_CHECKS) {
+            delay(BLACK_SCREEN_INTERVAL_MS)
+            // Pausado ou em segundo plano a captura não diz nada sobre o jogo.
+            if (menuOpen || !activityResumed) return@repeat
+            val frame = suspendCancellableCoroutine { cont -> captureFrame(view) { if (cont.isActive) cont.resume(it) } }
+            if (frame == null) return@repeat
+            if (!isBlack(frame)) return
+            if (++black >= 2) {
+                toast = getString(R.string.game_black_screen_hint, core.displayName)
+                return
+            }
+        }
+    }
+
+    private fun isBlack(frame: Bitmap): Boolean {
+        val stepX = (frame.width / 16).coerceAtLeast(1)
+        val stepY = (frame.height / 16).coerceAtLeast(1)
+        for (y in 0 until frame.height step stepY) for (x in 0 until frame.width step stepX) {
+            val c = frame.getPixel(x, y)
+            val r = (c shr 16) and 0xFF; val g = (c shr 8) and 0xFF; val b = c and 0xFF
+            if (r > 16 || g > 16 || b > 16) return false
+        }
+        return true
     }
 
     private fun fail(title: String, message: String) {
@@ -514,6 +561,8 @@ class GameActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_GAME_ID = "game_id"
+        private const val BLACK_SCREEN_CHECKS = 4
+        private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
 
         fun launch(context: Context, gameId: Long) {
             context.startActivity(

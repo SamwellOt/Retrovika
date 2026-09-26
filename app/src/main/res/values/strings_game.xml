@@ -21,6 +21,7 @@
     <string name="game_error_unexpected">Unexpected emulator error (code %d).</string>
     <string name="game_cant_run">Couldn\'t run the game</string>
     <string name="game_progress_restored">Progress restored</string>
+    <string name="game_black_screen_hint">Still a black screen? %1$s may not run this game. Check the console BIOS in Settings › BIOS or, if available, pick another core in the game details.</string>
     <string name="game_state_saved">State saved to slot %d</string>
     <string name="game_state_loaded">State loaded</string>
     <string name="game_state_load_failed">Couldn\'t load this state</string>

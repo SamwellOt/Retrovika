@@ -172,7 +172,8 @@ fun GameScreen(
                     .padding(horizontal = 18.dp, vertical = 10.dp),
             )
         }
-        LaunchedEffect(toast) { if (toast != null) { delay(2200); onDismissToast() } }
+        // Mensagens longas (avisos) ficam mais tempo na tela.
+        LaunchedEffect(toast) { if (toast != null) { delay((1500L + toast.length * 45L).coerceIn(2200L, 8000L)); onDismissToast() } }
     }
     }
 }

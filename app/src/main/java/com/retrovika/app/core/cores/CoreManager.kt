@@ -5,6 +5,7 @@ import com.retrovika.app.core.settings.localized
 import android.content.Context
 import android.os.Build
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.storage.Zip
 import com.retrovika.app.core.systems.CoreInfo
@@ -93,7 +94,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             try {
                 installAssets(core)
             } catch (t: Throwable) {
-                setState(core.id, CoreState.Failed(t.message ?: context.localized().getString(R.string.cores_unknown_error)))
+                setState(core.id, CoreState.Failed(t.userMessage(context)))
                 throw t
             }
             // Tira o estado "Baixando" deixado pelo progresso dos assets.
@@ -117,7 +118,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             refresh()
             target.absolutePath
         } catch (t: Throwable) {
-            setState(core.id, CoreState.Failed(t.message ?: context.localized().getString(R.string.cores_unknown_error)))
+            setState(core.id, CoreState.Failed(t.userMessage(context)))
             throw t
         }
     }

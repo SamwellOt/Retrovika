@@ -34,6 +34,10 @@
     <string name="download_forbidden">The site refused the download outside the browser (HTTP 403)</string>
     <string name="download_move_failed">Couldn\'t move %s</string>
     <string name="download_unsupported_format">Unsupported format: %s</string>
+    <string name="download_got_webpage">The site sent a web page instead of the file. Try downloading through the in-app browser.</string>
+    <string name="download_no_space">Not enough free space to extract the game (needs %s)</string>
+    <string name="download_extract_failed">Couldn\'t extract the file: %s</string>
+    <string name="download_extract_memory">Not enough memory to extract %s. Extract it on a computer and import the game files.</string>
 
     <!-- Navegador interno -->
     <string name="browser_title">Open website</string>

@@ -64,7 +64,8 @@ object Http {
         // Falha ou cancelamento não deixam o .part ocupando espaço.
         try {
             client.newCall(request).execute().use { res ->
-                if (res.code == 403 && headers.isNotEmpty()) throw LocalizedException(R.string.download_forbidden)
+                // Só downloads do navegador interno levam cookies: aí o 403 costuma ser a sessão do site.
+                if (res.code == 403 && "Cookie" in headers) throw LocalizedException(R.string.download_forbidden)
                 if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
                 val body = res.body!!
                 val total = body.contentLength()

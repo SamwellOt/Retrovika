@@ -40,6 +40,8 @@
     </plurals>
     <string name="system_import_done">Import complete</string>
     <string name="system_import_skipped">Skipped: %1$s</string>
+    <string name="system_import_failed">%1$s failed: %2$s</string>
+    <string name="system_import_unreadable">Couldn\'t read the file</string>
     <string name="system_import_games">Import games</string>
     <string name="system_experimental">EXPERIMENTAL</string>
     <string name="system_bios_missing">Required BIOS missing</string>
@@ -60,6 +62,11 @@
     <string name="details_last_session">Last session: %1$s</string>
     <string name="details_core_title">Core for this game</string>
     <string name="details_core_subtitle">Some games run better on a specific core.</string>
+    <string name="details_core_missing">%s core not installed</string>
+    <string name="details_core_missing_message">This game needs it to run. It will be downloaded when you press Play, or install it now to play offline.</string>
+    <string name="details_core_install">Install now</string>
+    <string name="details_core_installing">Installing %1$s… %2$d%%</string>
+    <string name="details_core_failed">Couldn\'t install %1$s: %2$s</string>
     <string name="details_core_default">Console default</string>
     <string name="details_identify_title">Identification</string>
     <string name="details_identify_subtitle">Check this file against the No-Intro DATs to confirm its version and see the other ones.</string>

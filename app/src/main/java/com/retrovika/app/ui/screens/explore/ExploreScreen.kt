@@ -249,6 +249,14 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                         LinearProgressIndicator(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)), color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
                     }
                 }
+                DownloadStatus.FAILED -> Column {
+                    // Sem o motivo, "Tentar de novo" não diz o que deu errado (sem espaço, página no lugar do arquivo…).
+                    task.error?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Coral, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    GhostButton(stringResource(R.string.common_retry), onDownload, Modifier.fillMaxWidth(), icon = Icons.Rounded.Download, tint = Palette.Coral)
+                }
                 DownloadStatus.DONE -> GradientButton(stringResource(R.string.common_play), onPlay, Modifier.fillMaxWidth(), icon = Icons.Rounded.PlayArrow, height = 44.dp)
                 else -> GhostButton(
                     stringResource(if (task?.status == DownloadStatus.FAILED) R.string.common_retry else R.string.common_download),

@@ -34,6 +34,10 @@
     <string name="download_forbidden">O site recusou o download fora do navegador (HTTP 403)</string>
     <string name="download_move_failed">Não foi possível mover %s</string>
     <string name="download_unsupported_format">Formato não suportado: %s</string>
+    <string name="download_got_webpage">O site enviou uma página em vez do arquivo. Tente baixar pelo navegador interno.</string>
+    <string name="download_no_space">Espaço livre insuficiente para extrair o jogo (precisa de %s)</string>
+    <string name="download_extract_failed">Não foi possível extrair o arquivo: %s</string>
+    <string name="download_extract_memory">Memória insuficiente para extrair %s. Extraia no computador e importe os arquivos do jogo.</string>
 
     <!-- Navegador interno -->
     <string name="browser_title">Abrir site</string>

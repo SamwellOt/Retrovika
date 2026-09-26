@@ -97,14 +97,19 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
         value = BiosManager.unsatisfied(system.bios) { it in ok }
     }
     var importMessage by remember { mutableStateOf<String?>(null) }
+    var importErrors by remember { mutableStateOf<String?>(null) }
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         scope.launch {
             importMessage = context.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
-            val unknown = app.library.importFiles(uris, system)
-            importMessage = if (unknown.isEmpty()) context.getString(R.string.system_import_done)
-            else context.getString(R.string.system_import_skipped, unknown.joinToString())
+            importErrors = null
+            val result = app.library.importFiles(uris, system)
+            importMessage = if (result.unknown.isEmpty()) context.getString(R.string.system_import_done)
+            else context.getString(R.string.system_import_skipped, result.unknown.joinToString())
+            // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
+            importErrors = result.failed.takeIf { it.isNotEmpty() }
+                ?.joinToString("\n") { (name, reason) -> context.getString(R.string.system_import_failed, name, reason) }
         }
     }
 
@@ -143,6 +148,10 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     GradientButton(stringResource(R.string.system_import_games), { importer.launch(arrayOf("*/*")) }, icon = Icons.Rounded.FileOpen, height = 44.dp)
                     importMessage?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f)) }
+                }
+                importErrors?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.padding(horizontal = 4.dp))
                 }
 
                 if (biosMissing.isNotEmpty()) {

@@ -21,6 +21,7 @@
     <string name="game_error_unexpected">Erro inesperado no emulador (código %d).</string>
     <string name="game_cant_run">Não foi possível rodar o jogo</string>
     <string name="game_progress_restored">Progresso restaurado</string>
+    <string name="game_black_screen_hint">Tela preta? O núcleo %1$s pode não rodar este jogo. Confira a BIOS do console em Ajustes › BIOS ou, se houver, escolha outro núcleo nos detalhes do jogo.</string>
     <string name="game_state_saved">Estado salvo no slot %d</string>
     <string name="game_state_loaded">Estado carregado</string>
     <string name="game_state_load_failed">Não foi possível carregar este estado</string>

@@ -298,7 +298,9 @@ object Systems {
             cores = listOf(
                 CoreInfo(
                     "flycast", "Flycast", R.string.core_flycast,
-                    defaults = mapOf("reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "enabled"),
+                    // Renderização em thread separada deixa a tela preta em frontends sem contexto GL compartilhado
+                    // (caso do LibretroDroid); desligada, o Flycast desenha no mesmo thread do retro_run.
+                    defaults = mapOf("reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "disabled"),
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "enabled"),
                         Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960"),

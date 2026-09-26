@@ -6,12 +6,18 @@ import android.net.Uri
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import com.retrovika.app.R
+import com.retrovika.app.core.net.LocalizedException
+import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.settings.SettingsRepository
+import com.retrovika.app.core.storage.Archives
+import com.retrovika.app.core.storage.RomExtractor
 import com.retrovika.app.core.storage.FileNames
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameFiles
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +28,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/** Resultado da importação: arquivos sem console reconhecido e os que falharam, com o motivo. */
+data class ImportResult(val unknown: List<String>, val failed: List<Pair<String, String>>)
 
 data class ScanState(val running: Boolean = false, val found: Int = 0, val current: String? = null)
 
@@ -234,16 +243,29 @@ class LibraryRepository(
      * Se [forcedSystem] for nulo, o sistema é detectado pela extensão.
      * Retorna os arquivos que não puderam ser identificados.
      */
-    suspend fun importFiles(uris: List<Uri>, forcedSystem: GameSystem?): List<String> = withContext(Dispatchers.IO) {
+    suspend fun importFiles(uris: List<Uri>, forcedSystem: GameSystem?): ImportResult = withContext(Dispatchers.IO) {
         val unknown = mutableListOf<String>()
+        val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
         uris.forEach { uri ->
             val name = FileNames.safe(displayName(uri) ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
             val dest = File(paths.romsFor(system.id), name)
-            resolver.openInputStream(uri)?.use { input -> dest.outputStream().use { input.copyTo(it) } } ?: return@forEach
-            copied += system to dest
+            // Um arquivo com problema (sem espaço, compactado corrompido…) não derruba os outros:
+            // o motivo volta para a tela junto com o nome.
+            try {
+                val input = resolver.openInputStream(uri) ?: throw LocalizedException(R.string.system_import_unreadable)
+                input.use { stream -> dest.outputStream().use { stream.copyTo(it) } }
+                val file = if (Archives.isArchive(dest) && !system.keepArchives) RomExtractor.extract(dest, dest.parentFile!!, system) else dest
+                copied += system to file
+            } catch (c: CancellationException) {
+                dest.delete()
+                throw c
+            } catch (t: Throwable) {
+                dest.delete()
+                failed += name to t.userMessage(context)
+            }
         }
         // Os arquivos escolhidos juntos são irmãos: um .cue com seus .bin vira um jogo só.
         val siblings = copied.map { it.second.name.lowercase() }.toSet()
@@ -254,7 +276,7 @@ class LibraryRepository(
             val auxiliary = RomNaming.isAuxiliaryFile(file.name, siblings, file.name.lowercase() in referenced, sheetsKnown = true)
             if (!auxiliary) dao.insert(buildGame(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED))
         }
-        unknown
+        ImportResult(unknown, failed)
     }
 
     /** Registra um arquivo baixado pelo gerenciador de downloads. */
