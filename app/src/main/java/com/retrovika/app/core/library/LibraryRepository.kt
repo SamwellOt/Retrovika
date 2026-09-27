@@ -146,7 +146,7 @@ class LibraryRepository(
             dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden })
             // Remove apenas entradas locais cujo arquivo realmente sumiu.
             val missing = existing.filter { uri ->
-                uri !in foundUris && unreadable.none { uri.startsWith(it) } &&
+                uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
                     (uri.startsWith("content://") || !File(uri).exists())
             }
             if (missing.isNotEmpty()) dao.deleteByUris(missing)
@@ -283,7 +283,7 @@ class LibraryRepository(
         val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
         uris.forEach { uri ->
-            val name = FileNames.safe(displayName(uri) ?: uri.lastPathSegment ?: return@forEach)
+            val name = FileNames.safe(runCatching { displayName(uri) }.getOrNull() ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
             val dest = File(paths.romsFor(system.id), name)

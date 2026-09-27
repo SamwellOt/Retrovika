@@ -125,7 +125,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun removeFolder(uri: String) = context.dataStore.edit { p ->
         p[Keys.folders] = p[Keys.folders].orEmpty() - uri
         // Jogos ocultos daquela pasta deixam de importar.
-        p[Keys.hidden] = p[Keys.hidden].orEmpty().filterNot { it.startsWith(uri) }.toSet()
+        p[Keys.hidden] = p[Keys.hidden].orEmpty().filterNot { it.startsWith("$uri/") }.toSet()
     }
     suspend fun hideGame(uri: String) = context.dataStore.edit { it[Keys.hidden] = it[Keys.hidden].orEmpty() + uri }
     suspend fun clearHiddenGames() = context.dataStore.edit { it.remove(Keys.hidden) }

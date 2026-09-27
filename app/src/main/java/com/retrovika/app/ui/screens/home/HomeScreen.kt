@@ -135,11 +135,11 @@ fun HomeScreen(
 
         val hero = recent.firstOrNull()
         if (hero != null) {
-            item { ContinueCard(hero, onPlay = { GameActivity.launch(context, hero.id) }, onDetails = { onOpenGame(hero.id) }) }
+            item(key = "hero") { ContinueCard(hero, onPlay = { GameActivity.launch(context, hero.id) }, onDetails = { onOpenGame(hero.id) }) }
         }
 
         if (counts.isNotEmpty()) {
-            item {
+            item(key = "stats") {
                 val total = counts.sumOf { it.count }
                 Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatTile("$total", stringResource(R.string.home_stat_games), Palette.Neon, Modifier.weight(1f))
@@ -150,11 +150,13 @@ fun HomeScreen(
         }
 
         if (counts.isEmpty() && !scan.running) {
-            item { WelcomeCard(onAddFolder = onAddFolder, onExplore = onExplore) }
+            item(key = "welcome") { WelcomeCard(onAddFolder = onAddFolder, onExplore = onExplore) }
         }
 
         if (counts.isNotEmpty()) {
-            item {
+            // Chaves fixas: o cartão de downloads entra e sai acima, e sem elas a fileira de consoles
+            // perdia a posição de rolagem a cada download iniciado ou concluído.
+            item(key = "consoles") {
                 Spacer(Modifier.height(18.dp))
                 SectionHeader(stringResource(R.string.home_your_consoles), action = stringResource(R.string.common_see_all), onAction = onOpenLibrary)
                 Spacer(Modifier.height(12.dp))
@@ -347,10 +349,11 @@ private fun ContinueCard(game: Game, onPlay: () -> Unit, onDetails: () -> Unit) 
     }
 }
 
+@Composable
 fun formatPlayTime(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    return if (h > 0) "${h}h ${m}min" else "${m}min"
+    val h = (seconds / 3600).toInt()
+    val m = ((seconds % 3600) / 60).toInt()
+    return if (h > 0) stringResource(R.string.common_playtime_hm, h, m) else stringResource(R.string.common_playtime_m, m)
 }
 
 @Composable

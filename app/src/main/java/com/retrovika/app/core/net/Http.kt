@@ -2,12 +2,17 @@ package com.retrovika.app.core.net
 
 import com.retrovika.app.R
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.Call
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -33,7 +38,7 @@ object Http {
 
     suspend fun getString(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
-        client.newCall(request).execute().use { res ->
+        client.newCall(request).executeCancellable { res ->
             if (!res.isSuccessful) throw HttpStatusException(res.code, url)
             res.body!!.string()
         }
@@ -43,7 +48,7 @@ object Http {
     suspend fun postForm(url: String, form: Map<String, String>, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()
         val request = Request.Builder().url(url).post(body).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
-        client.newCall(request).execute().use { res ->
+        client.newCall(request).executeCancellable { res ->
             if (!res.isSuccessful) throw IOException("HTTP ${res.code}: $url")
             res.body!!.string()
         }
@@ -66,9 +71,10 @@ object Http {
         target.parentFile?.mkdirs()
         val part = File.createTempFile("dl-" + target.name.take(60) + ".", ".part", target.parentFile)
         val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
+        val ctx = coroutineContext
         // Falha ou cancelamento não deixam o .part ocupando espaço.
         try {
-            client.newCall(request).execute().use { res ->
+            client.newCall(request).executeCancellable { res ->
                 // Só downloads do navegador interno levam cookies: aí o 403 costuma ser a sessão do site.
                 if (res.code == 403 && "Cookie" in headers) throw LocalizedException(R.string.download_forbidden)
                 if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
@@ -80,7 +86,7 @@ object Http {
                     part.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
-                            coroutineContext.ensureActive()
+                            ctx.ensureActive()
                             val n = input.read(buffer)
                             if (n < 0) break
                             output.write(buffer, 0, n)
@@ -104,9 +110,30 @@ object Http {
         }
         onProgress(1f)
         if (target.exists()) target.delete()
-        if (!part.renameTo(target)) throw LocalizedException(R.string.download_move_failed, part.name)
+        if (!part.renameTo(target)) {
+            part.delete()
+            throw LocalizedException(R.string.download_move_failed, part.name)
+        }
         target
     }
 
     private const val PROGRESS_INTERVAL_NS = 150_000_000L
+
+    /**
+     * Executa a chamada de forma que cancelar a corrotina corte a conexão: numa rede parada, a leitura
+     * bloqueada só voltaria no timeout, e o download cancelado seguia ocupando a vaga da fila.
+     */
+    private suspend fun <T> Call.executeCancellable(block: (Response) -> T): T = coroutineScope {
+        val call = this@executeCancellable
+        val watcher = launch { try { awaitCancellation() } finally { call.cancel() } }
+        try {
+            call.execute().use(block)
+        } catch (t: Throwable) {
+            // Conexão cortada pelo cancelamento: sobe como cancelamento, não como erro de rede.
+            coroutineContext.ensureActive()
+            throw t
+        } finally {
+            watcher.cancel()
+        }
+    }
 }

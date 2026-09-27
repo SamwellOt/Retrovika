@@ -551,7 +551,9 @@ private fun StorageBar(usage: StorageUsage?) {
 @Composable
 private fun LanguagePicker() {
     val context = LocalContext.current
-    val current = remember { Languages.current(context) }
+    // Estado próprio: se o idioma escolhido já é o do sistema, a Activity não é recriada e o chip
+    // ficaria na opção antiga.
+    var current by remember { mutableStateOf(Languages.current(context)) }
     Column(Modifier.padding(vertical = 12.dp)) {
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconTile(Icons.Rounded.Translate, Palette.Cyan, size = 36.dp)
@@ -570,7 +572,10 @@ private fun LanguagePicker() {
                 AppLanguage.PORTUGUESE to stringResource(R.string.settings_language_pt),
                 AppLanguage.ENGLISH to stringResource(R.string.settings_language_en),
             ).forEach { (language, label) ->
-                SelectChip(label, language == current, onClick = { context.findActivity()?.let { Languages.set(it, language) } })
+                SelectChip(label, language == current, onClick = {
+                    context.findActivity()?.let { Languages.set(it, language) }
+                    current = language
+                })
             }
         }
     }

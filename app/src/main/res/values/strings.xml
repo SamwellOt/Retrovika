@@ -67,4 +67,6 @@
     <string name="common_error_memory">Not enough memory to finish the operation</string>
     <string name="common_error_unknown">Unexpected error (%s)</string>
     <string name="common_beta">BETA</string>
+    <string name="common_playtime_hm">%1$dh %2$dmin</string>
+    <string name="common_playtime_m">%1$dmin</string>
 </resources>

@@ -101,7 +101,13 @@ class InternetArchiveSource : CatalogSource {
         val identifier = entry.id
         val exts = Systems.byId(entry.systemId)?.extensions.orEmpty()
         val meta = Http.json.decodeFromString(Meta.serializer(), Http.getString("https://archive.org/metadata/$identifier"))
-        val direct = meta.files.filter { it.name.substringAfterLast('.', "").lowercase() in exts }
+        // Em consoles de disco, folha (.cue/.gdi…) e trilhas soltas não jogam sozinhas: baixar só uma delas
+        // não serve. Nesses casos ficam os pacotes, que são extraídos inteiros.
+        val discSheets = exts.any { it in DISC_SHEETS }
+        val direct = meta.files.filter { f ->
+            val ext = f.name.substringAfterLast('.', "").lowercase()
+            ext in exts && !(discSheets && ext in MULTI_FILE)
+        }
         val archives = meta.files.filter { it.name.endsWith(".zip", true) || it.name.endsWith(".7z", true) }
         val files = (direct + archives).distinctBy { it.name }
         if (files.isEmpty()) throw LocalizedException(R.string.catalog_no_compatible_file, identifier)
@@ -115,6 +121,11 @@ class InternetArchiveSource : CatalogSource {
                 sizeBytes = file.size?.toLongOrNull(),
             )
         }
+    }
+
+    private companion object {
+        val DISC_SHEETS = setOf("cue", "gdi", "ccd")
+        val MULTI_FILE = setOf("cue", "gdi", "ccd", "toc", "m3u", "bin", "img", "sub", "raw")
     }
 
     private fun escape(q: String): String = q.replace(Regex("""[:\[\]"(){}]"""), " ").trim()

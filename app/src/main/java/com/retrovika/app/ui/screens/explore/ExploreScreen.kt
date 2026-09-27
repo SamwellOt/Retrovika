@@ -130,7 +130,9 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
             (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 6
         }
     }
-    LaunchedEffect(nearEnd, state.entries.size) { if (nearEnd) vm.loadMore() }
+    // A página e o fim do carregamento também são chaves: depois de páginas vazias (filtro sem
+    // resultado nelas) a lista não cresce, e sem isso a rolagem nunca pedia a próxima.
+    LaunchedEffect(nearEnd, state.entries.size, state.page, state.loading) { if (nearEnd && !state.loading) vm.loadMore() }
 
     Box(Modifier.fillMaxSize()) {
     LazyVerticalGrid(
