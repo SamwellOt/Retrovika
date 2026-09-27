@@ -26,19 +26,27 @@ def fetch(url, headers):
 ua_plain = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 print("sem verificação:", [fetch(u, {"User-Agent": ua_plain})[0] for u in URLS])
 
+import sys
+headed = "--headed" in sys.argv
 with sync_playwright() as p:
-    browser = p.chromium.launch()
-    page = browser.new_page()
+    # Como um WebView: janela de verdade (xvfb no Actions) e sem as marcas de automação.
+    browser = p.chromium.launch(headless=not headed, args=["--disable-blink-features=AutomationControlled"])
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/128.0.6613.127 Mobile Safari/537.36",
+        viewport={"width": 412, "height": 915}, is_mobile=True, has_touch=True, locale="pt-BR",
+    )
+    context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    page = context.new_page()
     start = time.time()
     page.goto(BASE, wait_until="domcontentloaded")
-    while time.time() - start < 25:
+    while time.time() - start < 40:
         title = page.title()
         if title and "Establishing a secure connection" not in title and "Just a moment" not in title:
             break
         time.sleep(0.4)
     elapsed = time.time() - start
     ua = page.evaluate("navigator.userAgent")
-    cookies = page.context.cookies(BASE)
+    cookies = context.cookies(BASE)
     print(f"título depois de {elapsed:.1f}s: {page.title()!r}; cookies: {[c['name'] for c in cookies]}")
     cookie = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
     browser.close()
@@ -48,4 +56,4 @@ for u in URLS:
     code, body = fetch(u, {"User-Agent": ua, "Cookie": cookie, "Accept-Language": "en-US,en;q=0.9"})
     print("com o cookie do navegador:", code, u, body)
     ok = ok and code == 200
-print("RESULTADO:", "passou" if ok else "falhou")
+print("RESULTADO:", "headed" if headed else "headless", "passou" if ok else "falhou")

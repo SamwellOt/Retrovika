@@ -46,3 +46,4 @@ jobs:
           python-version: '3.12'
       - run: pip install playwright && python -m playwright install --with-deps chromium
       - run: python .github/scripts/backloggd_challenge.py
+      - run: xvfb-run -a python .github/scripts/backloggd_challenge.py --headed
