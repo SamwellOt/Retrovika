@@ -237,6 +237,15 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
 
         // Primeira página chegando: cartões-esqueleto no lugar dos jogos, em vez de uma tela vazia.
         if (state.initialLoading) {
+            if (state.waitingSlowSources) {
+                item(span = { GridItemSpan(maxLineSpan) }, contentType = "message") {
+                    Text(
+                        stringResource(R.string.explore_waiting_slow),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             items(6, key = { "skeleton-$it" }, contentType = { "skeleton" }) { SkeletonCard() }
         }
 

@@ -51,6 +51,8 @@ data class ExploreState(
     val totalApproximate: Boolean = false,
     val loading: Boolean = false,
     @StringRes val error: Int? = null,
+    /** Algum site já respondeu sem jogos e os mais lentos ainda estão buscando: a tela explica a espera. */
+    val waitingSlowSources: Boolean = false,
 ) {
     val canLoadMore get() = !loading && error == null && page < totalPages
     val aggregated get() = sourceId == ALL_SOURCES
@@ -135,7 +137,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(350)
-            _state.update { it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null) }
+            _state.update { it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false) }
             fetch(1)
         }
     }
@@ -174,17 +176,18 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             fetchPage(s, page) { partial ->
                 // Cada site aparece assim que responde; o indicador de carga segue até o último.
                 if (job?.isActive == true) _state.update {
-                    it.copy(entries = (before + partial.entries).distinctBy { e -> e.sourceId + e.id })
+                    val entries = (before + partial.entries).distinctBy { e -> e.sourceId + e.id }
+                    it.copy(entries = entries, waitingSlowSources = entries.isEmpty())
                 }
             }
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
         } catch (t: Throwable) {
             android.util.Log.w("Explore", "Falha ao buscar catálogo", t)
-            _state.update { it.copy(loading = false, error = R.string.explore_error_network) }
+            _state.update { it.copy(loading = false, error = R.string.explore_error_network, waitingSlowSources = false) }
             return
         }
-        _state.update { it.copy(entries = before) }
+        _state.update { it.copy(entries = before, waitingSlowSources = false) }
         appendPage(first)
 
         // Filtro que rende pouco por página: as próximas vêm em paralelo até encher a tela.
