@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,6 +85,9 @@ import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.screens.home.formatPlayTime
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -97,6 +101,13 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
     var confirmDelete by remember { mutableStateOf(false) }
     var identifying by remember(gameId) { mutableStateOf(false) }
     var identification by remember(gameId) { mutableStateOf<DatRepository.Identification?>(null) }
+    var identifyError by remember(gameId) { mutableStateOf<String?>(null) }
+    // O jogo sumiu com a tela aberta (pasta desvinculada, removido numa varredura): volta em vez de
+    // deixar uma tela vazia sem botão de voltar.
+    var loaded by remember(gameId) { mutableStateOf(false) }
+    LaunchedEffect(game) {
+        if (game != null) loaded = true else if (loaded) onBack()
+    }
     val g = game ?: return
     val system = Systems.byId(g.systemId)
 
@@ -153,8 +164,9 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 height = 56.dp,
             )
             if (system != null) {
-                val preferred by remember(system.id) { app.settings.coreFor(system.id) }.collectAsStateWithLifecycle(null)
-                CoreNotice(system.core(g.coreOverride ?: preferred))
+                // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
+                val preferred by remember(system.id) { app.settings.coreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
+                preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -258,7 +270,16 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                                 onClick = {
                                     scope.launch {
                                         identifying = true
-                                        val result = runCatching { app.dat.identify(g) }.getOrNull()
+                                        identifyError = null
+                                        // Sem internet na primeira vez (o DAT é baixado), o motivo aparece abaixo do botão.
+                                        val result = try {
+                                            app.dat.identify(g)
+                                        } catch (c: CancellationException) {
+                                            throw c
+                                        } catch (t: Throwable) {
+                                            identifyError = t.userMessage(context)
+                                            null
+                                        }
                                         identifying = false
                                         identification = result
                                         if (result is DatRepository.Identification.Found) {
@@ -268,6 +289,12 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                                 },
                                 modifier = Modifier.padding(horizontal = 20.dp),
                             )
+                            identifyError?.let {
+                                Text(
+                                    it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                                )
+                            }
                         }
                     }
                 }

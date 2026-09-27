@@ -146,8 +146,9 @@ fun RetrovikaNavHost() {
     val addFolder = { folderPicker.launch(null) }
 
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
-    // de todas as pastas a cada vez deixava o menu lento.
-    LaunchedEffect(Unit) { app.library.rescanOnStartup() }
+    // de todas as pastas a cada vez deixava o menu lento. Roda no escopo do app: se a Activity for
+    // recriada no meio da varredura, ela não é cancelada (e a flag já marcada impediria refazê-la).
+    LaunchedEffect(Unit) { app.scope.launch { app.library.rescanOnStartup() } }
 
     Scaffold(
         containerColor = Palette.Ink,

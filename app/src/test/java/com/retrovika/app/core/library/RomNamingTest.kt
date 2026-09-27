@@ -23,6 +23,14 @@ class RomNamingTest {
     }
 
     @Test
+    fun `regiao ignora etiquetas que so comecam com o nome`() {
+        assertEquals("EUA", RomNaming.region("Game (Enhanced Colors) (USA)"))
+        assertEquals("EUA", RomNaming.region("Game (USA, Europe)"))
+        assertNull(RomNaming.region("Game (Japanese Translation)"))
+        assertNull(RomNaming.region("Game (En,Ja)"))
+    }
+
+    @Test
     fun `pasta do console vence a extensao`() {
         assertEquals("psx", RomNaming.resolveSystem("Jogo.bin", listOf("Roms", "ps1"))?.id)
         assertEquals("genesis", RomNaming.resolveSystem("Jogo.bin", listOf("megadrive"))?.id)

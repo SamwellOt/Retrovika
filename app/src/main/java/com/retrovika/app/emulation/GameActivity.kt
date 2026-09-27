@@ -294,6 +294,9 @@ class GameActivity : ComponentActivity() {
             core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
         }
 
+        // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
+        // próximo jogo quando esta Activity fosse destruída (o LibretroDroid é global).
+        if (isFinishing) return
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -327,7 +330,10 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (settings.autoLoad) {
-                withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
+                val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
+                // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
+                if (retroView !== view) return@launch
+                saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
                     if (withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }) {
                         toast = getString(R.string.game_progress_restored)
@@ -451,7 +457,13 @@ class GameActivity : ComponentActivity() {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
             val sram = view.serializeSRAM(running)
-            if (sram.isNotEmpty()) states.sramFile().writeBytes(sram)
+            // Temporário + renomear: falta de espaço ou o processo morto no meio não zeram o save do cartucho.
+            if (sram.isNotEmpty()) {
+                val file = states.sramFile()
+                val tmp = File(file.path + ".tmp")
+                tmp.writeBytes(sram)
+                if (!tmp.renameTo(file)) tmp.delete()
+            }
             if (auto && autoSaveReady) {
                 // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
                 // parado, vale o que foi capturado quando a emulação parou.
@@ -477,6 +489,8 @@ class GameActivity : ComponentActivity() {
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
 
         override fun save(slot: Int, onDone: () -> Unit) {
+            // Antes do primeiro quadro o jogo ainda nem carregou: o estado sairia vazio ou inútil.
+            if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             // Com o menu aberto a emulação está parada: o estado é o capturado ao abrir o menu.
             val data = frozenState
             // Núcleo que não gera estado: gravar o vazio apagaria um save bom do slot.
@@ -501,6 +515,8 @@ class GameActivity : ComponentActivity() {
 
         override fun load(slot: Int) {
             val view = retroView ?: return
+            // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
+            if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             lifecycleScope.launch {
                 val data = try {
                     withContext(Dispatchers.IO) { states.read(slot) }

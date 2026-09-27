@@ -62,18 +62,22 @@ object GameFiles {
      * Caminhos relativos (com "/") citados por um arquivo-índice. Caminhos absolutos ou que sobem
      * de pasta ("..") viram só o nome do arquivo, procurado ao lado do índice.
      */
-    fun referencedPaths(ext: String, content: String, selfName: String): List<String> = when (ext) {
-        "cue" -> Regex("""FILE\s+"([^"]+)"""", RegexOption.IGNORE_CASE).findAll(content).map { it.groupValues[1] }.toList()
+    fun referencedPaths(ext: String, content: String, selfName: String): List<String> = referencedRaw(ext, content.removePrefix("\uFEFF"), selfName).map { raw ->
+        val path = raw.replace('\\', '/').trimStart('/')
+        if (path.split('/').any { it == ".." } || raw.startsWith("/") || ':' in path) path.substringAfterLast('/') else path
+    }.filter { it.isNotBlank() }
+
+    // Arquivos salvos no Bloco de Notas começam com BOM, que o trim() não remove. No .cue o nome pode vir sem aspas.
+    private fun referencedRaw(ext: String, content: String, selfName: String): List<String> = when (ext) {
+        "cue" -> Regex("""^\s*FILE\s+(?:"([^"]+)"|(\S+))""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
+            .findAll(content).map { it.groupValues[1].ifEmpty { it.groupValues[2] } }.toList()
         "gdi" -> content.lines().drop(1).mapNotNull { line ->
             Regex("""^\s*\d+\s+\d+\s+\d+\s+\d+\s+("[^"]+"|\S+)""").find(line)?.groupValues?.get(1)?.trim('"')
         }
         "m3u" -> content.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         "ccd" -> selfName.substringBeforeLast('.').let { listOf("$it.img", "$it.sub") }
         else -> emptyList()
-    }.map { raw ->
-        val path = raw.replace('\\', '/').trimStart('/')
-        if (path.split('/').any { it == ".." } || raw.startsWith("/") || ':' in path) path.substringAfterLast('/') else path
-    }.filter { it.isNotBlank() }
+    }
 
     /**
      * Se o arquivo em [path] (minúsculo, com a mesma base dos caminhos de [referenced]) é citado por um

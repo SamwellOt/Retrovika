@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -220,17 +221,34 @@ class DownloadManager(
         // Velocidade suavizada: a média móvel evita que o número pule a cada aviso.
         var lastBytes = 0L
         var lastTime = System.nanoTime()
-        var file = Http.download(url, target, headers, onBytes = { read, total ->
-            val now = System.nanoTime()
-            val elapsed = (now - lastTime) / 1e9
-            val instant = if (elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L
-            lastBytes = read
-            lastTime = now
-            update(taskId) {
-                val speed = if (it.speed == 0L) instant else (it.speed * 0.7 + instant * 0.3).toLong()
-                it.copy(bytesDone = read, bytesTotal = total, speed = speed, progress = if (total > 0) read.toFloat() / total else -1f)
-            }
-        })
+        var saved: File? = null
+        val file = try {
+            Http.download(url, target, headers, onSaved = { saved = it }, onBytes = { read, total ->
+                val now = System.nanoTime()
+                val elapsed = (now - lastTime) / 1e9
+                val instant = if (elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L
+                lastBytes = read
+                lastTime = now
+                update(taskId) {
+                    val speed = if (it.speed == 0L) instant else (it.speed * 0.7 + instant * 0.3).toLong()
+                    it.copy(bytesDone = read, bytesTotal = total, speed = speed, progress = if (total > 0) read.toFloat() / total else -1f)
+                }
+            })
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Cancelado entre salvar o arquivo e voltar: não deixa na pasta um jogo que a próxima varredura incluiria.
+            saved?.delete()
+            throw c
+        }
+        // Daqui em diante o arquivo já está baixado: extrair e registrar vão até o fim, senão um cancelamento
+        // no meio da extração deixaria arquivos soltos e a tarefa marcada como cancelada.
+        withContext(NonCancellable) { finishDownload(taskId, file, dir, system, title, cover, developer, description) }
+    }
+
+    private suspend fun finishDownload(
+        taskId: String, downloaded: File, dir: File, system: GameSystem, title: String,
+        cover: String?, developer: String?, description: String?,
+    ) {
+        var file = downloaded
         // Página de erro/aviso salva como se fosse o jogo: melhor avisar do que "extrair" HTML.
         if (withContext(Dispatchers.IO) { Archives.isHtml(file) }) {
             file.delete()

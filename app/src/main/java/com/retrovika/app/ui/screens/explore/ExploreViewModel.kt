@@ -6,7 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.retrovika.app.AppContainer
 import com.retrovika.app.core.catalog.CatalogEntry
+import com.retrovika.app.core.catalog.Genre
 import com.retrovika.app.core.catalog.RomVariant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** [nameRes] traduz o nome das entradas virtuais ("Todas as fontes"); fontes reais usam o próprio [name]. */
 data class SourceInfo(
@@ -38,6 +41,7 @@ data class ExploreState(
     val query: String = "",
     val systemId: String? = null,
     val kind: String? = "game",
+    val genre: Genre? = null,
     val entries: List<CatalogEntry> = emptyList(),
     val page: Int = 0,
     val totalPages: Int = 1,
@@ -45,8 +49,10 @@ data class ExploreState(
     val loading: Boolean = false,
     @StringRes val error: Int? = null,
 ) {
-    val canLoadMore get() = !loading && page < totalPages
+    val canLoadMore get() = !loading && error == null && page < totalPages
     val aggregated get() = sourceId == ALL_SOURCES
+    /** Primeira página ainda chegando: a tela mostra cartões-esqueleto em vez da lista vazia. */
+    val initialLoading get() = loading && entries.isEmpty() && error == null
 }
 
 const val ALL_SOURCES = "all"
@@ -104,6 +110,24 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     fun setSystem(id: String?) { _state.update { it.copy(systemId = id) }; reload(debounce = false) }
     fun setKind(kind: String?) { _state.update { it.copy(kind = kind) }; reload(debounce = false) }
 
+    /** Tocar no gênero já ativo o desmarca. */
+    fun toggleGenre(genre: Genre) {
+        _state.update { it.copy(genre = if (it.genre == genre) null else genre) }
+        reload(debounce = false)
+    }
+
+    /** Volta termo, gênero e console ao padrão da fonte atual (fontes que exigem console mantêm o 1º). */
+    fun clearFilters() {
+        val requiresSystem = sources.first { it.id == _state.value.sourceId }.requiresSystem
+        _state.update {
+            it.copy(
+                query = "", genre = null, kind = "game",
+                systemId = if (requiresSystem) app.catalog.source(it.sourceId).systems.firstOrNull() else null,
+            )
+        }
+        reload(debounce = false)
+    }
+
     fun retry() = reload(debounce = false)
 
     private fun reload(debounce: Boolean) {
@@ -126,9 +150,12 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
 
     private suspend fun fetch(page: Int, emptyStreak: Int = 0) {
         val s = _state.value
+        // HTML/JSON das fontes é interpretado fora da thread principal: páginas grandes travavam a rolagem.
         val call = runCatching {
-            if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page)
-            else app.catalog.source(s.sourceId).search(s.query, s.systemId, page, s.kind)
+            withContext(Dispatchers.Default) {
+                if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre)
+                else app.catalog.source(s.sourceId).search(s.query, s.systemId, page, s.kind, s.genre)
+            }
         }
         call
             .onSuccess { result ->
@@ -165,7 +192,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         promptJob = viewModelScope.launch {
             _prompt.value = VariantPrompt.Loading(entry)
             val variants = try {
-                app.catalog.variants(entry)
+                withContext(Dispatchers.Default) { app.catalog.variants(entry) }
             } catch (c: kotlinx.coroutines.CancellationException) {
                 throw c
             } catch (t: Throwable) {

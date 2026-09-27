@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.LocaleManager
 import android.content.Context
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import android.os.LocaleList
 import java.util.Locale
@@ -53,8 +54,10 @@ object Languages {
     /** Para attachBaseContext: aplica o idioma escolhido nas versões sem idioma por app nativo. */
     fun wrap(base: Context): Context {
         if (native) return base
-        val tag = base.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return base
-        val locale = Locale.forLanguageTag(tag)
+        // Sem escolha salva, segue o idioma do sistema: o contexto da Application pode ter sido
+        // embrulhado na abertura com um idioma que o usuário depois trocou por "Sistema".
+        val tag = base.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+        val locale = tag?.let(Locale::forLanguageTag) ?: Resources.getSystem().configuration.locales[0]
         Locale.setDefault(locale)
         val config = Configuration(base.resources.configuration).apply { setLocale(locale) }
         return base.createConfigurationContext(config)

@@ -73,8 +73,10 @@ class CdRomanceSource : CatalogSource {
     override val systems: Set<String> = sectionBySystem.keys +
         setOf("genesis", "segacd", "32x", "sms", "saturn", "atari2600", "lynx")
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage {
-        val q = query.trim()
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
+        // O site não tem filtro de gênero: o termo entra na busca do WordPress, que procura no
+        // título e no texto de cada jogo (onde o gênero aparece na descrição).
+        val q = listOfNotNull(query.trim().takeIf { it.isNotBlank() }, genre?.searchTerm).joinToString(" ")
         val url = when {
             q.isNotBlank() -> "$base/${pagePath(page)}?s=${Uri.encode(q)}"
             systemId != null -> sectionBySystem[systemId]?.let { "$base/$it/${pagePath(page)}" }

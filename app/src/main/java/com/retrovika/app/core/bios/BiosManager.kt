@@ -7,6 +7,7 @@ import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.BiosFile
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -62,22 +63,31 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
     /** Importa arquivos escolhidos pelo usuário. Retorna os nomes reconhecidos. */
     suspend fun import(uris: List<Uri>): List<String> = withContext(Dispatchers.IO) {
         uris.mapNotNull { uri ->
-            val name = displayName(uri) ?: return@mapNotNull null
+            // Cada arquivo à parte: um que falhe (provedor offline, sem espaço…) não perde os outros.
             val tmp = File(paths.downloadsTmp, "bios-import")
-            resolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
-            val hash = md5(tmp)
-            // Pelo MD5, pelo nome ou, para BIOS com formato conhecido, pelo conteúdo: uma BIOS de PS2 com
-            // outro nome (SCPH-70012.bin) vale tanto quanto a scph39001.bin. Nome certo com conteúdo
-            // errado é recusado, senão apareceria como presente sem funcionar.
-            val match = known.firstOrNull { it.md5 != null && it.md5.equals(hash, true) }
-                ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) && (it.format == null || BiosFormats.isValid(it.format, tmp)) }
-                ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, tmp) }
-            if (match == null) { tmp.delete(); return@mapNotNull null }
-            val dest = File(paths.system, match.fileName)
-            dest.parentFile?.mkdirs()
-            tmp.copyTo(dest, overwrite = true)
-            tmp.delete()
-            match.fileName
+            try {
+                val name = displayName(uri) ?: return@mapNotNull null
+                tmp.parentFile?.mkdirs()
+                resolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
+                val hash = md5(tmp)
+                // Pelo MD5, pelo nome ou, para BIOS com formato conhecido, pelo conteúdo: uma BIOS de PS2 com
+                // outro nome (SCPH-70012.bin) vale tanto quanto a scph39001.bin. Nome certo com conteúdo
+                // errado é recusado, senão apareceria como presente sem funcionar.
+                val match = known.firstOrNull { it.md5 != null && it.md5.equals(hash, true) }
+                    ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) && (it.format == null || BiosFormats.isValid(it.format, tmp)) }
+                    ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, tmp) }
+                    ?: return@mapNotNull null
+                val dest = File(paths.system, match.fileName)
+                dest.parentFile?.mkdirs()
+                tmp.copyTo(dest, overwrite = true)
+                match.fileName
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } finally {
+                tmp.delete()
+            }
         }
     }
 

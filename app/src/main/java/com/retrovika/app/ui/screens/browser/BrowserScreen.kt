@@ -395,10 +395,16 @@ private fun fileNameFor(url: String, contentDisposition: String?, mimeType: Stri
         Regex("""filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)""").find(cd)?.groupValues?.get(1)?.let(Uri::decode)
             ?: Regex("""filename\s*=\s*"?([^";]+)"?""").find(cd)?.groupValues?.get(1)
     }
-    val fromUrl = Uri.parse(url).lastPathSegment?.takeIf { '.' in it }
+    // Só vale o fim da URL se ele tiver cara de ROM ou pacote: "download.php?id=1" salvaria o jogo como .php.
+    val fromUrl = Uri.parse(url).lastPathSegment?.takeIf { segment ->
+        val ext = segment.substringAfterLast('.', "").lowercase()
+        ext.isNotEmpty() && (ext in ARCHIVE_EXTENSIONS || Systems.all.any { ext in it.extensions })
+    }
     val name = (fromHeader ?: fromUrl ?: URLUtil.guessFileName(url, contentDisposition, mimeType)).trim()
     return name.replace(Regex("""[\\/:*?"<>|]"""), "_").ifBlank { defaultName }
 }
+
+private val ARCHIVE_EXTENSIONS = setOf("zip", "7z", "rar")
 
 /** User-Agent do WebView sem as marcas de WebView ("; wv" e "Version/x.y"), igual ao do Chrome no mesmo aparelho. */
 internal fun chromeUserAgent(webView: String): String =

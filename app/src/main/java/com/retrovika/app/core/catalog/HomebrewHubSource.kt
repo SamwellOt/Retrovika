@@ -33,27 +33,29 @@ class HomebrewHubSource : CatalogSource {
     )
 
     @Serializable
+    // Campos com padrão: uma entrada incompleta é pulada, em vez de fazer a página inteira falhar.
     private data class Entry(
-        val slug: String,
-        val title: String,
+        val slug: String = "",
+        val title: String = "",
         /** Pode vir como texto ou como lista de autores. */
         val developer: JsonElement? = null,
-        val platform: String,
+        val platform: String = "",
         val typetag: String? = null,
         val screenshots: List<String> = emptyList(),
         val files: List<FileEntry> = emptyList(),
         val tags: List<String> = emptyList(),
         val website: String? = null,
-        val basepath: String,
+        val basepath: String = "",
     )
 
     @Serializable
     private data class FileEntry(val filename: String, val default: Boolean = false, val playable: Boolean = false)
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         val url = Uri.parse("$base/api/search").buildUpon().apply {
             appendQueryParameter("page", page.toString())
-            appendQueryParameter("results", "30")
+            // Com gênero, o filtro é feito aqui pelas etiquetas: páginas maiores rendem mais acertos por pedido.
+            appendQueryParameter("results", if (genre != null) "60" else "30")
             if (query.isNotBlank()) appendQueryParameter("q", query.trim())
             systemId?.let { platformBySystem[it] }?.let { appendQueryParameter("platform", it) }
             kind?.let { appendQueryParameter("typetag", it) }
@@ -63,6 +65,8 @@ class HomebrewHubSource : CatalogSource {
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.entries.mapNotNull { e ->
+            if (e.slug.isBlank() || e.basepath.isBlank()) return@mapNotNull null
+            if (genre != null && !genre.matches(e.tags + listOfNotNull(e.typetag))) return@mapNotNull null
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
             val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
             val entryBase = "$base/static/${e.basepath}/entries/${e.slug}"
@@ -70,7 +74,7 @@ class HomebrewHubSource : CatalogSource {
             CatalogEntry(
                 id = e.slug,
                 sourceId = id,
-                title = e.title,
+                title = e.title.ifBlank { e.slug },
                 systemId = system,
                 developer = developerName(e.developer),
                 coverUrl = shots.firstOrNull { it.contains("cover", true) } ?: shots.firstOrNull(),

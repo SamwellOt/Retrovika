@@ -32,6 +32,13 @@ class GameFilesTest {
     }
 
     @Test
+    fun `cue sem aspas e arquivos com BOM`() {
+        val cue = "\uFEFFFILE track01.bin BINARY\n  TRACK 01 MODE1/2352\nFILE \"track 02.bin\" BINARY"
+        assertEquals(listOf("track01.bin", "track 02.bin"), GameFiles.referencedPaths("cue", cue, "jogo.cue"))
+        assertEquals(listOf("disc1.cue"), GameFiles.referencedPaths("m3u", "\uFEFFdisc1.cue\n", "jogo.m3u"))
+    }
+
+    @Test
     fun `gdi e ccd`() {
         val gdi = "3\n1 0 4 2352 track01.bin 0\n2 756 0 2352 \"track 02.raw\" 0\n3 45000 4 2352 track03.bin 0"
         assertEquals(listOf("track01.bin", "track 02.raw", "track03.bin"), GameFiles.referencedPaths("gdi", gdi, "jogo.gdi"))

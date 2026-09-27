@@ -47,14 +47,16 @@ class InternetArchiveSource : CatalogSource {
         val creator: JsonElement? = null,
     )
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         // Sem console escolhido não há como classificar/baixar: não retorna nada.
         val system = systemId?.let { systemTerms[it] } ?: return CatalogPage(emptyList(), page, 1, 0)
 
         val clauses = buildList {
             add("mediatype:(software)")
             add("($system)")
-            if (query.isNotBlank()) add("(${escape(query.trim())})")
+            escape(query).takeIf { it.isNotEmpty() }?.let { add("($it)") }
+            // Os itens de software trazem o gênero (quando trazem) nos assuntos livres do acervo.
+            genre?.let { g -> add("subject:(" + g.keywords.joinToString(" OR ") { "\"${escape(it)}\"" } + ")") }
         }
         val url = Uri.parse("https://archive.org/advancedsearch.php").buildUpon().apply {
             appendQueryParameter("q", clauses.joinToString(" AND "))
@@ -99,7 +101,13 @@ class InternetArchiveSource : CatalogSource {
         val identifier = entry.id
         val exts = Systems.byId(entry.systemId)?.extensions.orEmpty()
         val meta = Http.json.decodeFromString(Meta.serializer(), Http.getString("https://archive.org/metadata/$identifier"))
-        val direct = meta.files.filter { it.name.substringAfterLast('.', "").lowercase() in exts }
+        // Em consoles de disco, folha (.cue/.gdi…) e trilhas soltas não jogam sozinhas: baixar só uma delas
+        // não serve. Nesses casos ficam os pacotes, que são extraídos inteiros.
+        val discSheets = exts.any { it in DISC_SHEETS }
+        val direct = meta.files.filter { f ->
+            val ext = f.name.substringAfterLast('.', "").lowercase()
+            ext in exts && !(discSheets && ext in MULTI_FILE)
+        }
         val archives = meta.files.filter { it.name.endsWith(".zip", true) || it.name.endsWith(".7z", true) }
         val files = (direct + archives).distinctBy { it.name }
         if (files.isEmpty()) throw LocalizedException(R.string.catalog_no_compatible_file, identifier)
@@ -115,7 +123,14 @@ class InternetArchiveSource : CatalogSource {
         }
     }
 
-    private fun escape(q: String): String = q.replace(Regex("""[:\[\]"(){}]"""), " ").trim()
+    private companion object {
+        val DISC_SHEETS = setOf("cue", "gdi", "ccd")
+        val MULTI_FILE = setOf("cue", "gdi", "ccd", "toc", "m3u", "bin", "img", "sub", "raw")
+    }
+
+    // Só letras, números, espaços e apóstrofo: "/", "\\", "!", "+", "-"… são sintaxe da busca do archive.org
+    // e uma consulta como "AC/DC" virava erro ou lista vazia.
+    private fun escape(q: String): String = q.replace(Regex("""[^\p{L}\p{N}\s']"""), " ").replace(Regex("""\s+"""), " ").trim()
 
     private fun text(element: JsonElement?): String? = when (element) {
         is JsonPrimitive -> element.contentOrNull

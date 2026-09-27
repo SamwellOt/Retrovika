@@ -47,7 +47,8 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
      */
     fun backup(slot: Int) {
         val file = stateFile(slot)
-        if (file.exists()) file.renameTo(File(dir, "slot$slot.state.bak"))
+        // Nome único: um segundo estado incompatível (troca de núcleo e volta) não apaga o primeiro backup.
+        if (file.exists()) file.renameTo(File(dir, "slot$slot.${System.currentTimeMillis()}.state.bak"))
         thumbFile(slot).delete()
     }
 

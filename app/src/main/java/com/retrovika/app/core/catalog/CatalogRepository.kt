@@ -31,7 +31,7 @@ class CatalogRepository {
      * resultados, intercalando as fontes para que nenhuma domine o topo. É assim que a
      * busca por título mostra, de uma vez, "de quais sites dá para baixar esta ROM".
      */
-    suspend fun searchAll(query: String, systemId: String?, page: Int): CatalogPage = coroutineScope {
+    suspend fun searchAll(query: String, systemId: String?, page: Int, genre: Genre? = null): CatalogPage = coroutineScope {
         val applicable = sources.filter { src ->
             when {
                 src.requiresSystem && systemId == null -> false
@@ -40,7 +40,7 @@ class CatalogRepository {
             }
         }
         val results = applicable
-            .map { src -> async { runCatching { src.search(query, systemId, page, null) } } }
+            .map { src -> async { runCatching { src.search(query, systemId, page, null, genre) } } }
             .awaitAll()
         results.forEach { r -> r.exceptionOrNull()?.let { if (it is CancellationException) throw it } }
         val pages = results.mapNotNull { it.getOrNull() }

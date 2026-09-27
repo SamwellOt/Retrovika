@@ -6,7 +6,7 @@ import com.retrovika.app.core.systems.Systems
 
 object RomNaming {
     private val tagRegex = Regex("""\s*[\(\[][^)\]]*[\)\]]""")
-    private val regionRegex = Regex("""\((USA|Europe|Japan|World|Brazil|Korea|China|Asia|Australia|France|Germany|Spain|Italy|En|Ja|Pt)[^)]*\)""", RegexOption.IGNORE_CASE)
+    private val regionRegex = Regex("""\((USA|Europe|Japan|World|Brazil|Korea|China|Asia|Australia|France|Germany|Spain|Italy)(?=[,)])[^)]*\)""", RegexOption.IGNORE_CASE)
 
     /** "Final Fantasy VII (USA) (Disc 1) [!]" -> "Final Fantasy VII" */
     fun cleanTitle(rawName: String): String {
@@ -18,8 +18,8 @@ object RomNaming {
 
     fun region(rawName: String): String? = regionRegex.find(rawName)?.groupValues?.get(1)?.let {
         when (it.lowercase()) {
-            "usa" -> "EUA"; "europe" -> "Europa"; "japan", "ja" -> "Japão"; "world" -> "Mundo"
-            "brazil", "pt" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; else -> it
+            "usa" -> "EUA"; "europe" -> "Europa"; "japan" -> "Japão"; "world" -> "Mundo"
+            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; else -> it
         }
     }
 

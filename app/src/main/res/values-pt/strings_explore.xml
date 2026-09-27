@@ -18,6 +18,29 @@
     <string name="explore_pick_rom">Escolha qual ROM baixar</string>
     <string name="explore_variants_failed">Não foi possível listar as versões. Tente novamente.</string>
 
+    <string name="explore_searching">Buscando no catálogo…</string>
+    <string name="explore_filter_source">Fonte</string>
+    <string name="explore_filter_console">Console</string>
+    <string name="explore_filter_genre">Gênero</string>
+    <string name="explore_filter_type">Tipo</string>
+    <string name="explore_genre_note">Os gêneros vêm das etiquetas e descrições de cada site, então alguns resultados podem não corresponder exatamente.</string>
+    <string name="explore_empty_filtered">Nenhum título com esses filtros. Tente outro console ou gênero.</string>
+    <string name="explore_clear_filters">Limpar filtros</string>
+
+    <!-- Gêneros (filtros especiais do Explorar) -->
+    <string name="genre_action">Ação</string>
+    <string name="genre_adventure">Aventura</string>
+    <string name="genre_rpg">RPG</string>
+    <string name="genre_platform">Plataforma</string>
+    <string name="genre_puzzle">Quebra-cabeça</string>
+    <string name="genre_shooter">Tiro</string>
+    <string name="genre_racing">Corrida</string>
+    <string name="genre_sports">Esportes</string>
+    <string name="genre_fighting">Luta</string>
+    <string name="genre_strategy">Estratégia</string>
+    <string name="genre_horror">Terror</string>
+    <string name="genre_music">Música e ritmo</string>
+
     <!-- Fontes do catálogo -->
     <string name="catalog_all_sources">Todas as fontes</string>
     <string name="catalog_all_sources_description">Busca o mesmo título em todos os sites de uma vez e mostra de onde dá para baixar.</string>
