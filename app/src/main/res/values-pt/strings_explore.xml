@@ -37,6 +37,7 @@
     <string name="download_got_webpage">O site enviou uma página em vez do arquivo. Tente baixar pelo navegador interno.</string>
     <string name="download_no_space">Espaço livre insuficiente para extrair o jogo (precisa de %s)</string>
     <string name="download_extract_failed">Não foi possível extrair o arquivo: %s</string>
+    <string name="download_archive_corrupt">O arquivo baixado está corrompido (%s). Tente baixar de novo.</string>
     <string name="download_extract_memory">Memória insuficiente para extrair %s. Extraia no computador e importe os arquivos do jogo.</string>
 
     <!-- Navegador interno -->

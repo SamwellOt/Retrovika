@@ -72,6 +72,15 @@ int16_t Input::getInputState(unsigned port, unsigned device, unsigned index, uns
                     );
                     return axis || buttons;
                 }
+                case RETRO_DEVICE_ID_JOYPAD_MASK: {
+                    // Todos os botões num inteiro (bit N = botão N), como o RetroArch. Cada bit passa
+                    // pelo caminho de cima, para o D-pad por eixo e as diagonais também contarem.
+                    int16_t mask = 0;
+                    for (unsigned button = 0; button < 16; button++) {
+                        if (getInputState(port, RETRO_DEVICE_JOYPAD, index, button)) mask |= (1 << button);
+                    }
+                    return mask;
+                }
                 default:
                     return anyPressed(port, id);
             }

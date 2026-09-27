@@ -335,6 +335,11 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
             LOGD("Called RETRO_ENVIRONMENT_SET_HW_RENDER");
             return environment_handle_set_hw_render(static_cast<struct retro_hw_render_callback*>(data));
 
+        case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
+            // Input::getInputState responde RETRO_DEVICE_ID_JOYPAD_MASK.
+            LOGD("Called RETRO_ENVIRONMENT_GET_INPUT_BITMASKS");
+            return true;
+
         case RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE:
             LOGD("Called RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE");
             ((struct retro_rumble_interface*) data)->set_rumble_state = &callback_set_rumble_state;

@@ -347,6 +347,9 @@ class GLRetroView(
             LibretroDroid.unserializeSRAM(data.saveRAMState)
             data.saveRAMState = null
         }
+        // Como o RetroArch: entre o retro_load_game e o primeiro retro_run. Depois disso o Dolphin já
+        // iniciou a thread de emulação, que recarrega a configuração dos controles e pode desfazer a chamada.
+        data.controllerTypes.forEachIndexed { port, type -> LibretroDroid.setControllerType(port, type) }
         LibretroDroid.onSurfaceCreated()
         isGameLoaded = true
 

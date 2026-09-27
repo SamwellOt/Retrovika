@@ -79,7 +79,7 @@ object Archives {
                         zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
                     }
                 }
-                Format.SEVEN_Z -> sevenZ(archive).use { sz ->
+                Format.SEVEN_Z -> if (!extractSevenZNative(archive, names, out, ::target)) sevenZ(archive).use { sz ->
                     while (true) {
                         val entry = sz.nextEntry ?: break
                         if (entry.isDirectory || entry.name !in names) continue
@@ -95,6 +95,35 @@ object Archives {
             throw t
         }
         return out
+    }
+
+    /**
+     * Extrai pelo [SevenZipNative], com o dicionário fora do heap Java. Falso quando ele não serve (biblioteca
+     * ausente, método que ele não decodifica): aí nada foi gravado e o commons-compress tenta.
+     */
+    private fun extractSevenZNative(archive: File, names: Set<String>, out: MutableMap<String, File>, target: (String) -> File): Boolean {
+        if (!SevenZipNative.available) return false
+        val all = SevenZipNative.list(archive.path) ?: return false
+        val targets = arrayOfNulls<String>(all.size)
+        all.forEachIndexed { i, name ->
+            if (!name.endsWith('/') && name in names) {
+                val file = target(name)
+                out[name] = file
+                targets[i] = file.path
+            }
+        }
+        return when (SevenZipNative.extract(archive.path, targets)) {
+            SevenZipNative.OK -> true
+            SevenZipNative.UNSUPPORTED, SevenZipNative.OPEN -> {
+                out.values.forEach { it.delete() }
+                out.clear()
+                false
+            }
+            // Nem na memória nativa coube: o RomExtractor transforma isso na mensagem de memória.
+            SevenZipNative.MEMORY -> throw OutOfMemoryError("7z: ${archive.name}")
+            SevenZipNative.DATA -> throw LocalizedException(R.string.download_archive_corrupt, archive.name)
+            else -> throw LocalizedException(R.string.download_extract_failed, archive.name)
+        }
     }
 
     /** Pasta de primeiro nível comum a todas as entradas ("Jogo (USA)/"), ou "" se não houver. */

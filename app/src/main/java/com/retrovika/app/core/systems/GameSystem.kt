@@ -20,15 +20,19 @@ data class CoreInfo(
     /** Pacotes de assets que o núcleo precisa dentro da pasta system/. */
     val systemAssets: List<SystemAsset> = emptyList(),
     /**
-     * Tipo de controle (RETRO_DEVICE_*) informado ao núcleo na porta 1 depois de carregar o jogo. O
-     * RetroArch sempre faz isso; o LibretroDroid não, e alguns núcleos só conectam o controle quando
-     * recebem a chamada (sem ela, o Flycast ignora todos os botões).
+     * Tipo de controle (RETRO_DEVICE_*) informado ao núcleo em cada porta logo depois de carregar o jogo.
+     * O RetroArch sempre faz isso; o LibretroDroid não, e alguns núcleos só conectam o controle quando
+     * recebem a chamada (sem ela, Flycast, Dolphin, Opera, PC-FX, PUAE, VICE, Caprice32 e fMSX ignoram
+     * os botões). Não vale para todos: no Atari800 o JOYPAD puro troca o controle do 5200 por um genérico.
      */
     val portDevice: Int? = null,
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */
 const val RETRO_DEVICE_JOYPAD = 1
+
+/** RETRO_DEVICE_SUBCLASS(JOYPAD, 0) do fMSX: joystick e, nos botões que sobram, teclas do MSX (F1-F5, espaço…). */
+const val FMSX_JOYSTICK_KEYBOARD = (1 shl 8) or RETRO_DEVICE_JOYPAD
 
 enum class Preset(@StringRes val label: Int) { PERFORMANCE(R.string.preset_performance), BALANCED(R.string.preset_balanced), QUALITY(R.string.preset_quality) }
 

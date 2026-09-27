@@ -34,4 +34,6 @@ class GLRetroViewData(context: Context) {
     var skipDuplicateFrames: Boolean = false
     var enableMicrophone: Boolean = false
     var immersiveMode: ImmersiveMode? = null
+    /** Tipo de controle (RETRO_DEVICE_*) de cada porta, informado ao núcleo logo após carregar o jogo. */
+    var controllerTypes: IntArray = intArrayOf()
 }

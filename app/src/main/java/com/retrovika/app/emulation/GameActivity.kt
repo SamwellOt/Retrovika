@@ -271,6 +271,8 @@ class GameActivity : ComponentActivity() {
             shader = settings.shader.toShaderConfig()
             preferLowLatencyAudio = settings.lowLatencyAudio
             rumbleEventsEnabled = true
+            // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
+            core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
         }
 
         val view = GLRetroView(this, data).apply {
@@ -305,8 +307,6 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
-            // Na thread de emulação, como o RetroArch: o núcleo reconecta o controle no próximo retro_run.
-            core.portDevice?.let { device -> view.queueEvent { view.setControllerType(0, device) } }
             if (settings.autoLoad) {
                 withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
@@ -683,6 +683,8 @@ class GameActivity : ComponentActivity() {
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
+        /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */
+        private const val MAX_PORTS = 4
         private val RETROPAD_KEYS = listOf(
             KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y,
             KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,

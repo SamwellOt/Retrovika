@@ -46,4 +46,10 @@ mesmo submódulo do LibretroDroid 0.13.2.
 - **Códigos de erro chegam ao Java** (`libretrodroidjni.cpp`): o header da exceção era incluído dentro do
   `namespace libretrodroid`, o que criava outro tipo, e os `catch` nunca batiam. Todo erro virava o
   genérico, inclusive o "OpenGL ES 3 necessário" original.
+- **Tipo de controle por porta** (`GLRetroViewData.controllerTypes`): aplicado com
+  `retro_set_controller_port_device` entre o `retro_load_game` e o primeiro `retro_run`, como o RetroArch.
+  O original nunca chamava a função, e vários núcleos só conectam o controle quando a recebem (Flycast,
+  Dolphin, Opera, Beetle PC-FX, PUAE, VICE, Caprice32, fMSX): todos os botões eram ignorados.
+- **`GET_INPUT_BITMASKS` e `RETRO_DEVICE_ID_JOYPAD_MASK`** (`environment.cpp`, `input.cpp`). O LRPS2 só lê
+  os botões pela máscara e ficava sem nenhum; o caminho sem máscara do Beetle PC-FX lê os botões errados.
 - `#include <functional>` em `rumble.h` e `utils/javautils.h`, exigido pelos NDKs atuais.

@@ -104,8 +104,9 @@ object PadLayouts {
 
     val GAMECUBE = PadLayout(
         face = listOf(
-            PadButton("Y", X, 0xFF9E9E9E), PadButton("A", A, 0xFF2E7D32),
-            PadButton("B", B, 0xFFC62828), PadButton("X", Y, 0xFF9E9E9E),
+            // O Dolphin liga cada botão do GameCube ao de mesmo nome do RetroPad (X→X, Y→Y), não à posição.
+            PadButton("Y", Y, 0xFF9E9E9E), PadButton("A", A, 0xFF2E7D32),
+            PadButton("B", B, 0xFFC62828), PadButton("X", X, 0xFF9E9E9E),
         ),
         arrangement = FaceArrangement.DIAMOND,
         leftShoulders = listOf(shoulder("L", L2)),
@@ -300,8 +301,9 @@ object PadLayouts {
 
     val WII = GAMECUBE.copy(
         face = listOf(
-            PadButton("2", X, 0xFF9E9E9E), PadButton("A", A, 0xFF1E88E5),
-            PadButton("B", B, 0xFF9E9E9E), PadButton("1", Y, 0xFF9E9E9E),
+            // Wiimote em pé no Dolphin: 1 = X e 2 = Y do RetroPad.
+            PadButton("2", Y, 0xFF9E9E9E), PadButton("A", A, 0xFF1E88E5),
+            PadButton("B", B, 0xFF9E9E9E), PadButton("1", X, 0xFF9E9E9E),
         ),
         center = listOf(pill("−", SELECT), pill("+", START)),
     )

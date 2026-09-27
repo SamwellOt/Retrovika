@@ -34,6 +34,11 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
+    // Extrator nativo de .7z (src/main/cpp): o dicionário do LZMA fica fora do limite do heap Java.
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
+    }
+
     signingConfigs {
         if (releaseStoreFile != null) {
             create("release") {
