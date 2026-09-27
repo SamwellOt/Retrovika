@@ -1,0 +1,42 @@
+# Temporário: descobre os filtros do CDRomance (gênero/console) e mede o tempo (removido em seguida).
+name: Probe CDRomance filters
+on:
+  push:
+    branches: [claude/menu-navigation-performance-qyjolq]
+    paths: ['.github/workflows/probe-cdr.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          UA="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36"
+          t() {
+            curl -sSL -A "$UA" -o p.html -w "%{http_code} %{time_total}s %{size_download}B final=%{url_effective}  $1\n" "$1" || echo "ERRO $1"
+            echo "   cards=$(grep -o 'game-container' p.html | wc -l) consoles=$(grep -oE 'class=\"console [^\"]*\"' p.html | sort | uniq -c | tr '\n' ';') paginas=$(grep -oE 'page-numbers\"[^>]*>[0-9.,]+' p.html | tail -1)"
+          }
+          echo "===== formulários/filtros da página de categoria"
+          curl -sSL -A "$UA" https://cdromance.org/gba-roms/ -o cat.html
+          python3 - <<'PY'
+          import re
+          s=open('cat.html',encoding='utf-8',errors='replace').read()
+          for m in re.finditer(r'<form[^>]*>', s): print('FORM', m.group(0)[:300])
+          for m in re.finditer(r'<select[^>]*>', s): print('SELECT', m.group(0)[:300])
+          names=set(re.findall(r'name="([^"]+)"', s)); print('NAMES', sorted(names)[:80])
+          for m in re.finditer(r'facetwp[^"\' ]*', s): pass
+          print('FACETS', sorted(set(re.findall(r'data-name="([^"]+)"', s)))[:40])
+          print('FWP', sorted(set(re.findall(r'(?:\?|&)(_[a-z_]+|fwp_[a-z_]+)=', s)))[:40])
+          i=s.find('filterForm')
+          print('SCRIPT', s[max(0,i-3000):i+1500] if i>=0 else 'sem filterForm')
+          for sel in re.finditer(r'<select[^>]*name="([^"]+)"[^>]*>(.*?)</select>', s, re.S):
+              opts=re.findall(r'<option[^>]*value="([^"]*)"[^>]*>([^<]*)', sel.group(2))
+              print('OPTIONS', sel.group(1), opts[:60])
+          PY
+          echo "===== tempos"
+          for i in 1 2; do
+            t "https://cdromance.org/gba-roms/"
+            t "https://cdromance.org/?s=action"
+            t "https://cdromance.org/gba-roms/?s=action"
+            t "https://cdromance.org/?s=action&post_type=gba-roms"
+            t "https://cdromance.org/?s=action&category_name=gba-roms"
+            t "https://cdromance.org/psx-iso/?s=rpg"
+          done
