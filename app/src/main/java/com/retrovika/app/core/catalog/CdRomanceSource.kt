@@ -2,7 +2,7 @@ package com.retrovika.app.core.catalog
 
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
-import android.net.Uri
+import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.HttpStatusException
 import org.jsoup.Jsoup
@@ -81,8 +81,8 @@ class CdRomanceSource : CatalogSource {
         val url = when {
             // Busca dentro da seção do console (/gba-roms/?s=action): o site já filtra. Buscar no site
             // todo e descartar os outros consoles deixava as páginas quase vazias e a lista lenta.
-            q.isNotBlank() && section != null -> "$base/$section/${pagePath(page)}?s=${Uri.encode(q)}"
-            q.isNotBlank() -> "$base/${pagePath(page)}?s=${Uri.encode(q)}"
+            q.isNotBlank() && section != null -> "$base/$section/${pagePath(page)}?s=${Urls.encode(q)}"
+            q.isNotBlank() -> "$base/${pagePath(page)}?s=${Urls.encode(q)}"
             systemId != null -> section?.let { "$base/$it/${pagePath(page)}" }
                 ?: return CatalogPage(emptyList(), page, 1, 0) // console sem categoria navegável: peça um termo
             else -> "$base/${pagePath(page)}" // home: lançamentos recentes

@@ -62,6 +62,12 @@ android {
     testOptions {
         // Os testes de unidade rodam na JVM: chamadas a android.* devolvem valores padrão em vez de falhar.
         unitTests.isReturnDefaultValues = true
+        // Testes de rede (velocidade dos filtros contra os sites reais) só rodam quando pedidos.
+        unitTests.all { test ->
+            val network = project.findProperty("networkTests")?.toString() ?: "false"
+            test.systemProperty("networkTests", network)
+            if (network == "true") test.testLogging { showStandardStreams = true }
+        }
     }
 
     compileOptions {

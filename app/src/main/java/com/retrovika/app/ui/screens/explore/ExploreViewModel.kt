@@ -12,10 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import com.retrovika.app.core.catalog.CatalogPage
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.async
-import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,14 +60,6 @@ data class ExploreState(
 
 const val ALL_SOURCES = "all"
 
-/** Com menos jogos que isso na tela, as próximas páginas são buscadas sem esperar a rolagem. */
-private const val MIN_FILL = 12
-
-/** Páginas pedidas ao mesmo tempo quando o filtro rende pouco por página. */
-private const val PARALLEL_PAGES = 3
-
-/** Rodadas de busca em paralelo antes de esperar o usuário rolar de novo (até 9 páginas extras). */
-private const val MAX_FILL_ROUNDS = 3
 
 @OptIn(FlowPreview::class)
 class ExploreViewModel(private val app: AppContainer) : ViewModel() {
@@ -199,22 +187,8 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         _state.update { it.copy(entries = before) }
         appendPage(first)
 
-        // Filtros restritos (gênero raro, console + busca) trazem poucos jogos por página. Em vez de
-        // pedir a próxima só depois da anterior chegar, as seguintes vêm em paralelo até encher a tela.
-        var next = first.page + 1
-        var rounds = 0
-        while (_state.value.entries.size < MIN_FILL && next <= _state.value.totalPages && rounds < MAX_FILL_ROUNDS) {
-            val batch = (next until next + PARALLEL_PAGES).filter { it <= _state.value.totalPages }
-            val pages = coroutineScope {
-                batch.map { p -> async { runCatching { fetchPage(s, p) }.getOrNull() } }.awaitAll()
-            }
-            // Filtro trocado no meio: a busca nova assume o estado (os pedidos daqui foram cancelados).
-            coroutineContext.ensureActive()
-            if (pages.all { it == null }) break
-            pages.filterNotNull().sortedBy { it.page }.forEach(::appendPage)
-            next = batch.last() + 1
-            rounds++
-        }
+        // Filtro que rende pouco por página: as próximas vêm em paralelo até encher a tela.
+        app.catalog.fillAfter(first, loaded = { _state.value.entries.size }, fetch = { p -> fetchPage(s, p) }, onPage = ::appendPage)
         _state.update { it.copy(loading = false) }
     }
 

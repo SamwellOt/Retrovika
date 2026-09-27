@@ -2,7 +2,7 @@ package com.retrovika.app.core.catalog
 
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
-import android.net.Uri
+import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Systems
 import kotlinx.serialization.Serializable
@@ -58,16 +58,16 @@ class InternetArchiveSource : CatalogSource {
             // Os itens de software trazem o gênero (quando trazem) nos assuntos livres do acervo.
             genre?.let { g -> add("subject:(" + g.keywords.joinToString(" OR ") { "\"${escape(it)}\"" } + ")") }
         }
-        val url = Uri.parse("https://archive.org/advancedsearch.php").buildUpon().apply {
-            appendQueryParameter("q", clauses.joinToString(" AND "))
-            appendQueryParameter("fl[]", "identifier")
-            appendQueryParameter("fl[]", "title")
-            appendQueryParameter("fl[]", "creator")
-            appendQueryParameter("rows", perPage.toString())
-            appendQueryParameter("page", page.toString())
-            appendQueryParameter("sort[]", "downloads desc")
-            appendQueryParameter("output", "json")
-        }.build().toString()
+        val url = Urls.withQuery("https://archive.org/advancedsearch.php", listOf(
+            "q" to clauses.joinToString(" AND "),
+            "fl[]" to "identifier",
+            "fl[]" to "title",
+            "fl[]" to "creator",
+            "rows" to perPage.toString(),
+            "page" to page.toString(),
+            "sort[]" to "downloads desc",
+            "output" to "json",
+        ))
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.response.docs.map { doc ->
@@ -77,7 +77,7 @@ class InternetArchiveSource : CatalogSource {
                 title = text(doc.title) ?: doc.identifier,
                 systemId = systemId!!,
                 developer = text(doc.creator),
-                coverUrl = "https://archive.org/services/img/${Uri.encode(doc.identifier)}",
+                coverUrl = "https://archive.org/services/img/${Urls.encode(doc.identifier)}",
                 screenshots = emptyList(),
                 tags = emptyList(),
                 website = "https://archive.org/details/${doc.identifier}",
@@ -115,7 +115,7 @@ class InternetArchiveSource : CatalogSource {
             val short = file.name.substringAfterLast('/')
             RomVariant(
                 fileName = short,
-                downloadUrl = "https://archive.org/download/$identifier/${Uri.encode(file.name, "/")}",
+                downloadUrl = "https://archive.org/download/$identifier/${Urls.encode(file.name, "/")}",
                 label = short,
                 region = regionOf(short),
                 sizeBytes = file.size?.toLongOrNull(),

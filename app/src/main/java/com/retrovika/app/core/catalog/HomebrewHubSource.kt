@@ -1,7 +1,7 @@
 package com.retrovika.app.core.catalog
 
 import com.retrovika.app.R
-import android.net.Uri
+import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -52,18 +52,18 @@ class HomebrewHubSource : CatalogSource {
     private data class FileEntry(val filename: String, val default: Boolean = false, val playable: Boolean = false)
 
     override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
-        val url = Uri.parse("$base/api/search").buildUpon().apply {
-            appendQueryParameter("page", page.toString())
-            appendQueryParameter("results", "30")
+        val url = Urls.withQuery("$base/api/search", buildList {
+            add("page" to page.toString())
+            add("results" to "30")
             // O gênero vai para a API como etiqueta: filtrar aqui páginas sem filtro deixava quase todas
             // vazias (Esportes são 3 de ~1600 jogos) e a busca encadeava pedido atrás de pedido.
-            genre?.let { appendQueryParameter("tags", hubTag(it)) }
-            if (query.isNotBlank()) appendQueryParameter("q", query.trim())
-            systemId?.let { platformBySystem[it] }?.let { appendQueryParameter("platform", it) }
-            kind?.let { appendQueryParameter("typetag", it) }
-            appendQueryParameter("sort", "firstadded_date")
-            appendQueryParameter("order", "desc")
-        }.build().toString()
+            genre?.let { add("tags" to hubTag(it)) }
+            if (query.isNotBlank()) add("q" to query.trim())
+            systemId?.let { platformBySystem[it] }?.let { add("platform" to it) }
+            kind?.let { add("typetag" to it) }
+            add("sort" to "firstadded_date")
+            add("order" to "desc")
+        })
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.entries.mapNotNull { e ->
@@ -71,7 +71,7 @@ class HomebrewHubSource : CatalogSource {
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
             val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
             val entryBase = "$base/static/${e.basepath}/entries/${e.slug}"
-            val shots = e.screenshots.map { "$entryBase/${Uri.encode(it, "/")}" }
+            val shots = e.screenshots.map { "$entryBase/${Urls.encode(it, "/")}" }
             CatalogEntry(
                 id = e.slug,
                 sourceId = id,
@@ -82,7 +82,7 @@ class HomebrewHubSource : CatalogSource {
                 screenshots = shots,
                 tags = e.tags.filterNot { it.startsWith("event:") }.take(6),
                 website = e.website?.takeIf { it.isNotBlank() },
-                downloadUrl = "$entryBase/${Uri.encode(file.filename, "/")}",
+                downloadUrl = "$entryBase/${Urls.encode(file.filename, "/")}",
                 fileName = file.filename.substringAfterLast('/'),
                 kind = e.typetag ?: "game",
             )

@@ -4,6 +4,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class CatalogRepository {
     // A ordem aqui é a dos filtros no Explorar e a do rodízio em "Todas as fontes".
@@ -89,6 +91,35 @@ class CatalogRepository {
         merge(pages, page)
     }
 
+    /**
+     * Filtros restritos (gênero raro, console + busca) rendem poucos jogos por página. Em vez de pedir
+     * a próxima só depois da anterior chegar, busca as seguintes em paralelo ([PARALLEL_PAGES] por vez)
+     * até ter [MIN_FILL] jogos ou esgotar [MAX_FILL_ROUNDS] rodadas. [onPage] recebe cada página em ordem.
+     */
+    suspend fun fillAfter(
+        first: CatalogPage,
+        loaded: () -> Int,
+        fetch: suspend (Int) -> CatalogPage,
+        onPage: (CatalogPage) -> Unit,
+    ) {
+        var next = first.page + 1
+        var lastPage = maxOf(first.totalPages, first.page)
+        var rounds = 0
+        while (loaded() < MIN_FILL && next <= lastPage && rounds < MAX_FILL_ROUNDS) {
+            val batch = (next until next + PARALLEL_PAGES).filter { it <= lastPage }
+            val pages = coroutineScope { batch.map { p -> async { runCatching { fetch(p) }.getOrNull() } }.awaitAll() }
+            // Filtro trocado no meio: a busca nova assume (os pedidos daqui foram cancelados).
+            currentCoroutineContext().ensureActive()
+            if (pages.all { it == null }) break
+            pages.filterNotNull().sortedBy { it.page }.forEach { page ->
+                lastPage = maxOf(lastPage, page.totalPages)
+                onPage(page)
+            }
+            next = batch.last() + 1
+            rounds++
+        }
+    }
+
     private fun merge(pages: List<CatalogPage>, page: Int) = CatalogPage(
         entries = interleave(pages.map { it.entries }),
         page = page,
@@ -112,6 +143,11 @@ class CatalogRepository {
 
     private companion object {
         const val CACHE_PAGES = 48
+        /** Com menos jogos que isso na tela, as próximas páginas vêm sem esperar a rolagem. */
+        const val MIN_FILL = 12
+        const val PARALLEL_PAGES = 3
+        /** Rodadas em paralelo antes de esperar o usuário rolar de novo (até 9 páginas extras). */
+        const val MAX_FILL_ROUNDS = 3
         const val CACHE_TTL_MS = 5 * 60 * 1000L
     }
 }

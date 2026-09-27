@@ -1,0 +1,28 @@
+# Mede a velocidade dos filtros do Explorar contra os sites reais (CatalogSpeedTest).
+# Roda quando o código do catálogo muda e pode ser disparado à mão; não entra no build normal
+# porque depende da internet e dos sites de terceiros.
+name: Catalog speed
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'app/src/main/java/com/retrovika/app/core/catalog/**'
+      - 'app/src/main/java/com/retrovika/app/core/net/**'
+      - 'app/src/test/java/com/retrovika/app/core/catalog/CatalogSpeedTest.kt'
+      - '.github/workflows/catalog-speed.yml'
+  workflow_dispatch:
+
+jobs:
+  speed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      # O runner ubuntu já traz o Android SDK (ANDROID_HOME) com as licenças aceitas.
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Velocidade dos filtros
+        run: ./gradlew testDebugUnitTest -PnetworkTests=true --tests '*CatalogSpeedTest*'
