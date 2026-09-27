@@ -23,7 +23,7 @@
     <string name="bios_neogeo_zip">BIOS Neo Geo (colocar na pasta de ROMs ou system)</string>
     <string name="bios_panafz10_bin">BIOS Panasonic FZ-10 (recomendada)</string>
     <string name="bios_pcsx2_bios_scph39001_bin">BIOS PS2 (necessária para LRPS2)</string>
-    <string name="bios_saturn_bios_bin">BIOS Saturn (opcional no YabaSanshiro)</string>
+    <string name="bios_saturn_bios_bin">BIOS Saturn (YabaSanshiro)</string>
     <string name="bios_scph5500_bin">BIOS PS1 (Japão)</string>
     <string name="bios_scph5501_bin">BIOS PS1 (EUA) — recomendada</string>
     <string name="bios_scph5502_bin">BIOS PS1 (Europa)</string>

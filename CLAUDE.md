@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Retrovika is an all-in-one Android emulation frontend. It is written in Kotlin with Jetpack Compose and has one Gradle module (`:app`). The emulation engine is [LibretroDroid](https://github.com/Swordfish90/LibretroDroid) (JitPack), which loads libretro cores (`.so`). Code comments are in Brazilian Portuguese; keep new ones in Portuguese. The UI is bilingual (English and Portuguese): see **Languages** below.
+Retrovika is an all-in-one Android emulation frontend. It is written in Kotlin with Jetpack Compose and has two Gradle modules: `:app` and `:libretrodroid`. The emulation engine is [LibretroDroid](https://github.com/Swordfish90/LibretroDroid), which loads libretro cores (`.so`). It is built from source in `:libretrodroid` (0.13.2 plus fixes for GPU cores, listed in `libretrodroid/README.md`), not taken from JitPack, so it also compiles C++. The NDK is pinned as `ndk` in `libs.versions.toml` (the version preinstalled on the GitHub `ubuntu-latest` runner). CMake is left at AGP's default. If either is missing, AGP installs it into the SDK on the first build. Code comments are in Brazilian Portuguese; keep new ones in Portuguese. The UI is bilingual (English and Portuguese): see **Languages** below.
 
 Keep ROM files and any direct download links out of version control (see `roms/` and `.gitignore`); the catalog metadata is fine to commit.
 
@@ -53,7 +53,7 @@ To add a console, you mostly just add an entry here, plus folder aliases in `Rom
 
 **Cores.** `CoreManager.corePath()` first looks for a core bundled in the APK (`nativeLibraryDir/lib<id>_libretro_android.so`). If there isn't one, it uses the downloaded `filesDir/cores/<id>_libretro_android.so`. Missing cores are downloaded from `buildbot.libretro.com/nightly/android/latest/<abi>/` and marked read-only, which Android 14+ requires for dlopen. They must stay on internal storage. Some cores need `systemAssets` from `buildbot.libretro.com/assets/system/` (PPSSPP, Dolphin's `dolphin-emu/Sys`, LRPS2's `pcsx2/resources`, blueMSX's `Machines`/`Databases`). They are extracted into `system/`, and a `.asset-<name>` marker is written only after extraction completes. `CoreManager.needsInstall()` checks both the `.so` and the markers, and installs are serialized per core.
 
-**Core options at launch.** Options are merged in this order: `core.defaults`, then `core.presets[preset]`, then the user's manual overrides stored in DataStore under `core_options_<coreId>`.
+**Core options at launch.** Options are merged in this order: `core.defaults`, then `core.presets[preset]`, then the user's manual overrides stored in DataStore under `core_options_<coreId>`. A value the core does not list for that key is replaced by the core's default when the core declares its options, so keys and values in `Systems.kt` must match the core's own list (check with the core's `SET_VARIABLES`). Before creating the view, `GameActivity` points `$EXTERNAL_STORAGE` at `saves/<system>/`, because Play! builds its data folder from it.
 
 **Library.** `LibraryRepository.rescan()` merges two sources:
 - the internal `roms/<systemId>/` tree (plain file paths, `GameSource.IMPORTED`/`DOWNLOADED`)
@@ -67,7 +67,7 @@ To add a console, you mostly just add an entry here, plus folder aliases in `Rom
 - `GameActivity` is `singleTask` with its own `taskAffinity`. `onNewIntent` with a different game ID saves and then calls `recreate()`.
 - `GLRetroView` observes a private `LifecycleRegistry` (`emulationOwner`), not the Activity's lifecycle. Pausing means moving that registry to `STARTED`. This is how the pause menu freezes emulation.
 - In `onPause`, SRAM and the autosave state are written synchronously *before* the registry is moved down.
-- While paused, serialize and unserialize calls pass `useEmulationThread = false`.
+- Never serialize, unserialize or reset the core off the emulation (GL) thread. GPU cores (N64, Dreamcast, GameCube) make GL calls there and crash or write garbage without the context. The GL thread is stopped while paused, so the state is captured before stopping (on menu open and in `onPause`) into `frozenState`. The menu saves and autosaves from that copy. Load and reset close the menu first, then run on the emulation thread, waiting from `Dispatchers.Default` rather than the main thread. SRAM is a plain memory copy and can be read from any thread.
 - The manifest `configChanges` stops rotation from recreating the Activity.
 - `GameScreen` keeps the `AndroidView` at the same composition position in both orientations, so the GL surface is never re-parented.
 

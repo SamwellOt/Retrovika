@@ -33,6 +33,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.lifecycleScope
 import com.retrovika.app.container
+import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.library.Game
@@ -92,6 +93,14 @@ class GameActivity : ComponentActivity() {
     private var controllerActive by mutableStateOf(false)
     private var toast by mutableStateOf<String?>(null)
     private var menuSnapshot: Bitmap? = null
+    private var menuOpening = false
+
+    /**
+     * Estado do jogo capturado na thread de emulação quando ela parou (menu aberto ou app em segundo plano).
+     * Com a emulação parada, o núcleo não pode ser serializado de outra thread: os que desenham com a GPU
+     * (N64, Dreamcast, GameCube) chamam OpenGL nesse momento e, sem o contexto, fecham o app ou gravam lixo.
+     */
+    private var frozenState: ByteArray? = null
 
     private lateinit var game: Game
     private lateinit var system: GameSystem
@@ -207,7 +216,12 @@ class GameActivity : ComponentActivity() {
             } catch (c: kotlinx.coroutines.CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                return fail(getString(R.string.game_core_install_failed), getString(R.string.game_core_install_failed_message, t.userMessage(this)))
+                // Núcleo sem versão para este processador: não é a internet, e a dica só confundiria.
+                val noBuild = t is LocalizedException && t.messageRes == R.string.cores_unavailable_abi
+                return fail(
+                    getString(R.string.game_core_install_failed),
+                    if (noBuild) t.userMessage(this) else getString(R.string.game_core_install_failed_message, t.userMessage(this)),
+                )
             } finally {
                 progressJob.cancel()
             }
@@ -232,6 +246,11 @@ class GameActivity : ComponentActivity() {
 
         ui = EmulationUi.Preparing(getString(R.string.game_starting, game.title), null)
         val sram = withContext(Dispatchers.IO) { states.sramFile().takeIf { it.exists() }?.readBytes() }
+
+        // Alguns núcleos (Play!) montam a pasta de dados a partir de $EXTERNAL_STORAGE, que aponta para o
+        // /sdcard sem permissão de escrita: o núcleo abortava ao criar a pasta. Vale para o processo
+        // (é o getenv nativo) e é refeito a cada jogo.
+        runCatching { android.system.Os.setenv("EXTERNAL_STORAGE", app.paths.savesFor(system.id).absolutePath, true) }
 
         val data = GLRetroViewData(this).apply {
             coreFilePath = corePath
@@ -271,7 +290,11 @@ class GameActivity : ComponentActivity() {
             view.getGLRetroErrors().collect { code ->
                 val msg = when (code) {
                     GLRetroView.ERROR_LOAD_LIBRARY -> getString(R.string.game_error_load_library)
-                    GLRetroView.ERROR_LOAD_GAME -> getString(R.string.game_error_load_game)
+                    GLRetroView.ERROR_LOAD_GAME -> getString(R.string.game_error_load_game) +
+                        app.bios.missingOptional(system).takeIf { it.isNotEmpty() }?.let { missing ->
+                            "\n\n" + getString(R.string.game_error_load_game_bios) + "\n" +
+                                missing.joinToString("\n") { "• ${it.fileName} — ${getString(it.description)}" }
+                        }.orEmpty()
                     GLRetroView.ERROR_GL_NOT_COMPATIBLE -> getString(R.string.game_error_gl)
                     GLRetroView.ERROR_SERIALIZATION -> getString(R.string.game_error_serialization)
                     else -> getString(R.string.game_error_unexpected, code)
@@ -284,7 +307,8 @@ class GameActivity : ComponentActivity() {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (settings.autoLoad) {
                 withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
-                    if (view.unserializeState(data)) {
+                    // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
+                    if (withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }) {
                         toast = getString(R.string.game_progress_restored)
                     } else {
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
@@ -375,6 +399,8 @@ class GameActivity : ComponentActivity() {
         val running = activityResumed && !menuOpen && ui is EmulationUi.Running
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
         if (running && sessionStart == 0L) sessionStart = System.currentTimeMillis()
+        // O jogo volta a andar: o estado congelado deixa de ser o atual.
+        if (running) frozenState = null
         if (!running) {
             flushPlayTime()
             rumbleVibrator?.cancel()
@@ -389,17 +415,22 @@ class GameActivity : ComponentActivity() {
         app.scope.launch { app.library.recordSession(game.id, seconds) }
     }
 
+    private fun emulationRunning() = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
+
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
     private fun persist(auto: Boolean) {
         val view = retroView ?: return
         if (ui !is EmulationUi.Running) return
         runCatching {
-            val emulationActive = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
-            val sram = view.serializeSRAM(emulationActive)
+            val running = emulationRunning()
+            // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
+            val sram = view.serializeSRAM(running)
             if (sram.isNotEmpty()) states.sramFile().writeBytes(sram)
             if (auto && autoSaveReady) {
-                val state = view.serializeState(emulationActive)
-                if (state.isNotEmpty()) states.write(SaveStates.AUTO_SLOT, state, menuSnapshot)
+                // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
+                // parado, vale o que foi capturado quando a emulação parou.
+                if (running) frozenState = view.serializeState().takeIf { it.isNotEmpty() }
+                frozenState?.let { states.write(SaveStates.AUTO_SLOT, it, menuSnapshot) }
             }
         }
     }
@@ -420,10 +451,10 @@ class GameActivity : ComponentActivity() {
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
 
         override fun save(slot: Int, onDone: () -> Unit) {
-            val view = retroView ?: return
-            val data = view.serializeState(false)
+            // Com o menu aberto a emulação está parada: o estado é o capturado ao abrir o menu.
+            val data = frozenState
             // Núcleo que não gera estado: gravar o vazio apagaria um save bom do slot.
-            if (data.isEmpty()) {
+            if (data == null) {
                 toast = getString(R.string.game_state_save_failed, getString(R.string.game_error_serialization))
                 return
             }
@@ -454,9 +485,15 @@ class GameActivity : ComponentActivity() {
                 }
                 // A Activity pode ter trocado de jogo ou fechado durante a leitura.
                 if (retroView !== view) return@launch
-                val ok = data != null && data.isNotEmpty() && view.unserializeState(data, false)
-                toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
-                if (ok) close()
+                if (data == null || data.isEmpty()) {
+                    toast = getString(R.string.game_state_load_failed)
+                    return@launch
+                }
+                // O núcleo só pode ler o estado na thread de emulação, que precisa estar rodando:
+                // o menu fecha antes. A espera pela thread fica fora da thread principal.
+                close()
+                val ok = withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
+                if (retroView === view) toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
             }
         }
 
@@ -489,7 +526,12 @@ class GameActivity : ComponentActivity() {
             toast = getString(R.string.game_disk_inserted, index + 1)
         }
 
-        override fun reset() { retroView?.reset(false); close() }
+        override fun reset() {
+            val view = retroView ?: return
+            // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
+            close()
+            lifecycleScope.launch(Dispatchers.Default) { view.reset() }
+        }
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
 
@@ -510,17 +552,26 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun openMenu() {
-        if (menuOpen) return
+        if (menuOpen || menuOpening) return
         val view = retroView
         if (view == null || ui !is EmulationUi.Running) { finish(); return }
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)
+        menuOpening = true
         // Captura a tela antes de pausar: vira a miniatura dos save states.
         captureFrame(view) { bmp ->
-            menuSnapshot = bmp
-            menuOpen = true
-            updateEmulationState()
+            lifecycleScope.launch {
+                // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
+                // é ele que o menu grava nos slots e no salvamento automático.
+                val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
+                menuOpening = false
+                if (retroView !== view) return@launch
+                frozenState = state?.takeIf { it.isNotEmpty() }
+                menuSnapshot = bmp
+                menuOpen = true
+                updateEmulationState()
+            }
         }
     }
 

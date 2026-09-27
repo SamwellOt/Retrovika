@@ -78,6 +78,7 @@
     <string name="cores_not_installed">Not installed</string>
     <string name="cores_unknown_error">Unknown error</string>
     <string name="cores_no_library">Core package has no .so library</string>
+    <string name="cores_unavailable_abi">%1$s has no build for this device\'s processor (%2$s). Pick another core for this console.</string>
     <string name="bios_ui_title">BIOS</string>
     <string name="bios_ui_subtitle">%1$d of %2$d consoles ready</string>
     <string name="bios_ui_intro">Select the BIOS files dumped from your consoles. Retrovika identifies each one by name or MD5 hash and puts it in the right place.</string>

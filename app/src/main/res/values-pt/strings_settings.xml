@@ -78,6 +78,7 @@
     <string name="cores_not_installed">Não instalado</string>
     <string name="cores_unknown_error">Erro desconhecido</string>
     <string name="cores_no_library">Pacote do núcleo sem biblioteca .so</string>
+    <string name="cores_unavailable_abi">O %1$s não tem versão para o processador deste aparelho (%2$s). Escolha outro núcleo para este console.</string>
     <string name="bios_ui_title">BIOS</string>
     <string name="bios_ui_subtitle">%1$d de %2$d consoles prontos</string>
     <string name="bios_ui_intro">Selecione os arquivos de BIOS extraídos dos seus consoles. O Retrovika identifica cada um pelo nome ou pelo hash MD5 e o coloca no lugar certo.</string>

@@ -41,6 +41,13 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
     fun missingRequired(system: GameSystem): List<List<BiosFile>> =
         unsatisfied(system.bios) { File(paths.system, it.fileName).exists() }
 
+    /**
+     * BIOS opcionais ausentes. Opcionais no sistema, mas às vezes obrigatórias para um dos núcleos
+     * (o LRPS2 exige a do PS2, o Play! não): servem de pista quando o núcleo não abre o jogo.
+     */
+    fun missingOptional(system: GameSystem): List<BiosFile> =
+        system.bios.filter { !it.required && !File(paths.system, it.fileName).exists() }
+
     /** [check] calcula MD5 de cada arquivo; use esta versão a partir da UI. */
     suspend fun checkAsync(system: GameSystem): List<BiosCheck> = withContext(Dispatchers.IO) { check(system) }
 

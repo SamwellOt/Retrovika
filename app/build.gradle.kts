@@ -22,6 +22,8 @@ val releaseStoreFile = signingValue("storeFile", "RETROVIKA_KEYSTORE")
 android {
     namespace = "com.retrovika.app"
     compileSdk = 36
+    // O mesmo NDK do :libretrodroid: é ele que tira os símbolos de depuração das .so no empacotamento.
+    ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
         applicationId = "com.retrovika.app"
@@ -109,7 +111,7 @@ dependencies {
     implementation(libs.commons.compress)
     implementation(libs.xz)
 
-    implementation(libs.libretrodroid)
+    implementation(project(":libretrodroid"))
 
     testImplementation(libs.junit)
 }

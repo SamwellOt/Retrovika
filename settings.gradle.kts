@@ -10,8 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://jitpack.io")
     }
 }
 rootProject.name = "Retrovika"
-include(":app")
+include(":app", ":libretrodroid")

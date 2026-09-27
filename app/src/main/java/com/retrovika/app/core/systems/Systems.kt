@@ -118,7 +118,7 @@ object Systems {
                 ),
                 CoreInfo(
                     "desmume", "DeSmuME", R.string.core_desmume,
-                    defaults = mapOf("desmume_cpu_mode" to "jit", "desmume_frameskip" to "0"),
+                    defaults = mapOf("desmume_frameskip" to "0"),
                 ),
             ),
             layout = PadLayouts.NDS, accent = 0xFF90A4AE, orientation = Orientation.PORTRAIT,
@@ -213,7 +213,7 @@ object Systems {
             cores = listOf(
                 CoreInfo(
                     "ppsspp", "PPSSPP", R.string.core_ppsspp,
-                    defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "Off"),
+                    defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "disabled"),
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf("ppsspp_internal_resolution" to "480x272", "ppsspp_frameskip" to "1"),
                         Preset.BALANCED to mapOf("ppsspp_internal_resolution" to "960x544"),
@@ -285,9 +285,9 @@ object Systems {
             layout = PadLayouts.SATURN, accent = 0xFF455A64,
             libretroDbName = "Sega - Saturn",
             bios = listOf(
-                BiosFile("saturn_bios.bin", R.string.bios_saturn_bios_bin, "af5828fdff51384f99b3c4926be27762", required = false),
-                BiosFile("sega_101.bin", R.string.bios_sega_101_bin, "85ec9ca47d8f6807718151cbcca8b964", required = false),
-                BiosFile("mpr-17933.bin", R.string.bios_mpr_17933_bin, "3240872c70984b6cbfda1586cab68dbe", required = false),
+                BiosFile("saturn_bios.bin", R.string.bios_saturn_bios_bin, "af5828fdff51384f99b3c4926be27762", group = "saturn"),
+                BiosFile("sega_101.bin", R.string.bios_sega_101_bin, "85ec9ca47d8f6807718151cbcca8b964", group = "saturn"),
+                BiosFile("mpr-17933.bin", R.string.bios_mpr_17933_bin, "3240872c70984b6cbfda1586cab68dbe", group = "saturn"),
             ),
             multiDisc = true,
         ),
@@ -302,7 +302,7 @@ object Systems {
                     // (caso do LibretroDroid); desligada, o Flycast desenha no mesmo thread do retro_run.
                     defaults = mapOf("reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "disabled"),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "enabled"),
+                        Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "1"),
                         Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960"),
                         Preset.QUALITY to mapOf("reicast_internal_resolution" to "1920x1440", "reicast_anisotropic_filtering" to "4"),
                     ),

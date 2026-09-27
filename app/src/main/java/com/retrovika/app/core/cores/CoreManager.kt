@@ -113,7 +113,16 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             val target = downloadedFile(core.id)
             val tmp = File(paths.cores, "${core.id}.tmp")
             try {
-                Http.download(downloadUrl(core.id), zip) { p -> setState(core.id, CoreState.Downloading(p * 0.9f)) }
+                try {
+                    Http.download(downloadUrl(core.id), zip) { p -> setState(core.id, CoreState.Downloading(p * 0.9f)) }
+                } catch (e: LocalizedException) {
+                    // O buildbot não compila todo núcleo para toda arquitetura (Citra, Panda3DS e LRPS2 não
+                    // têm armeabi-v7a): o 404 vira um motivo que o usuário entende.
+                    if (e.messageRes == R.string.download_http_error && e.args.firstOrNull() == 404) {
+                        throw LocalizedException(R.string.cores_unavailable_abi, core.displayName, abi)
+                    }
+                    throw e
+                }
                 Zip.extractFirst(zip, tmp) { it.endsWith(".so") } ?: throw LocalizedException(R.string.cores_no_library)
             } finally {
                 // Um .zip que falhou na extração não serve para nada e ocuparia o cache.
