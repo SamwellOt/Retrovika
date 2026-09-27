@@ -41,7 +41,7 @@ class BackloggdClient {
         igdbSlug?.let { slug -> runCatching { game(slug) }.getOrNull()?.let { return it } }
         val clean = GameTitles.clean(title).ifBlank { return null }
         val candidates = suggestions(clean).filter { GameTitles.same(it.title, clean) }
-            .sortedWith(compareBy(nullsLast()) { it.year })
+            .sortedWith(compareBy(nullsLast<Int>()) { it.year })
         if (candidates.isEmpty()) return null
         if (!Platforms.knows(systemId)) return if (candidates.size == 1) game(candidates.first().slug) else null
         // Poucos candidatos, na ordem de lançamento (o original costuma ser o do console retrô), todos
