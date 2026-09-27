@@ -225,8 +225,8 @@ class GameActivity : ComponentActivity() {
 
         val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(coreId)
-        padProfile = app.settings.padProfile(core.id).first()
-        val padCore = core.id
+        val padCore = system.id
+        padProfile = app.settings.padProfile(padCore).first()
         app.scope.launch {
             for (profile in padSaves) {
                 app.settings.setPadProfile(padCore, profile)

@@ -40,6 +40,27 @@ class PadProfileTest {
     }
 
     @Test
+    fun `parte arrastada para nas bordas da area`() {
+        // Parte de 100x50 no canto inferior esquerdo (x 20..120, y 150..200) de uma área 400x200.
+        val l = OffsetLimits.of(20f, 150f, 100f, 50f, scale = 1f, areaWidth = 400f, areaHeight = 200f)!!
+        assertEquals(-20f / 400f, l.clampX(-0.9f), 1e-6f)
+        assertEquals(280f / 400f, l.clampX(0.9f), 1e-6f)
+        assertEquals(-150f / 200f, l.clampY(-0.9f), 1e-6f)
+        assertEquals(0f, l.clampY(0.3f), 1e-6f)
+        // Com o dobro do tamanho (cresce do centro), sobra menos espaço: a borda esquerda chega em 70 - 100 = -30.
+        val big = OffsetLimits.of(20f, 150f, 100f, 50f, scale = 2f, areaWidth = 400f, areaHeight = 200f)!!
+        assertEquals(30f / 400f, big.clampX(-0.9f), 1e-6f)
+        assertEquals(230f / 400f, big.clampX(0.9f), 1e-6f)
+    }
+
+    @Test
+    fun `parte maior que a area fica centralizada`() {
+        val l = OffsetLimits.of(0f, 0f, 300f, 50f, scale = 2f, areaWidth = 400f, areaHeight = 200f)!!
+        assertEquals(50f / 400f, l.clampX(-0.5f), 1e-6f)
+        assertEquals(50f / 400f, l.clampX(0.5f), 1e-6f)
+    }
+
+    @Test
     fun `sem controle o jogo ocupa a tela inteira`() {
         val default = PadProfile()
         assertFalse(default.fullScreenVideo(portrait = true, padShown = true))

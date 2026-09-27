@@ -35,6 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
@@ -77,7 +81,8 @@ private val PadPressed = Color(0x99FFFFFF)
 class PadEditor(
     val selected: PadElement?,
     val onSelect: (PadElement) -> Unit,
-    val onMove: (PadElement, dx: Float, dy: Float) -> Unit,
+    /** Arrasto de [dx]/[dy] (fração da área); [limits] é até onde a parte vai sem sair da tela (nulo antes do layout). */
+    val onMove: (PadElement, dx: Float, dy: Float, limits: OffsetLimits?) -> Unit,
 )
 
 /** Listener vazio do modo de edição: nenhum botão chega ao jogo enquanto o layout é ajustado. */
@@ -112,7 +117,9 @@ fun VirtualGamepad(
     val feedback: () -> Unit = { if (haptics && editor == null) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
     val input = if (editor != null) NoInput else listener
 
-    BoxWithConstraints(modifier.alpha(if (editor != null) 1f else opacity)) {
+    // Canto da área do controle na tela: cada parte calcula a própria posição dentro dela para não passar das bordas.
+    var areaOrigin by remember { mutableStateOf(Offset.Zero) }
+    BoxWithConstraints(modifier.alpha(if (editor != null) 1f else opacity).onPlaced { if (it.isAttached) areaOrigin = it.positionInRoot() }) {
         val size = PadMetrics(layout)
         val fit = if (!overlay) {
             min(maxWidth.value / size.portraitWidth, maxHeight.value / size.portraitHeight)
@@ -130,7 +137,7 @@ fun VirtualGamepad(
             val config = elements[element] ?: PadElementConfig()
             val gone = config.hidden && editor == null
             if (gone && overlay) return
-            PadPart(element, config, area, editor, modifier) { if (gone) content(NoInput, {}) else content(input, feedback) }
+            PadPart(element, config, area, { areaOrigin }, editor, modifier) { if (gone) content(NoInput, {}) else content(input, feedback) }
         }
 
         if (!overlay) {
@@ -189,6 +196,7 @@ private fun PadPart(
     element: PadElement,
     config: PadElementConfig,
     area: IntSize,
+    areaOrigin: () -> Offset,
     editor: PadEditor?,
     modifier: Modifier,
     content: @Composable () -> Unit,
@@ -197,9 +205,25 @@ private fun PadPart(
     // Os gestos são criados uma vez por parte: leem sempre o editor e o tamanho mais recentes.
     val currentEditor by rememberUpdatedState(editor)
     val currentScale by rememberUpdatedState(config.scale)
+    // Retângulo da parte na posição padrão (sem o deslocamento, que vem depois na cadeia), na tela.
+    var base by remember { mutableStateOf<Rect?>(null) }
+    val limits: () -> OffsetLimits? = {
+        base?.let { b ->
+            val origin = areaOrigin()
+            OffsetLimits.of(b.left - origin.x, b.top - origin.y, b.width, b.height, currentScale, area.width.toFloat(), area.height.toFloat())
+        }
+    }
+    val currentLimits by rememberUpdatedState(limits)
     Box(
         modifier
-            .offset { IntOffset((config.dx * area.width).roundToInt(), (config.dy * area.height).roundToInt()) }
+            .onPlaced { if (it.isAttached) base = Rect(it.positionInRoot(), it.size.toSize()) }
+            .offset {
+                // Lido na fase de posicionamento: a parte nunca passa das bordas da área, nem no jogo.
+                val l = limits()
+                val dx = l?.clampX(config.dx) ?: config.dx
+                val dy = l?.clampY(config.dy) ?: config.dy
+                IntOffset((dx * area.width).roundToInt(), (dy * area.height).roundToInt())
+            }
             .graphicsLayer {
                 scaleX = config.scale
                 scaleY = config.scale
@@ -218,7 +242,7 @@ private fun PadPart(
                         detectDragGestures(onDragStart = { currentEditor?.onSelect(element) }) { change, drag ->
                             change.consume()
                             // O arrasto chega em coordenadas da parte, já escalada: volta ao tamanho da tela.
-                            currentEditor?.onMove(element, drag.x * currentScale / area.width, drag.y * currentScale / area.height)
+                            currentEditor?.onMove(element, drag.x * currentScale / area.width, drag.y * currentScale / area.height, currentLimits())
                         }
                     }
                     .pointerInput(element) { detectTapGestures { currentEditor?.onSelect(element) } },

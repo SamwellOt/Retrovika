@@ -361,7 +361,7 @@ private fun PauseMenu(
                 when (tab) {
                     MenuTab.STATES -> if (compact) StatesList(menu, refresh) { refresh++ } else StatesTab(menu, refresh) { refresh++ }
                     MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader)
-                    MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, menu.coreName(), hasPad = system != null)
+                    MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, system?.name.orEmpty(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
                 }
             }

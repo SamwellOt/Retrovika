@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Controle virtual configurável por núcleo -->
+    <!-- Controle virtual configurável por console -->
     <string name="game_tab_controls">Controls</string>
     <string name="pad_element_left">D-pad / stick</string>
     <string name="pad_element_face">Action buttons</string>
@@ -9,7 +9,7 @@
     <string name="pad_element_center">Start / Select</string>
     <string name="pad_portrait_split">Split</string>
     <string name="pad_portrait_overlay">Over the game</string>
-    <string name="pad_profile_scope">These settings apply to every game that runs on %s.</string>
+    <string name="pad_profile_scope">These settings apply to every %s game, whatever core runs it.</string>
     <string name="pad_show">On-screen controller</string>
     <string name="pad_show_subtitle">Turned off, the game takes the whole screen. Ideal for touch-only games (DS, 3DS) or when you use a physical controller.</string>
     <string name="pad_portrait_mode">Portrait layout</string>
@@ -23,7 +23,7 @@
     <string name="pad_edit_layout">Edit layout</string>
     <string name="pad_hud">Menu buttons on screen</string>
     <string name="pad_hud_subtitle">Menu and fast forward over the game. Without them, open the menu with the back gesture.</string>
-    <string name="pad_reset_core">Restore this core\'s default controller</string>
+    <string name="pad_reset_console">Restore this console\'s default controller</string>
     <string name="pad_editor_title">Edit controller</string>
     <string name="pad_editor_portrait">Portrait layout</string>
     <string name="pad_editor_landscape">Landscape layout</string>
@@ -36,7 +36,7 @@
     <string name="pad_reset_layout">Restore all</string>
     <string name="pad_save">Save</string>
     <string name="pad_move_toolbar">Move this bar</string>
-    <string name="settings_pad_profiles">Controller per core</string>
-    <string name="settings_pad_profiles_subtitle">Each core can have its own on-screen controller (hidden, size, button positions). Adjust it in the game menu › Controls.</string>
+    <string name="settings_pad_profiles">Controller per console</string>
+    <string name="settings_pad_profiles_subtitle">Each console can have its own on-screen controller (hidden, size, button positions). Adjust it in the game menu › Controls.</string>
     <string name="settings_pad_profiles_reset">Restore all (%d)</string>
 </resources>

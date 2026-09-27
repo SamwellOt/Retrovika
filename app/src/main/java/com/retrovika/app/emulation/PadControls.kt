@@ -74,17 +74,17 @@ import com.retrovika.app.ui.components.SelectChip
 import com.retrovika.app.ui.theme.Palette
 
 /**
- * Aba "Controle" do menu de pausa: o controle virtual deste núcleo (vale para todos os jogos que usam
- * ele). Mostrar/ocultar, tamanho, opacidade, retrato dividido ou sobreposto, botões de menu e o editor
+ * Aba "Controle" do menu de pausa: o controle virtual deste console (vale para todos os jogos dele, em
+ * qualquer núcleo). Mostrar/ocultar, tamanho, opacidade, retrato dividido ou sobreposto, botões de menu e o editor
  * de posições.
  */
 @Composable
-internal fun ControlsTab(menu: MenuActions, profile: PadProfile, settings: AppSettings, coreName: String, hasPad: Boolean) {
+internal fun ControlsTab(menu: MenuActions, profile: PadProfile, settings: AppSettings, systemName: String, hasPad: Boolean) {
     fun update(p: PadProfile) = menu.setPadProfile(p)
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Text(
-                stringResource(R.string.pad_profile_scope, coreName),
+                stringResource(R.string.pad_profile_scope, systemName),
                 style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
             )
         }
@@ -141,7 +141,7 @@ internal fun ControlsTab(menu: MenuActions, profile: PadProfile, settings: AppSe
             TextButton(onClick = { update(PadProfile()) }) {
                 Icon(Icons.Rounded.RestartAlt, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.pad_reset_core))
+                Text(stringResource(R.string.pad_reset_console))
             }
         }
     }
@@ -160,7 +160,7 @@ private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChang
 }
 
 /**
- * Tamanho/opacidade do núcleo. Nulo segue Ajustes (mostrado como "Geral"); mexer grava o valor próprio,
+ * Tamanho/opacidade do console. Nulo segue Ajustes (mostrado como "Geral"); mexer grava o valor próprio,
  * e "Usar o geral" volta a seguir Ajustes.
  */
 @Composable
@@ -231,10 +231,16 @@ internal fun PadLayoutEditor(
             editor = PadEditor(
                 selected = selected,
                 onSelect = { selected = it },
-                onMove = { element, dx, dy ->
+                onMove = { element, dx, dy, limits ->
                     val c = draft.element(portrait, element)
-                    // Limite de 90% da tela a partir da posição padrão: a parte nunca some de vez da tela.
-                    draft = draft.withElement(portrait, element, c.copy(dx = (c.dx + dx).coerceIn(-0.9f, 0.9f), dy = (c.dy + dy).coerceIn(-0.9f, 0.9f)))
+                    // O arrasto para nas bordas da tela: a parte inteira fica sempre visível. Partindo do valor já
+                    // limitado, arrastar de volta responde na hora (sem "zona morta" do que passou da borda).
+                    val x = limits?.clampX(c.dx) ?: c.dx
+                    val y = limits?.clampY(c.dy) ?: c.dy
+                    draft = draft.withElement(
+                        portrait, element,
+                        c.copy(dx = limits?.clampX(x + dx) ?: (x + dx), dy = limits?.clampY(y + dy) ?: (y + dy)),
+                    )
                 },
             ),
             modifier = padModifier(overlay),

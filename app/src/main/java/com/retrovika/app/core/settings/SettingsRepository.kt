@@ -87,7 +87,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
-        fun padProfile(coreId: String) = stringPreferencesKey("pad_profile_$coreId")
+        fun padProfile(systemId: String) = stringPreferencesKey("pad_console_$systemId")
     }
 
     private val optionsSerializer = MapSerializer(String.serializer(), String.serializer())
@@ -179,21 +179,26 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     suspend fun resetCoreOptions(coreId: String) = context.dataStore.edit { it.remove(Keys.coreOptions(coreId)) }
 
-    /** Controle virtual do núcleo [coreId] (visível, tamanho, posições…); o padrão quando nunca foi ajustado. */
-    fun padProfile(coreId: String): Flow<PadProfile> = data.map { p -> decodeProfile(p[Keys.padProfile(coreId)]) }
+    /**
+     * Controle virtual do console [systemId] (visível, tamanho, posições…); o padrão quando nunca foi ajustado.
+     * Por console, não por núcleo: os botões vêm do console (um núcleo como o Genesis Plus GX roda Master
+     * System e Mega Drive, com controles diferentes) e trocar de núcleo não perde o controle ajustado.
+     */
+    fun padProfile(systemId: String): Flow<PadProfile> = data.map { p -> decodeProfile(p[Keys.padProfile(systemId)]) }
 
-    suspend fun setPadProfile(coreId: String, profile: PadProfile) = context.dataStore.edit { p ->
-        if (profile.isDefault) p.remove(Keys.padProfile(coreId))
-        else p[Keys.padProfile(coreId)] = Http.json.encodeToString(PadProfile.serializer(), profile)
+    suspend fun setPadProfile(systemId: String, profile: PadProfile) = context.dataStore.edit { p ->
+        if (profile.isDefault) p.remove(Keys.padProfile(systemId))
+        else p[Keys.padProfile(systemId)] = Http.json.encodeToString(PadProfile.serializer(), profile)
     }
 
-    /** Núcleos com o controle ajustado, para a lista de Ajustes. */
+    /** Consoles com o controle ajustado, para a lista de Ajustes. */
     val customizedPads: Flow<Set<String>> = data.map { p ->
         p.asMap().keys.map { it.name }.filter { it.startsWith(PAD_PREFIX) }.map { it.removePrefix(PAD_PREFIX) }.toSet()
     }
 
     suspend fun resetAllPadProfiles() = context.dataStore.edit { p ->
-        p.asMap().keys.filter { it.name.startsWith(PAD_PREFIX) }.toList().forEach { p.remove(it) }
+        // Também os perfis por núcleo da versão de desenvolvimento anterior, que não são mais lidos.
+        p.asMap().keys.filter { it.name.startsWith(PAD_PREFIX) || it.name.startsWith(OLD_PAD_PREFIX) }.toList().forEach { p.remove(it) }
     }
 
     // Um perfil ilegível (versão antiga, campo renomeado) volta ao padrão em vez de impedir o jogo de abrir.
@@ -202,6 +207,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     companion object {
         const val MAX_PARALLEL_DOWNLOADS = 4
-        private const val PAD_PREFIX = "pad_profile_"
+        private const val PAD_PREFIX = "pad_console_"
+        private const val OLD_PAD_PREFIX = "pad_profile_"
     }
 }

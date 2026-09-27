@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Controle virtual configurável por núcleo -->
+    <!-- Controle virtual configurável por console -->
     <string name="game_tab_controls">Controle</string>
     <string name="pad_element_left">Direcional / analógico</string>
     <string name="pad_element_face">Botões de ação</string>
@@ -9,7 +9,7 @@
     <string name="pad_element_center">Start / Select</string>
     <string name="pad_portrait_split">Dividida</string>
     <string name="pad_portrait_overlay">Sobre o jogo</string>
-    <string name="pad_profile_scope">Estes ajustes valem para todos os jogos que rodam no %s.</string>
+    <string name="pad_profile_scope">Estes ajustes valem para todos os jogos de %s, em qualquer núcleo.</string>
     <string name="pad_show">Controle na tela</string>
     <string name="pad_show_subtitle">Desligado, o jogo ocupa a tela inteira. Ideal para jogos só de toque (DS, 3DS) ou quando você usa um controle físico.</string>
     <string name="pad_portrait_mode">Tela em retrato</string>
@@ -23,7 +23,7 @@
     <string name="pad_edit_layout">Editar layout</string>
     <string name="pad_hud">Botões de menu na tela</string>
     <string name="pad_hud_subtitle">Menu e avanço rápido sobre o jogo. Sem eles, abra o menu com o gesto de voltar.</string>
-    <string name="pad_reset_core">Restaurar o controle padrão deste núcleo</string>
+    <string name="pad_reset_console">Restaurar o controle padrão deste console</string>
     <string name="pad_editor_title">Editar controle</string>
     <string name="pad_editor_portrait">Layout em retrato</string>
     <string name="pad_editor_landscape">Layout em paisagem</string>
@@ -36,7 +36,7 @@
     <string name="pad_reset_layout">Restaurar tudo</string>
     <string name="pad_save">Salvar</string>
     <string name="pad_move_toolbar">Mover esta barra</string>
-    <string name="settings_pad_profiles">Controle por núcleo</string>
-    <string name="settings_pad_profiles_subtitle">Cada núcleo pode ter seu próprio controle na tela (oculto, tamanho, posição dos botões). Ajuste no menu do jogo › Controle.</string>
+    <string name="settings_pad_profiles">Controle por console</string>
+    <string name="settings_pad_profiles_subtitle">Cada console pode ter seu próprio controle na tela (oculto, tamanho, posição dos botões). Ajuste no menu do jogo › Controle.</string>
     <string name="settings_pad_profiles_reset">Restaurar todos (%d)</string>
 </resources>

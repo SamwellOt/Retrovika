@@ -39,7 +39,7 @@ enum class PortraitMode(@StringRes val label: Int) {
 }
 
 /**
- * Configuração do controle virtual de um núcleo. [opacity] e [scale] nulos seguem os valores gerais de
+ * Configuração do controle virtual de um console (vale em qualquer núcleo dele). [opacity] e [scale] nulos seguem os valores gerais de
  * Ajustes. As posições são guardadas separadas para retrato e paisagem, já que o espaço muda por completo.
  */
 @Serializable
@@ -84,4 +84,35 @@ data class PadProfile(
         !padShown || !visible || !portrait || portraitMode == PortraitMode.OVERLAY
 
     val isDefault: Boolean get() = this == PadProfile()
+}
+
+/**
+ * Até onde uma parte pode ser deslocada (em fração da área do controle, como [PadElementConfig.dx]/[dy])
+ * sem passar das bordas. Vale para o editor (o arrasto para na borda) e para o jogo (um perfil salvo
+ * noutro tamanho de tela, ou com a parte maior, também fica dentro).
+ */
+data class OffsetLimits(val minX: Float, val maxX: Float, val minY: Float, val maxY: Float) {
+    fun clampX(dx: Float): Float = dx.coerceIn(minX, maxX)
+    fun clampY(dy: Float): Float = dy.coerceIn(minY, maxY)
+
+    companion object {
+        /**
+         * [left]/[top]/[width]/[height]: a parte na posição padrão, em pixels dentro da área [areaWidth] x
+         * [areaHeight]. [scale] cresce a partir do centro (como o graphicsLayer). Uma parte maior que a área
+         * fica centralizada nela.
+         */
+        fun of(left: Float, top: Float, width: Float, height: Float, scale: Float, areaWidth: Float, areaHeight: Float): OffsetLimits? {
+            if (areaWidth <= 0f || areaHeight <= 0f) return null
+            fun axis(start: Float, length: Float, area: Float): Pair<Float, Float> {
+                val center = start + length / 2f
+                val half = length * scale / 2f
+                val min = half - center
+                val max = area - half - center
+                return if (min <= max) min / area to max / area else ((area / 2f - center) / area).let { it to it }
+            }
+            val (minX, maxX) = axis(left, width, areaWidth)
+            val (minY, maxY) = axis(top, height, areaHeight)
+            return OffsetLimits(minX, maxX, minY, maxY)
+        }
+    }
 }
