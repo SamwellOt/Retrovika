@@ -49,6 +49,15 @@ with sync_playwright() as p:
     cookies = context.cookies(BASE)
     print(f"título depois de {elapsed:.1f}s: {page.title()!r}; cookies: {[c['name'] for c in cookies]}")
     cookie = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+    # O cookie não vale fora do navegador (a CDN o prende à conexão dele): os pedidos saem de dentro
+    # da página com fetch(), como o app faz no WebView.
+    inside = True
+    for u in URLS:
+        r = page.evaluate("""async (u) => { const r = await fetch(u, {credentials: 'include'});
+            return [r.status, (await r.text()).slice(0, 160)]; }""", u)
+        print("fetch() dentro da página:", r[0], u, repr(r[1][:120]))
+        inside = inside and r[0] == 200 and "Establishing a secure connection" not in r[1]
+    print("RESULTADO fetch na página:", "passou" if inside else "falhou")
     browser.close()
 
 ok = True
