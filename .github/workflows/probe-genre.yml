@@ -17,16 +17,18 @@ jobs:
             t "https://cdromance.org/?s=action"
             t "https://cdromance.org/?s=sports"
             t "https://cdromance.org/page/2/?s=sports"
-            t "https://hh.gbdev.io/api/search?page=1&results=30&typetag=game&sort=firstadded_date&order=desc"
-            t "https://hh.gbdev.io/api/search?page=1&results=60&typetag=game&sort=firstadded_date&order=desc"
-            t "https://hh.gbdev.io/api/search?page=1&results=30&tags=Puzzle&sort=firstadded_date&order=desc"
+            t "https://hh3.gbdev.io/api/search?page=1&results=30&typetag=game&sort=firstadded_date&order=desc"
+            t "https://hh3.gbdev.io/api/search?page=1&results=60&typetag=game&sort=firstadded_date&order=desc"
+            t "https://hh3.gbdev.io/api/search?page=1&results=30&tags=Puzzle&sort=firstadded_date&order=desc"
             python3 -c "import json;d=json.load(open('out.txt'));print('tags=Puzzle ->',d.get('results'),[e.get('tags') for e in d.get('entries',[])[:3]])" || true
-            t "https://hh.gbdev.io/api/search?page=1&results=30&tags=Sports&sort=firstadded_date&order=desc"
+            t "https://hh3.gbdev.io/api/search?page=1&results=30&tags=Sports&sort=firstadded_date&order=desc"
             python3 -c "import json;d=json.load(open('out.txt'));print('tags=Sports ->',d.get('results'))" || true
+            t "https://hh3.gbdev.io/api/search?page=1&results=30&tags=Puzzle"
+            python3 -c "import json;d=json.load(open('out.txt'));print('tags=Puzzle sem sort ->',d.get('results'))" || true
             t "https://archive.org/advancedsearch.php?q=subject%3A(%22sports%22)&fl%5B%5D=identifier&rows=30&output=json"
           done
           echo "== etiquetas mais comuns no Homebrew Hub (amostra de 300)"
-          curl -sS -A "$UA" "https://hh.gbdev.io/api/search?page=1&results=300" -o all.json
+          curl -sS -A "$UA" "https://hh3.gbdev.io/api/search?page=1&results=300" -o all.json
           python3 -c "
           import json,collections
           d=json.load(open('all.json'));c=collections.Counter(t for e in d['entries'] for t in e.get('tags',[]))
