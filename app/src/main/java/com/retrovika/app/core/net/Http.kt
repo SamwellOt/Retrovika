@@ -1,6 +1,7 @@
 package com.retrovika.app.core.net
 
 import com.retrovika.app.R
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -137,7 +138,9 @@ object Http {
      */
     private suspend fun <T> Call.executeCancellable(block: (Response) -> T): T = coroutineScope {
         val call = this@executeCancellable
-        val watcher = launch { try { awaitCancellation() } finally { call.cancel() } }
+        // UNDISPATCHED: o vigia já está esperando antes do execute(); despachado, um cancelamento que chegasse
+        // antes de ele rodar nunca cortaria a conexão.
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { call.cancel() } }
         try {
             call.execute().use(block)
         } catch (t: Throwable) {

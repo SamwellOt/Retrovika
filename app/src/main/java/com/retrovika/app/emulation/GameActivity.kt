@@ -54,6 +54,7 @@ import com.swordfish.libretrodroid.GLRetroViewData
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -100,6 +101,13 @@ class GameActivity : ComponentActivity() {
     private var toast by mutableStateOf<String?>(null)
     /** Controle virtual deste núcleo (visível, tamanho, posições), carregado com o jogo. */
     private var padProfile by mutableStateOf(PadProfile())
+    /**
+     * Gravações do perfil numa fila só, na ordem em que foram feitas (lançadas soltas no Dispatchers.Default,
+     * uma mais antiga podia gravar por último). Conflated: só a mais recente ainda pendente importa.
+     */
+    private val padSaves = Channel<PadProfile>(Channel.CONFLATED)
+    /** Há mudança do perfil ainda não gravada: o que chega do DataStore nesse meio-tempo é mais velho. */
+    private var padDirty = false
     /** Editor do layout aberto a partir do menu: a emulação segue pausada por baixo. */
     private var padEditing by mutableStateOf(false)
     /** A tela do jogo em tamanho real, capturada ao abrir o menu: fundo do editor de layout. */
@@ -218,6 +226,16 @@ class GameActivity : ComponentActivity() {
         val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(coreId)
         padProfile = app.settings.padProfile(core.id).first()
+        val padCore = core.id
+        app.scope.launch {
+            for (profile in padSaves) {
+                app.settings.setPadProfile(padCore, profile)
+                withContext(Dispatchers.Main) { if (padProfile == profile) padDirty = false }
+            }
+        }
+        // Acompanha o perfil gravado: "Restaurar todos" em Ajustes com o jogo aberto em segundo plano vale
+        // na volta, em vez de o perfil antigo da memória ser gravado de novo na próxima mudança.
+        lifecycleScope.launch { app.settings.padProfile(padCore).collect { if (!padDirty) padProfile = it } }
 
         // 1. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
@@ -434,6 +452,8 @@ class GameActivity : ComponentActivity() {
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
         retroView = null
+        // O que ficou na fila ainda é gravado; depois o consumidor termina.
+        padSaves.close()
         super.onDestroy()
     }
 
@@ -592,7 +612,10 @@ class GameActivity : ComponentActivity() {
 
         override fun setPadProfile(profile: PadProfile) {
             padProfile = profile
-            if (::core.isInitialized) app.scope.launch { app.settings.setPadProfile(core.id, profile) }
+            if (::core.isInitialized) {
+                padDirty = true
+                padSaves.trySend(profile)
+            }
         }
 
         override fun startPadEditor() { padEditing = true }

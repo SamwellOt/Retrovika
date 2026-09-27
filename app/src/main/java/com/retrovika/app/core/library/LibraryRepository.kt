@@ -153,7 +153,8 @@ class LibraryRepository(
                 uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
                     (uri.startsWith("content://") || !File(uri).exists())
             }
-            if (missing.isNotEmpty()) dao.deleteByUris(missing)
+            // Em lotes: o SQLite do Android 8–10 aceita no máximo 999 parâmetros por comando.
+            missing.chunked(500).forEach { dao.deleteByUris(it) }
         } finally {
             _scan.value = ScanState(running = false, found = found.size)
         }

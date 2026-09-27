@@ -123,44 +123,47 @@ fun VirtualGamepad(
         val area = IntSize(constraints.maxWidth, constraints.maxHeight)
 
         // Cada parte do controle passa por aqui: posição/tamanho do perfil e, no editor, arrastar para mover.
+        // Oculta no jogo: sobreposta, sai do layout; dividida, continua ocupando o lugar (invisível e sem
+        // toques), senão as outras partes andariam e o jogo não ficaria como no editor.
         @Composable
-        fun Part(element: PadElement, modifier: Modifier, content: @Composable () -> Unit) {
+        fun Part(element: PadElement, modifier: Modifier, content: @Composable (PadListener, () -> Unit) -> Unit) {
             val config = elements[element] ?: PadElementConfig()
-            if (config.hidden && editor == null) return
-            PadPart(element, config, area, editor, modifier, content)
+            val gone = config.hidden && editor == null
+            if (gone && overlay) return
+            PadPart(element, config, area, editor, modifier) { if (gone) content(NoInput, {}) else content(input, feedback) }
         }
 
         if (!overlay) {
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 if (size.hasShoulders) Row(Modifier.fillMaxWidth()) {
-                    if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, input, feedback) } }
+                    if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier) { i, f ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, i, f) } }
                     }
                     Spacer(Modifier.weight(1f))
-                    if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, input, feedback) } }
+                    if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier) { i, f ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, i, f) } }
                     }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    Part(PadElement.LEFT, Modifier.align(Alignment.CenterStart)) { LeftCluster(layout, s, input, feedback, Modifier) }
-                    Part(PadElement.FACE, Modifier.align(Alignment.CenterEnd)) { RightCluster(layout, s, input, feedback, Modifier) }
+                    Part(PadElement.LEFT, Modifier.align(Alignment.CenterStart)) { i, f -> LeftCluster(layout, s, i, f, Modifier) }
+                    Part(PadElement.FACE, Modifier.align(Alignment.CenterEnd)) { i, f -> RightCluster(layout, s, i, f, Modifier) }
                 }
-                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.CenterHorizontally)) {
-                    CenterButtons(layout, s, input, feedback, Modifier)
+                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.CenterHorizontally)) { i, f ->
+                    CenterButtons(layout, s, i, f, Modifier)
                 }
             }
         } else {
             Box(Modifier.fillMaxSize()) {
-                if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier.align(Alignment.TopStart).padding(16.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, input, feedback) } }
+                if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier.align(Alignment.TopStart).padding(16.dp)) { i, f ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, i, f) } }
                 }
-                if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier.align(Alignment.TopEnd).padding(16.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, input, feedback) } }
+                if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier.align(Alignment.TopEnd).padding(16.dp)) { i, f ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, i, f) } }
                 }
-                Part(PadElement.LEFT, Modifier.align(Alignment.BottomStart).padding(start = 24.dp, bottom = 20.dp)) { LeftCluster(layout, s, input, feedback, Modifier) }
-                Part(PadElement.FACE, Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 20.dp)) { RightCluster(layout, s, input, feedback, Modifier) }
-                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) {
-                    CenterButtons(layout, s, input, feedback, Modifier)
+                Part(PadElement.LEFT, Modifier.align(Alignment.BottomStart).padding(start = 24.dp, bottom = 20.dp)) { i, f -> LeftCluster(layout, s, i, f, Modifier) }
+                Part(PadElement.FACE, Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 20.dp)) { i, f -> RightCluster(layout, s, i, f, Modifier) }
+                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) { i, f ->
+                    CenterButtons(layout, s, i, f, Modifier)
                 }
             }
         }
@@ -200,7 +203,7 @@ private fun PadPart(
             .graphicsLayer {
                 scaleX = config.scale
                 scaleY = config.scale
-                alpha = if (config.hidden) 0.28f else 1f
+                alpha = if (!config.hidden) 1f else if (editor != null) 0.28f else 0f
             },
     ) {
         content()

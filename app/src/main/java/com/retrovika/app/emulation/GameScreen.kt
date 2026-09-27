@@ -144,7 +144,8 @@ fun GameScreen(
                     VirtualGamepad(
                         layout = system.layout,
                         listener = padListener,
-                        opacity = padProfile.opacity ?: if (fullVideo) settings.padOpacity else 1f,
+                        // Dividido, o controle não cobre o jogo: fica sempre opaco; a opacidade (do núcleo ou geral) vale sobreposto.
+                        opacity = if (fullVideo) padProfile.opacity ?: settings.padOpacity else 1f,
                         scale = padProfile.scale ?: settings.padScale,
                         haptics = settings.haptics,
                         portrait = portrait,
@@ -169,8 +170,13 @@ fun GameScreen(
             }
         }
 
+        // A aba fica aqui: o menu sai da composição enquanto o editor do controle está aberto e, ao voltar,
+        // precisa continuar em Controle. Cada nova abertura do menu começa em Estados.
+        var menuTab by remember { mutableStateOf(MenuTab.STATES) }
+        LaunchedEffect(menuOpen) { if (!menuOpen) menuTab = MenuTab.STATES }
+
         AnimatedVisibility(visible = menuOpen && !padEditing, enter = fadeIn(), exit = fadeOut()) {
-            PauseMenu(game, system, menu, fastForward, settings, padProfile)
+            PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab) { menuTab = it }
         }
 
         if (menuOpen && padEditing && system != null) {
@@ -296,8 +302,16 @@ private enum class MenuTab(@StringRes val label: Int) {
 }
 
 @Composable
-private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastForward: Boolean, settings: AppSettings, padProfile: PadProfile) {
-    var tab by remember { mutableStateOf(MenuTab.STATES) }
+private fun PauseMenu(
+    game: Game?,
+    system: GameSystem?,
+    menu: MenuActions,
+    fastForward: Boolean,
+    settings: AppSettings,
+    padProfile: PadProfile,
+    tab: MenuTab,
+    onTab: (MenuTab) -> Unit,
+) {
     var refresh by remember { mutableIntStateOf(0) }
 
     // Fundo opaco: o controle virtual e o HUD não aparecem por trás do menu.
@@ -340,7 +354,7 @@ private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastF
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuTab.entries.forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { tab = t }) }
+                MenuTab.entries.forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
             }
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {

@@ -71,8 +71,12 @@ class BackloggdClient(
         // Poucos candidatos, na ordem de lançamento (o original costuma ser o do console retrô), todos
         // pedidos ao mesmo tempo: esperar um por um somava quase meio segundo a cada título repetido.
         val top = candidates.take(MAX_CANDIDATES)
-        val pages = coroutineScope { top.map { c -> async { runCatching { page(c.slug) }.getOrNull() } }.awaitAll() }
+        val results = coroutineScope { top.map { c -> async { runCatching { page(c.slug) } } }.awaitAll() }
+        val pages = results.map { it.getOrNull() }
         val index = pages.indexOfFirst { page -> page != null && Platforms.matches(systemId, platformSlugs(page), platformNames(page)) }
+        // Todas as páginas falharam (rede, verificação da CDN): é erro, não "o jogo não está lá". Senão o
+        // "não encontrado" ficaria no cache por 15 minutos.
+        if (index < 0) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.takeIf { pages.all { p -> p == null } }?.let { throw it }
         if (index < 0) return null
         return parseGame(pages[index]!!, top[index].slug).withReviews()
     }

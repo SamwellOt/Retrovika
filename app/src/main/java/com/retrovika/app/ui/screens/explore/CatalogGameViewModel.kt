@@ -11,11 +11,14 @@ import com.retrovika.app.core.gameinfo.SourceDetails
 import com.retrovika.app.core.gameinfo.WikiInfo
 import com.retrovika.app.core.net.Http
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,18 +67,26 @@ class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, p
 
     fun retry() = load()
 
+    private var loadJob: Job? = null
+
     private fun load() {
         val entry = _state.value.entry
+        // Um "tentar de novo" cancela a carga anterior: uma resposta atrasada dela não sobrescreve a nova.
+        loadJob?.cancel()
         _state.update { CatalogGameState(entry) }
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch { loadParts(entry) }
+    }
+
+    private fun CoroutineScope.loadParts(entry: CatalogEntry) {
+        launch {
             val details = attempt { app.catalog.details(entry) }
             _state.update { it.copy(details = details) }
         }
-        viewModelScope.launch {
+        launch {
             val variants = attempt { withSizes(app.catalog.variants(entry)) }
             _state.update { it.copy(variants = variants) }
         }
-        viewModelScope.launch {
+        launch {
             val backloggd = attempt { app.gameInfo.backloggd(entry.title, entry.systemId) }
             _state.update { it.copy(backloggd = backloggd) }
             // O slug do Backloggd é o do IGDB, que o Wikidata registra: acha o artigo certo mesmo com
@@ -98,7 +109,10 @@ class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, p
     private suspend fun <T> attempt(block: suspend () -> T): Part<T> = try {
         Part.Ready(withContext(Dispatchers.Default) { block() })
     } catch (c: CancellationException) {
-        throw c
+        // Um tempo esgotado lá dentro também é CancellationException: só repassa se esta corrotina foi cancelada.
+        currentCoroutineContext().ensureActive()
+        android.util.Log.w("CatalogGame", "Tempo esgotado ao carregar parte da página", c)
+        Part.Failed
     } catch (t: Throwable) {
         android.util.Log.w("CatalogGame", "Falha ao carregar parte da página", t)
         Part.Failed

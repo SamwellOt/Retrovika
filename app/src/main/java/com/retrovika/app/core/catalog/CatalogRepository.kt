@@ -91,8 +91,8 @@ class CatalogRepository {
                     runCatching { search(src, query, systemId, page, null, genre) }.also { r ->
                         r.getOrNull()?.let { p ->
                             // Mesma ordem de fontes do resultado final: o parcial só ganha cartões, nunca troca a lista.
-                            val partial = synchronized(arrived) { arrived[i] = p; merge(arrived.filterNotNull(), page) }
-                            onPartial(partial)
+                            // Entregue dentro da trava: um parcial mais antigo (com menos fontes) nunca chega depois de um mais novo.
+                            synchronized(arrived) { arrived[i] = p; onPartial(merge(arrived.filterNotNull(), page)) }
                         }
                     }
                 }
@@ -125,12 +125,15 @@ class CatalogRepository {
             val pages = coroutineScope { batch.map { p -> async { runCatching { fetch(p) }.getOrNull() } }.awaitAll() }
             // Filtro trocado no meio: a busca nova assume (os pedidos daqui foram cancelados).
             currentCoroutineContext().ensureActive()
-            if (pages.all { it == null }) break
-            pages.filterNotNull().sortedBy { it.page }.forEach { page ->
+            // Só as páginas até a primeira falha: pular uma deixaria um buraco que o "carregar mais" nunca pede de novo.
+            val arrived = pages.takeWhile { it != null }.filterNotNull()
+            if (arrived.isEmpty()) break
+            arrived.forEach { page ->
                 lastPage = maxOf(lastPage, page.totalPages)
                 onPage(page)
             }
-            next = batch.last() + 1
+            next = batch[arrived.size - 1] + 1
+            if (arrived.size < pages.size) break
             rounds++
         }
     }

@@ -29,6 +29,17 @@ class PadProfileTest {
     }
 
     @Test
+    fun `retrato dividido e sobreposto tem layouts separados`() {
+        val split = PadProfile().withElement(true, PadElement.FACE, PadElementConfig(dy = -0.3f))
+        val overlay = split.copy(portraitMode = PortraitMode.OVERLAY)
+        assertEquals(PadElementConfig(), overlay.element(true, PadElement.FACE))
+        val moved = overlay.withElement(true, PadElement.LEFT, PadElementConfig(dx = 0.1f))
+        assertEquals(setOf(PadElement.LEFT), moved.portraitOverlay.keys)
+        assertEquals(setOf(PadElement.FACE), moved.portrait.keys)
+        assertEquals(split.portrait, moved.resetLayout(true).portrait)
+    }
+
+    @Test
     fun `sem controle o jogo ocupa a tela inteira`() {
         val default = PadProfile()
         assertFalse(default.fullScreenVideo(portrait = true, padShown = true))
