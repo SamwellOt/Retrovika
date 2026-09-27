@@ -77,9 +77,13 @@ class CdRomanceSource : CatalogSource {
         // O site não tem filtro de gênero: o termo entra na busca do WordPress, que procura no
         // título e no texto de cada jogo (onde o gênero aparece na descrição).
         val q = listOfNotNull(query.trim().takeIf { it.isNotBlank() }, genre?.searchTerm).joinToString(" ")
+        val section = systemId?.let { sectionBySystem[it] }
         val url = when {
+            // Busca dentro da seção do console (/gba-roms/?s=action): o site já filtra. Buscar no site
+            // todo e descartar os outros consoles deixava as páginas quase vazias e a lista lenta.
+            q.isNotBlank() && section != null -> "$base/$section/${pagePath(page)}?s=${Uri.encode(q)}"
             q.isNotBlank() -> "$base/${pagePath(page)}?s=${Uri.encode(q)}"
-            systemId != null -> sectionBySystem[systemId]?.let { "$base/$it/${pagePath(page)}" }
+            systemId != null -> section?.let { "$base/$it/${pagePath(page)}" }
                 ?: return CatalogPage(emptyList(), page, 1, 0) // console sem categoria navegável: peça um termo
             else -> "$base/${pagePath(page)}" // home: lançamentos recentes
         }
@@ -92,8 +96,8 @@ class CdRomanceSource : CatalogSource {
             throw e
         }
         val doc = Jsoup.parse(html, base)
-        // Na página de categoria o console é o da própria categoria.
-        val listingSystem = if (q.isBlank()) systemId else null
+        // Na seção de um console (listagem ou busca dentro dela) os cartões vêm sem o selo de console.
+        val listingSystem = if (section != null) systemId else null
         val entries = parseCards(doc, listingSystem)
             .let { list -> if (systemId != null) list.filter { it.systemId == systemId } else list }
         val cards = doc.select("div.game-container").size
