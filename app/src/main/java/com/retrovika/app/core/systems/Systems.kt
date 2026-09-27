@@ -306,6 +306,7 @@ object Systems {
                         Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960"),
                         Preset.QUALITY to mapOf("reicast_internal_resolution" to "1920x1440", "reicast_anisotropic_filtering" to "4"),
                     ),
+                    portDevice = RETRO_DEVICE_JOYPAD,
                 ),
             ),
             layout = PadLayouts.DREAMCAST, accent = 0xFFFF6F00,

@@ -19,7 +19,16 @@ data class CoreInfo(
     val presets: Map<Preset, Map<String, String>> = emptyMap(),
     /** Pacotes de assets que o núcleo precisa dentro da pasta system/. */
     val systemAssets: List<SystemAsset> = emptyList(),
+    /**
+     * Tipo de controle (RETRO_DEVICE_*) informado ao núcleo na porta 1 depois de carregar o jogo. O
+     * RetroArch sempre faz isso; o LibretroDroid não, e alguns núcleos só conectam o controle quando
+     * recebem a chamada (sem ela, o Flycast ignora todos os botões).
+     */
+    val portDevice: Int? = null,
 )
+
+/** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */
+const val RETRO_DEVICE_JOYPAD = 1
 
 enum class Preset(@StringRes val label: Int) { PERFORMANCE(R.string.preset_performance), BALANCED(R.string.preset_balanced), QUALITY(R.string.preset_quality) }
 

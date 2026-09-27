@@ -305,6 +305,8 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
+            // Na thread de emulação, como o RetroArch: o núcleo reconecta o controle no próximo retro_run.
+            core.portDevice?.let { device -> view.queueEvent { view.setControllerType(0, device) } }
             if (settings.autoLoad) {
                 withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).

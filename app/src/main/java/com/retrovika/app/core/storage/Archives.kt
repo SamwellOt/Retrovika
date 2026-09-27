@@ -114,5 +114,13 @@ object Archives {
     private val SEVEN_Z_MAGIC = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
 
     private fun zip(file: File): ZipFile = ZipFile.builder().setFile(file).get()
-    private fun sevenZ(file: File): SevenZFile = SevenZFile.builder().setFile(file).get()
+    /**
+     * O LZMA/LZMA2 aloca o dicionário inteiro no heap (7z "ultra" chega a 256 MB ou mais). Com um teto
+     * abaixo do heap, um dicionário grande demais falha com [org.apache.commons.compress.MemoryLimitException]
+     * antes de alocar, em vez de um OutOfMemoryError que pode derrubar outras threads.
+     */
+    private fun sevenZ(file: File): SevenZFile = SevenZFile.builder()
+        .setFile(file)
+        .setMaxMemoryLimitKb((Runtime.getRuntime().maxMemory() / 4 * 3 / 1024).toInt())
+        .get()
 }
