@@ -25,6 +25,7 @@
     <string name="game_state_saved">State saved to slot %d</string>
     <string name="game_state_loaded">State loaded</string>
     <string name="game_state_load_failed">Couldn\'t load this state</string>
+    <string name="game_state_not_ready">The game is still starting. Try again in a moment.</string>
     <string name="game_state_save_failed">Couldn\'t save the state: %1$s</string>
     <string name="game_autosave_incompatible">The autosave doesn\'t match this core and wasn\'t loaded. It was kept as a backup.</string>
     <string name="game_disk_inserted">Disc %d inserted</string>

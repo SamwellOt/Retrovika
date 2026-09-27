@@ -254,6 +254,9 @@ class GameActivity : ComponentActivity() {
             rumbleEventsEnabled = true
         }
 
+        // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
+        // próximo jogo quando esta Activity fosse destruída (o LibretroDroid é global).
+        if (isFinishing) return
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -283,8 +286,11 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (settings.autoLoad) {
-                withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }?.let { data ->
-                    if (view.unserializeState(data)) {
+                val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
+                // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
+                if (retroView !== view) return@launch
+                saved?.let { data ->
+                    if (runCatching { view.unserializeState(data) }.getOrDefault(false)) {
                         toast = getString(R.string.game_progress_restored)
                     } else {
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
@@ -396,7 +402,13 @@ class GameActivity : ComponentActivity() {
         runCatching {
             val emulationActive = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
             val sram = view.serializeSRAM(emulationActive)
-            if (sram.isNotEmpty()) states.sramFile().writeBytes(sram)
+            // Temporário + renomear: falta de espaço ou o processo morto no meio não zeram o save do cartucho.
+            if (sram.isNotEmpty()) {
+                val file = states.sramFile()
+                val tmp = File(file.path + ".tmp")
+                tmp.writeBytes(sram)
+                if (!tmp.renameTo(file)) tmp.delete()
+            }
             if (auto && autoSaveReady) {
                 val state = view.serializeState(emulationActive)
                 if (state.isNotEmpty()) states.write(SaveStates.AUTO_SLOT, state, menuSnapshot)
@@ -421,7 +433,9 @@ class GameActivity : ComponentActivity() {
 
         override fun save(slot: Int, onDone: () -> Unit) {
             val view = retroView ?: return
-            val data = view.serializeState(false)
+            // Antes do primeiro quadro o jogo ainda nem carregou: o estado sairia vazio ou inútil.
+            if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            val data = runCatching { view.serializeState(false) }.getOrDefault(ByteArray(0))
             // Núcleo que não gera estado: gravar o vazio apagaria um save bom do slot.
             if (data.isEmpty()) {
                 toast = getString(R.string.game_state_save_failed, getString(R.string.game_error_serialization))
@@ -444,6 +458,8 @@ class GameActivity : ComponentActivity() {
 
         override fun load(slot: Int) {
             val view = retroView ?: return
+            // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
+            if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             lifecycleScope.launch {
                 val data = try {
                     withContext(Dispatchers.IO) { states.read(slot) }
@@ -454,7 +470,9 @@ class GameActivity : ComponentActivity() {
                 }
                 // A Activity pode ter trocado de jogo ou fechado durante a leitura.
                 if (retroView !== view) return@launch
-                val ok = data != null && data.isNotEmpty() && view.unserializeState(data, false)
+                // O menu pode ter sido fechado durante a leitura: com a emulação rodando, usa a thread dela.
+                val running = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
+                val ok = data != null && data.isNotEmpty() && runCatching { view.unserializeState(data, running) }.getOrDefault(false)
                 toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
                 if (ok) close()
             }
