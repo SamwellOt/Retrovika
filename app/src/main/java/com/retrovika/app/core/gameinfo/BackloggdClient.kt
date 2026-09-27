@@ -2,6 +2,9 @@ package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.Urls
+import com.retrovika.app.core.net.WebChallenge
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -20,14 +23,43 @@ import org.jsoup.nodes.Document
  * pessoas jogaram ou têm o jogo no backlog, tempo de jogo e reviews. Não tem API pública; usamos o
  * mesmo autocompletar em JSON da busca do site e lemos a página do jogo, que é HTML simples.
  */
-class BackloggdClient {
+class BackloggdClient(
+    /**
+     * Passa pela verificação em JavaScript da CDN do site (ver [com.retrovika.app.core.net.WebChallenge])
+     * e devolve os cabeçalhos para repetir o pedido. Nulo nos testes da JVM, onde não há WebView.
+     */
+    private val challenge: (suspend (String) -> Map<String, String>?)? = null,
+) {
     private val base = "https://backloggd.com"
 
     /** Cabeçalhos de navegador: o site devolve a página completa como a um visitante comum. */
-    private val headers = mapOf(
+    @Volatile
+    private var headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
         "Accept-Language" to "en-US,en;q=0.9",
     )
+    private val unlock = Mutex()
+
+    /**
+     * GET com os cabeçalhos atuais. Se a CDN pedir a verificação (403), resolve uma vez com o WebView
+     * e repete; pedidos em paralelo esperam essa mesma verificação em vez de abrir outra.
+     */
+    private suspend fun get(url: String): String {
+        val sent = headers
+        try {
+            return Http.getString(url, sent)
+        } catch (e: Exception) {
+            val solve = challenge
+            if (solve == null || !WebChallenge.isChallenge(e)) throw e
+            unlock.withLock {
+                if (headers === sent) {
+                    val solved = solve("$base/") ?: throw e
+                    headers = sent + solved
+                }
+            }
+            return Http.getString(url, headers)
+        }
+    }
 
     data class Suggestion(val slug: String, val title: String, val year: Int?)
 
@@ -55,7 +87,7 @@ class BackloggdClient {
 
     suspend fun suggestions(query: String): List<Suggestion> {
         val json = Http.json.parseToJsonElement(
-            Http.getString(Urls.withQuery("$base/autocomplete.json", listOf("query" to query)), headers),
+            get(Urls.withQuery("$base/autocomplete.json", listOf("query" to query))),
         ).jsonObject
         return json["suggestions"]?.jsonArray.orEmpty().mapNotNull { s ->
             val data = (s as? JsonObject)?.get("data")?.jsonObject ?: return@mapNotNull null
@@ -71,12 +103,12 @@ class BackloggdClient {
     suspend fun game(slug: String): BackloggdInfo = parseGame(page(slug), slug).withReviews()
 
     private suspend fun page(slug: String): Document =
-        Jsoup.parse(Http.getString("$base/games/${Urls.encode(slug)}/", headers), base)
+        Jsoup.parse(get("$base/games/${Urls.encode(slug)}/"), base)
 
     /** As reviews chegam por um pedido à parte (o site as carrega depois da página). */
     private suspend fun BackloggdInfo.withReviews(): BackloggdInfo {
         val reviews = runCatching {
-            parseReviews(Http.getString("$base/reviews/preview/${Urls.encode(slug)}/?sort_by=trending", headers))
+            parseReviews(get("$base/reviews/preview/${Urls.encode(slug)}/?sort_by=trending"))
         }.getOrDefault(emptyList())
         return copy(reviews = reviews.take(MAX_REVIEWS))
     }

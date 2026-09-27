@@ -1,6 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.catalog.CatalogRepository
+import com.retrovika.app.core.net.WebChallenge
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -49,7 +50,14 @@ class GameInfoNetworkTest {
     @Test
     fun `backloggd acha o jogo certo entre titulos repetidos`() = runBlocking {
         val client = BackloggdClient()
-        val chrono = timed("Backloggd · Chrono Trigger (SNES)") { client.find("Chrono Trigger (USA)", "snes") }
+        // A CDN do Backloggd às vezes pede a verificação em JavaScript a IPs de datacenter (o app a
+        // resolve com um WebView, que não existe na JVM): aí o teste é pulado, não reprovado.
+        val chrono = try {
+            timed("Backloggd · Chrono Trigger (SNES)") { client.find("Chrono Trigger (USA)", "snes") }
+        } catch (e: Exception) {
+            assumeTrue("Backloggd pediu a verificação da CDN neste IP: ${e.message}", !WebChallenge.isChallenge(e))
+            throw e
+        }
         assertNotNull("Chrono Trigger de SNES não encontrado", chrono)
         assertEquals("chrono-trigger", chrono!!.slug)
         assertTrue(chrono.rating!! in 3.5..5.0)

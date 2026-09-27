@@ -5,7 +5,7 @@ package com.retrovika.app.core.gameinfo
  * voltar para uma página já aberta mostra tudo na hora, sem repetir os pedidos.
  */
 class GameInfoRepository(
-    private val backloggd: BackloggdClient = BackloggdClient(),
+    private val backloggd: BackloggdClient,
     private val wiki: WikiClient = WikiClient(),
 ) {
     private class Cached<T>(val value: T, val at: Long)
