@@ -54,8 +54,10 @@ class HomebrewHubSource : CatalogSource {
     override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         val url = Uri.parse("$base/api/search").buildUpon().apply {
             appendQueryParameter("page", page.toString())
-            // Com gênero, o filtro é feito aqui pelas etiquetas: páginas maiores rendem mais acertos por pedido.
-            appendQueryParameter("results", if (genre != null) "60" else "30")
+            appendQueryParameter("results", "30")
+            // O gênero vai para a API como etiqueta: filtrar aqui páginas sem filtro deixava quase todas
+            // vazias (Esportes são 3 de ~1600 jogos) e a busca encadeava pedido atrás de pedido.
+            genre?.let { appendQueryParameter("tags", hubTag(it)) }
             if (query.isNotBlank()) appendQueryParameter("q", query.trim())
             systemId?.let { platformBySystem[it] }?.let { appendQueryParameter("platform", it) }
             kind?.let { appendQueryParameter("typetag", it) }
@@ -66,7 +68,6 @@ class HomebrewHubSource : CatalogSource {
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.entries.mapNotNull { e ->
             if (e.slug.isBlank() || e.basepath.isBlank()) return@mapNotNull null
-            if (genre != null && !genre.matches(e.tags + listOfNotNull(e.typetag))) return@mapNotNull null
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
             val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
             val entryBase = "$base/static/${e.basepath}/entries/${e.slug}"
@@ -94,4 +95,20 @@ class HomebrewHubSource : CatalogSource {
         is JsonArray -> element.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.joinToString(", ")
         else -> null
     }?.takeIf { it.isNotBlank() }
+
+    /** Etiqueta usada pelo Homebrew Hub para cada gênero (as mais comuns no acervo, com a grafia de lá). */
+    internal fun hubTag(genre: Genre): String = when (genre) {
+        Genre.ACTION -> "Action"
+        Genre.ADVENTURE -> "Adventure"
+        Genre.RPG -> "Role Playing"
+        Genre.PLATFORM -> "Platformer"
+        Genre.PUZZLE -> "Puzzle"
+        Genre.SHOOTER -> "Shooter"
+        Genre.RACING -> "Racing"
+        Genre.SPORTS -> "Sports"
+        Genre.FIGHTING -> "Fighting"
+        Genre.STRATEGY -> "Strategy"
+        Genre.HORROR -> "Horror"
+        Genre.MUSIC -> "Music"
+    }
 }

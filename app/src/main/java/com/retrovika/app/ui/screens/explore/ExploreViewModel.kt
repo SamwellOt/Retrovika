@@ -11,6 +11,7 @@ import com.retrovika.app.core.catalog.RomVariant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -151,17 +152,27 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     private suspend fun fetch(page: Int, emptyStreak: Int = 0) {
         val s = _state.value
         // HTML/JSON das fontes é interpretado fora da thread principal: páginas grandes travavam a rolagem.
+        val before = s.entries
+        val job = coroutineContext[Job]
         val call = runCatching {
             withContext(Dispatchers.Default) {
-                if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre)
-                else app.catalog.source(s.sourceId).search(s.query, s.systemId, page, s.kind, s.genre)
+                if (s.aggregated) {
+                    app.catalog.searchAll(s.query, s.systemId, page, s.genre) { partial ->
+                        // Cada site aparece assim que responde; o indicador de carga segue até o último.
+                        if (job?.isActive == true) _state.update {
+                            it.copy(entries = (before + partial.entries).distinctBy { e -> e.sourceId + e.id })
+                        }
+                    }
+                } else {
+                    app.catalog.search(app.catalog.source(s.sourceId), s.query, s.systemId, page, s.kind, s.genre)
+                }
             }
         }
         call
             .onSuccess { result ->
                 _state.update {
                     it.copy(
-                        entries = (it.entries + result.entries).distinctBy { e -> e.sourceId + e.id },
+                        entries = (before + result.entries).distinctBy { e -> e.sourceId + e.id },
                         page = result.page, totalPages = result.totalPages, totalResults = result.totalResults,
                         loading = false,
                     )
