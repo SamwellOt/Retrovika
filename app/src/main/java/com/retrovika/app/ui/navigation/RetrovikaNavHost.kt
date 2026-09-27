@@ -288,6 +288,12 @@ private fun NavHostController.back(from: NavBackStackEntry) {
 private fun NavHostController.navigateTab(route: String): Boolean {
     // Tocar na aba já aberta não refaz a navegação nem dispara a transição.
     if (currentDestination?.route == route) return false
+    // Numa tela dentro da aba (console, página do jogo, navegador): volta à raiz dela. Navegar para a aba
+    // guardaria e restauraria a mesma pilha, e a tela só piscava.
+    if (route != "home" && runCatching { getBackStackEntry(route) }.isSuccess) {
+        popBackStack(route, inclusive = false)
+        return true
+    }
     navigate(route) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true

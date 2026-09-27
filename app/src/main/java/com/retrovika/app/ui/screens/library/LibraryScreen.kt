@@ -1,6 +1,5 @@
 package com.retrovika.app.ui.screens.library
 
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.retrovika.app.R
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.retrovika.app.ui.components.countString
 import com.retrovika.app.ui.components.HeaderIconButton
 import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material.icons.Icons
@@ -44,6 +44,8 @@ import com.retrovika.app.ui.components.SystemTile
 import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @Composable
@@ -53,7 +55,8 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val app = context.container
     val library = app.library
     val counts by library.counts.collectAsStateWithLifecycle()
-    val scan by library.scan.collectAsStateWithLifecycle()
+    // Só o "em andamento": o progresso da varredura muda várias vezes por segundo e recompunha a tela toda.
+    val scanning by remember { library.scan.map { it.running }.distinctUntilChanged() }.collectAsStateWithLifecycle(false)
     var query by rememberSaveable { mutableStateOf("") }
     var onlyWithGames by rememberSaveable { mutableStateOf(false) }
     // null = consulta ainda em andamento: "sem resultados" só aparece com a resposta do banco na mão.
@@ -84,15 +87,15 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
                     subtitle = counts.sumOf { it.count }.let { n ->
                         stringResource(
                             R.string.library_summary,
-                            pluralStringResource(R.plurals.games_count, n, n),
-                            pluralStringResource(R.plurals.consoles_count, counts.size, counts.size),
+                            countString(R.plurals.games_count, n),
+                            countString(R.plurals.consoles_count, counts.size),
                         )
                     },
                 ) {
                     HeaderIconButton(
                         Icons.Rounded.Refresh, stringResource(R.string.library_refresh),
                         onClick = { app.scope.launch { library.rescan() } },
-                        busy = scan.running,
+                        busy = scanning,
                     )
                 }
                 Spacer(Modifier.height(16.dp))

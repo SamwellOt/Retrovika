@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.components
 
+import androidx.annotation.PluralsRes
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.core.LinearEasing
@@ -717,3 +718,10 @@ fun DownloadProgressBar(task: DownloadTask, modifier: Modifier = Modifier) {
         else -> LinearProgressIndicator(modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
     }
 }
+
+/**
+ * Contagem no plural certo também para zero: no português a categoria "one" do Android cobre 0 e 1
+ * ("0 jogo"). Com zero pede a forma "other" ("0 jogos"), igual ao inglês.
+ */
+@Composable
+fun countString(@PluralsRes id: Int, count: Int): String = pluralStringResource(id, if (count == 0) 2 else count, count)

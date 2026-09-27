@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.rounded.Translate
-import androidx.compose.ui.res.pluralStringResource
 import com.retrovika.app.R
 import com.retrovika.app.core.settings.AppLanguage
 import com.retrovika.app.core.settings.Languages
@@ -47,6 +46,7 @@ import com.retrovika.app.core.catalog.DownloadManager
 import com.retrovika.app.core.settings.CoverSize
 import com.retrovika.app.core.settings.GameSort
 import com.retrovika.app.core.settings.SettingsRepository
+import com.retrovika.app.ui.components.countString
 import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
@@ -398,7 +398,7 @@ private fun AboutCard(version: String, games: Int, systems: Int) {
             Text(stringResource(R.string.settings_version, version), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
             Spacer(Modifier.height(8.dp))
             Text(
-                pluralStringResource(R.plurals.games_count, games, games) + " · " + pluralStringResource(R.plurals.consoles_count, systems, systems),
+                countString(R.plurals.games_count, games) + " · " + countString(R.plurals.consoles_count, systems),
                 style = MaterialTheme.typography.titleSmall,
             )
         }

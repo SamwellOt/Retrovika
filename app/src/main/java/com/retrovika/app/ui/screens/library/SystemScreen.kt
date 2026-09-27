@@ -1,8 +1,8 @@
 package com.retrovika.app.ui.screens.library
 
-import androidx.compose.ui.res.pluralStringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retrovika.app.core.settings.localized
+import com.retrovika.app.ui.components.countString
 import com.retrovika.app.ui.components.ScreenMessages
 import kotlinx.coroutines.flow.map
 import androidx.compose.ui.res.stringResource
@@ -155,7 +155,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     ScreenHeader(
                         system.name,
                         kicker = "${system.manufacturer} · ${system.year}",
-                        subtitle = if (loaded == null) null else pluralStringResource(R.plurals.games_count, all.size, all.size),
+                        subtitle = if (loaded == null) null else countString(R.plurals.games_count, all.size),
                         onBack = onBack,
                         inset = 4.dp,
                     ) { if (system.experimental) Badge(stringResource(R.string.system_experimental), Palette.Sun) }
