@@ -1,7 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.catalog.CatalogRepository
-import com.retrovika.app.core.net.WebChallenge
+import com.retrovika.app.core.net.WebFetcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -55,7 +55,7 @@ class GameInfoNetworkTest {
         val chrono = try {
             timed("Backloggd · Chrono Trigger (SNES)") { client.find("Chrono Trigger (USA)", "snes") }
         } catch (e: Exception) {
-            assumeTrue("Backloggd pediu a verificação da CDN neste IP: ${e.message}", !WebChallenge.isChallenge(e))
+            assumeTrue("Backloggd pediu a verificação da CDN neste IP: ${e.message}", !WebFetcher.isChallenge(e))
             throw e
         }
         assertNotNull("Chrono Trigger de SNES não encontrado", chrono)

@@ -2,9 +2,7 @@ package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.Urls
-import com.retrovika.app.core.net.WebChallenge
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import com.retrovika.app.core.net.WebFetcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -25,39 +23,33 @@ import org.jsoup.nodes.Document
  */
 class BackloggdClient(
     /**
-     * Passa pela verificação em JavaScript da CDN do site (ver [com.retrovika.app.core.net.WebChallenge])
-     * e devolve os cabeçalhos para repetir o pedido. Nulo nos testes da JVM, onde não há WebView.
+     * GET feito de dentro de um WebView (ver [WebFetcher]), para quando a CDN do site pede a
+     * verificação em JavaScript. Nulo nos testes da JVM, onde não há WebView.
      */
-    private val challenge: (suspend (String) -> Map<String, String>?)? = null,
+    private val web: (suspend (String) -> String)? = null,
 ) {
     private val base = "https://backloggd.com"
 
     /** Cabeçalhos de navegador: o site devolve a página completa como a um visitante comum. */
-    @Volatile
-    private var headers = mapOf(
+    private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
         "Accept-Language" to "en-US,en;q=0.9",
     )
-    private val unlock = Mutex()
 
-    /**
-     * GET com os cabeçalhos atuais. Se a CDN pedir a verificação (403), resolve uma vez com o WebView
-     * e repete; pedidos em paralelo esperam essa mesma verificação em vez de abrir outra.
-     */
+    /** Depois da primeira verificação, os pedidos vão direto pelo WebView (o OkHttp só levaria outro 403). */
+    @Volatile
+    private var viaWeb = false
+
+    /** GET pelo OkHttp; se a CDN pedir a verificação (403), passa a usar o WebView. */
     private suspend fun get(url: String): String {
-        val sent = headers
-        try {
-            return Http.getString(url, sent)
+        val fetch = web
+        if (viaWeb && fetch != null) return fetch(url)
+        return try {
+            Http.getString(url, headers)
         } catch (e: Exception) {
-            val solve = challenge
-            if (solve == null || !WebChallenge.isChallenge(e)) throw e
-            unlock.withLock {
-                if (headers === sent) {
-                    val solved = solve("$base/") ?: throw e
-                    headers = sent + solved
-                }
-            }
-            return Http.getString(url, headers)
+            if (fetch == null || !WebFetcher.isChallenge(e)) throw e
+            viaWeb = true
+            fetch(url)
         }
     }
 
