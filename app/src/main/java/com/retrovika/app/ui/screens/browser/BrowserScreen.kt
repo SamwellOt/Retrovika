@@ -118,8 +118,8 @@ private data class PendingDownload(
 fun BrowserScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit) {
     val context = LocalContext.current
     val manager = context.container.downloads
-    val tasks by manager.tasks.collectAsStateWithLifecycle()
-    val active = tasks.count { it.status in DownloadManager.ACTIVE }
+    // Só o contador: observar a lista inteira recompunha a tela (e o WebView) a cada avanço de download.
+    val active by manager.activeCount.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 

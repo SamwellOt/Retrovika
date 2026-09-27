@@ -254,11 +254,14 @@ class DownloadManager(
             file.delete()
             throw LocalizedException(R.string.download_got_webpage)
         }
-        if (Archives.isArchive(file) && !system.keepArchives) {
-            update(taskId) { it.copy(status = DownloadStatus.EXTRACTING, speed = 0) }
-            file = withContext(Dispatchers.IO) { RomExtractor.extract(file, dir, system) }
+        // Extração e cadastro sem varredura no meio: ela veria arquivos pela metade (ver LibraryRepository.writingRoms).
+        val gameId = library.writingRoms {
+            if (Archives.isArchive(file) && !system.keepArchives) {
+                update(taskId) { it.copy(status = DownloadStatus.EXTRACTING, speed = 0) }
+                file = withContext(Dispatchers.IO) { RomExtractor.extract(file, dir, system) }
+            }
+            library.addDownloaded(system, file, title, cover, developer, description)
         }
-        val gameId = library.addDownloaded(system, file, title, cover, developer, description)
         update(taskId) { it.copy(status = DownloadStatus.DONE, progress = 1f, gameId = gameId, speed = 0) }
     }
 

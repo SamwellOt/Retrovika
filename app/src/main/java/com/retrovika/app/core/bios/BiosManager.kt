@@ -64,10 +64,11 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
     suspend fun import(uris: List<Uri>): List<String> = withContext(Dispatchers.IO) {
         uris.mapNotNull { uri ->
             // Cada arquivo à parte: um que falhe (provedor offline, sem espaço…) não perde os outros.
-            val tmp = File(paths.downloadsTmp, "bios-import")
+            // Temporário próprio de cada arquivo: duas importações ao mesmo tempo não se atropelam.
+            paths.downloadsTmp.mkdirs()
+            val tmp = File.createTempFile("bios-import", null, paths.downloadsTmp)
             try {
                 val name = displayName(uri) ?: return@mapNotNull null
-                tmp.parentFile?.mkdirs()
                 resolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
                 val hash = md5(tmp)
                 // Pelo MD5, pelo nome ou, para BIOS com formato conhecido, pelo conteúdo: uma BIOS de PS2 com

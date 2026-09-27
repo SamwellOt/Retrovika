@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
@@ -56,13 +55,17 @@ class WebFetcher(private val context: Context) {
         val script = "fetch(${JsonPrimitive(url)}, {credentials: 'include'})" +
             ".then(r => r.text().then(t => RetrovikaBridge.done($id, r.status, t)))" +
             ".catch(e => RetrovikaBridge.done($id, -1, String(e)))"
-        withContext(Dispatchers.Main) { page.evaluateJavascript(script, null) }
-        val (status, body) = try {
-            withTimeout(REQUEST_TIMEOUT_MS) { answer.await() }
+        val result = try {
+            withContext(Dispatchers.Main) { page.evaluateJavascript(script, null) }
+            // withTimeoutOrNull, não withTimeout: o TimeoutCancellationException passaria por cancelamento
+            // e a parte da página que pediu ficaria carregando para sempre, sem mostrar a falha.
+            withTimeoutOrNull(REQUEST_TIMEOUT_MS) { answer.await() }
         } finally {
             pending.remove(id)
+            // Mesmo com erro ou cancelamento, o WebView volta a ter prazo para ser destruído.
+            main.launch { scheduleRelease() }
         }
-        withContext(Dispatchers.Main) { scheduleRelease() }
+        val (status, body) = result ?: throw java.net.SocketTimeoutException(url)
         if (status == 403 && isChallengePage(body)) {
             // A verificação expirou: o próximo pedido abre o site de novo.
             withContext(Dispatchers.Main) { release() }
@@ -88,12 +91,18 @@ class WebFetcher(private val context: Context) {
         view = web
         this.origin = origin
         // A verificação roda e recarrega a página sozinha; pronto quando o título deixa de ser o dela.
-        val passed = withTimeoutOrNull(CHALLENGE_TIMEOUT_MS) {
-            while (true) {
-                delay(POLL_MS)
-                val title = web.title.orEmpty()
-                if (title.isNotBlank() && !isChallengeTitle(title) && web.progress == 100) break
+        val passed = try {
+            withTimeoutOrNull(CHALLENGE_TIMEOUT_MS) {
+                while (true) {
+                    delay(POLL_MS)
+                    val title = web.title.orEmpty()
+                    if (title.isNotBlank() && !isChallengeTitle(title) && web.progress == 100) break
+                }
             }
+        } catch (t: Throwable) {
+            // Cancelado no meio da verificação: um WebView ainda na página de desafio não pode ser reaproveitado.
+            release()
+            throw t
         }
         if (passed == null) {
             release()

@@ -38,7 +38,8 @@ object Archives {
 
     fun entries(archive: File): List<Entry> = when (formatOf(archive)) {
         Format.ZIP -> zip(archive).use { zf -> zf.entries.toList().filterNot { it.isDirectory }.map { Entry(it.name, it.size) } }
-        Format.SEVEN_Z -> sevenZ(archive).use { sz -> sz.entries.filterNot { it.isDirectory }.map { Entry(it.name, if (it.hasStream()) it.size else 0L) } }
+        // 7z criado da entrada padrão ("7z a -si") não guarda nome: usa o do próprio arquivo.
+        Format.SEVEN_Z -> sevenZ(archive).use { sz -> sz.entries.filterNot { it.isDirectory }.map { Entry(it.name ?: archive.nameWithoutExtension, if (it.hasStream()) it.size else 0L) } }
         null -> emptyList()
     }
 
@@ -57,6 +58,8 @@ object Archives {
         val out = LinkedHashMap<String, File>()
         val canonicalDest = destDir.canonicalPath + File.separator
         val prefix = commonFolder(names)
+        // Arquivos que já existiam antes da extração: numa falha, não são apagados (seriam jogos já na biblioteca).
+        val preexisting = HashSet<File>()
         fun target(name: String): File {
             val relative = name.replace('\\', '/').removePrefix(prefix).trimStart('/')
             val file = File(destDir, relative)
@@ -64,6 +67,7 @@ object Archives {
                 throw LocalizedException(R.string.download_extract_failed, name)
             }
             file.parentFile?.mkdirs()
+            if (file.exists()) preexisting += file
             return file
         }
         try {
@@ -82,7 +86,7 @@ object Archives {
                 Format.SEVEN_Z -> if (!extractSevenZNative(archive, names, out, ::target)) sevenZ(archive).use { sz ->
                     while (true) {
                         val entry = sz.nextEntry ?: break
-                        if (entry.isDirectory || entry.name !in names) continue
+                        if (entry.isDirectory || entry.name == null || entry.name !in names) continue
                         val file = target(entry.name)
                         out[entry.name] = file
                         sz.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
@@ -91,7 +95,7 @@ object Archives {
                 null -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
             }
         } catch (t: Throwable) {
-            out.values.forEach { it.delete() }
+            out.values.filterNot { it in preexisting }.forEach { it.delete() }
             throw t
         }
         return out
@@ -114,8 +118,8 @@ object Archives {
         }
         return when (SevenZipNative.extract(archive.path, targets)) {
             SevenZipNative.OK -> true
+            // Nada foi gravado: só esquece os destinos (apagá-los levaria arquivos que já existiam).
             SevenZipNative.UNSUPPORTED, SevenZipNative.OPEN -> {
-                out.values.forEach { it.delete() }
                 out.clear()
                 false
             }

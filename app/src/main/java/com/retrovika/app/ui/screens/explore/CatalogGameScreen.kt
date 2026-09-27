@@ -104,6 +104,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.withResumed
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.retrovika.app.R
@@ -159,13 +161,15 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     val app = context.container
     val entry = remember(entryKey) { app.catalog.opened(entryKey) }
     if (entry == null) {
-        // Processo recriado: a entrada da busca não existe mais; volta ao Explorar.
-        LaunchedEffect(Unit) { onBack() }
+        // Processo recriado: a entrada da busca não existe mais; volta ao Explorar. Espera a tela ficar
+        // ativa: durante a transição de entrada o "voltar" é ignorado e ficaria uma tela vazia.
+        val owner = LocalLifecycleOwner.current
+        LaunchedEffect(Unit) { owner.lifecycle.withResumed { }; onBack() }
         return
     }
     val locale = remember { context.localized().resources.configuration.locales[0] ?: Locale.getDefault() }
     val lang = if (locale.language == "pt") "pt" else "en"
-    val vm: CatalogGameViewModel = viewModel(key = "cgame-$entryKey") { CatalogGameViewModel(app, entry, lang) }
+    val vm: CatalogGameViewModel = viewModel(key = "cgame-$entryKey-$lang") { CatalogGameViewModel(app, entry, lang) }
     val state by vm.state.collectAsStateWithLifecycle()
     val prompt by vm.prompt.collectAsStateWithLifecycle()
     val tasks by app.downloads.tasks.collectAsStateWithLifecycle()

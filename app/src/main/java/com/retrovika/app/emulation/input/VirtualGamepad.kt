@@ -4,6 +4,11 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -24,11 +29,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
@@ -65,12 +75,30 @@ private val PadStroke = Color(0x66FFFFFF)
 private val PadPressed = Color(0x99FFFFFF)
 
 /**
+ * Modo de edição do layout: os toques movem as partes do controle em vez de apertar botões.
+ * [onMove] recebe o deslocamento em fração da área do controle.
+ */
+class PadEditor(
+    val selected: PadElement?,
+    val onSelect: (PadElement) -> Unit,
+    /** Arrasto de [dx]/[dy] (fração da área); [limits] é até onde a parte vai sem sair da tela (nulo antes do layout). */
+    val onMove: (PadElement, dx: Float, dy: Float, limits: OffsetLimits?) -> Unit,
+)
+
+/** Listener vazio do modo de edição: nenhum botão chega ao jogo enquanto o layout é ajustado. */
+private val NoInput = object : PadListener {
+    override fun onKey(keyCode: Int, pressed: Boolean) = Unit
+    override fun onMotion(source: Int, x: Float, y: Float) = Unit
+}
+
+/**
  * Controle virtual desenhado em Compose. Cada controle possui seu próprio pointerInput,
  * então vários dedos funcionam ao mesmo tempo, e toques fora dos botões chegam ao jogo
  * (necessário para a tela de toque do Nintendo DS).
  *
- * Em paisagem o controle fica sobreposto ao jogo; em retrato ocupa a metade inferior.
- * Nos dois casos a escala é reduzida automaticamente para caber no espaço disponível.
+ * Em paisagem (ou em retrato sobreposto, [overlay]) o controle fica por cima do jogo; em retrato
+ * dividido ocupa a metade inferior. A escala é reduzida automaticamente para caber no espaço
+ * disponível. [elements] desloca, redimensiona ou oculta cada parte (ver [PadProfile]).
  */
 @Composable
 fun VirtualGamepad(
@@ -81,47 +109,150 @@ fun VirtualGamepad(
     haptics: Boolean,
     portrait: Boolean,
     modifier: Modifier = Modifier,
+    overlay: Boolean = !portrait,
+    elements: Map<PadElement, PadElementConfig> = emptyMap(),
+    editor: PadEditor? = null,
 ) {
     val view = LocalView.current
-    val feedback: () -> Unit = { if (haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
+    val feedback: () -> Unit = { if (haptics && editor == null) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
+    val input = if (editor != null) NoInput else listener
 
-    BoxWithConstraints(modifier.alpha(opacity)) {
+    // Canto da área do controle na tela: cada parte calcula a própria posição dentro dela para não passar das bordas.
+    var areaOrigin by remember { mutableStateOf(Offset.Zero) }
+    BoxWithConstraints(modifier.alpha(if (editor != null) 1f else opacity).onPlaced { if (it.isAttached) areaOrigin = it.positionInRoot() }) {
         val size = PadMetrics(layout)
-        val fit = if (portrait) {
+        val fit = if (!overlay) {
             min(maxWidth.value / size.portraitWidth, maxHeight.value / size.portraitHeight)
         } else {
-            maxHeight.value / size.landscapeHeight
+            min(maxHeight.value / size.landscapeHeight, maxWidth.value / size.overlayWidth)
         }
         val s = (scale * fit.coerceAtMost(1.15f)).coerceIn(0.5f, 1.5f)
+        val area = IntSize(constraints.maxWidth, constraints.maxHeight)
 
-        if (portrait) {
+        // Cada parte do controle passa por aqui: posição/tamanho do perfil e, no editor, arrastar para mover.
+        // Oculta no jogo: sobreposta, sai do layout; dividida, continua ocupando o lugar (invisível e sem
+        // toques), senão as outras partes andariam e o jogo não ficaria como no editor.
+        @Composable
+        fun Part(element: PadElement, modifier: Modifier, content: @Composable (PadListener, () -> Unit) -> Unit) {
+            val config = elements[element] ?: PadElementConfig()
+            val gone = config.hidden && editor == null
+            if (gone && overlay) return
+            PadPart(element, config, area, { areaOrigin }, editor, modifier) { if (gone) content(NoInput, {}) else content(input, feedback) }
+        }
+
+        if (!overlay) {
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 if (size.hasShoulders) Row(Modifier.fillMaxWidth()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, listener, feedback) } }
+                    if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier) { i, f ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, i, f) } }
+                    }
                     Spacer(Modifier.weight(1f))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, listener, feedback) } }
+                    if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier) { i, f ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, i, f) } }
+                    }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    LeftCluster(layout, s, listener, feedback, Modifier.align(Alignment.CenterStart))
-                    RightCluster(layout, s, listener, feedback, Modifier.align(Alignment.CenterEnd))
+                    Part(PadElement.LEFT, Modifier.align(Alignment.CenterStart)) { i, f -> LeftCluster(layout, s, i, f, Modifier) }
+                    Part(PadElement.FACE, Modifier.align(Alignment.CenterEnd)) { i, f -> RightCluster(layout, s, i, f, Modifier) }
                 }
-                CenterButtons(layout, s, listener, feedback, Modifier.fillMaxWidth())
+                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.CenterHorizontally)) { i, f ->
+                    CenterButtons(layout, s, i, f, Modifier)
+                }
             }
         } else {
             Box(Modifier.fillMaxSize()) {
-                Row(Modifier.align(Alignment.TopStart).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    layout.leftShoulders.forEach { ShoulderButton(it, s, listener, feedback) }
+                if (layout.leftShoulders.isNotEmpty()) Part(PadElement.LEFT_SHOULDERS, Modifier.align(Alignment.TopStart).padding(16.dp)) { i, f ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.leftShoulders.forEach { ShoulderButton(it, s, i, f) } }
                 }
-                Row(Modifier.align(Alignment.TopEnd).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, listener, feedback) }
+                if (layout.rightShoulders.isNotEmpty()) Part(PadElement.RIGHT_SHOULDERS, Modifier.align(Alignment.TopEnd).padding(16.dp)) { i, f ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { layout.rightShoulders.asReversed().forEach { ShoulderButton(it, s, i, f) } }
                 }
-                LeftCluster(layout, s, listener, feedback, Modifier.align(Alignment.BottomStart).padding(start = 24.dp, bottom = 20.dp))
-                RightCluster(layout, s, listener, feedback, Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 20.dp))
-                CenterButtons(layout, s, listener, feedback, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
+                Part(PadElement.LEFT, Modifier.align(Alignment.BottomStart).padding(start = 24.dp, bottom = 20.dp)) { i, f -> LeftCluster(layout, s, i, f, Modifier) }
+                Part(PadElement.FACE, Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 20.dp)) { i, f -> RightCluster(layout, s, i, f, Modifier) }
+                if (layout.center.isNotEmpty()) Part(PadElement.CENTER, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) { i, f ->
+                    CenterButtons(layout, s, i, f, Modifier)
+                }
             }
         }
     }
 }
+
+/** Partes que o layout do console tem (um Atari não tem L/R, por exemplo). */
+fun PadLayout.elements(): List<PadElement> = buildList {
+    if (leftShoulders.isNotEmpty()) add(PadElement.LEFT_SHOULDERS)
+    if (rightShoulders.isNotEmpty()) add(PadElement.RIGHT_SHOULDERS)
+    add(PadElement.LEFT)
+    add(PadElement.FACE)
+    if (center.isNotEmpty()) add(PadElement.CENTER)
+}
+
+/**
+ * Uma parte do controle na posição e no tamanho do perfil. O deslocamento é aplicado depois do layout
+ * (não empurra as outras partes) e o tamanho, na camada gráfica, que também leva os toques junto.
+ * No editor, uma película por cima recebe o arrasto; partes ocultas aparecem apagadas para poderem voltar.
+ */
+@Composable
+private fun PadPart(
+    element: PadElement,
+    config: PadElementConfig,
+    area: IntSize,
+    areaOrigin: () -> Offset,
+    editor: PadEditor?,
+    modifier: Modifier,
+    content: @Composable () -> Unit,
+) {
+    val selected = editor?.selected == element
+    // Os gestos são criados uma vez por parte: leem sempre o editor e o tamanho mais recentes.
+    val currentEditor by rememberUpdatedState(editor)
+    val currentScale by rememberUpdatedState(config.scale)
+    // Retângulo da parte na posição padrão (sem o deslocamento, que vem depois na cadeia), na tela.
+    var base by remember { mutableStateOf<Rect?>(null) }
+    val limits: () -> OffsetLimits? = {
+        base?.let { b ->
+            val origin = areaOrigin()
+            OffsetLimits.of(b.left - origin.x, b.top - origin.y, b.width, b.height, currentScale, area.width.toFloat(), area.height.toFloat())
+        }
+    }
+    val currentLimits by rememberUpdatedState(limits)
+    Box(
+        modifier
+            .onPlaced { if (it.isAttached) base = Rect(it.positionInRoot(), it.size.toSize()) }
+            .offset {
+                // Lido na fase de posicionamento: a parte nunca passa das bordas da área, nem no jogo.
+                val l = limits()
+                val dx = l?.clampX(config.dx) ?: config.dx
+                val dy = l?.clampY(config.dy) ?: config.dy
+                IntOffset((dx * area.width).roundToInt(), (dy * area.height).roundToInt())
+            }
+            .graphicsLayer {
+                scaleX = config.scale
+                scaleY = config.scale
+                alpha = if (!config.hidden) 1f else if (editor != null) 0.28f else 0f
+            },
+    ) {
+        content()
+        if (editor != null) {
+            val shape = RoundedCornerShape(16.dp)
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .border(if (selected) 2.5.dp else 1.dp, if (selected) EditSelected else EditOutline, shape)
+                    .background(if (selected) EditSelected.copy(alpha = 0.12f) else Color.Transparent, shape)
+                    .pointerInput(element, area) {
+                        detectDragGestures(onDragStart = { currentEditor?.onSelect(element) }) { change, drag ->
+                            change.consume()
+                            // O arrasto chega em coordenadas da parte, já escalada: volta ao tamanho da tela.
+                            currentEditor?.onMove(element, drag.x * currentScale / area.width, drag.y * currentScale / area.height, currentLimits())
+                        }
+                    }
+                    .pointerInput(element) { detectTapGestures { currentEditor?.onSelect(element) } },
+            )
+        }
+    }
+}
+
+private val EditSelected = Color(0xFFFF3D8B)
+private val EditOutline = Color(0x99FFFFFF)
 
 /** Tamanhos nominais (em dp, escala 1) usados para calcular quanto o controle precisa encolher. */
 private class PadMetrics(layout: PadLayout) {
@@ -145,6 +276,8 @@ private class PadMetrics(layout: PadLayout) {
     private val chromeH = (if (hasShoulders) 54f else 0f) + centerRows(layout) * 40f
 
     val portraitWidth = leftW + faceW + 56f
+    /** Sobreposto em retrato, os dois grupos dividem a largura estreita da tela. */
+    val overlayWidth = leftW + faceW + 72f
     val portraitHeight = clusterH + chromeH + 16f
     val landscapeHeight = clusterH + (if (hasShoulders) 76f else 0f) + 40f
 }

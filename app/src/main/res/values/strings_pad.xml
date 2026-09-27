@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Controle virtual configurável por console -->
+    <string name="game_tab_controls">Controls</string>
+    <string name="pad_element_left">D-pad / stick</string>
+    <string name="pad_element_face">Action buttons</string>
+    <string name="pad_element_left_shoulders">Left shoulder</string>
+    <string name="pad_element_right_shoulders">Right shoulder</string>
+    <string name="pad_element_center">Start / Select</string>
+    <string name="pad_portrait_split">Split</string>
+    <string name="pad_portrait_overlay">Over the game</string>
+    <string name="pad_profile_scope">These settings apply to every %s game, whatever core runs it.</string>
+    <string name="pad_show">On-screen controller</string>
+    <string name="pad_show_subtitle">Turned off, the game takes the whole screen. Ideal for touch-only games (DS, 3DS) or when you use a physical controller.</string>
+    <string name="pad_portrait_mode">Portrait layout</string>
+    <string name="pad_portrait_mode_subtitle">Split puts the game on top and the controller below; over the game uses the whole screen, like in landscape.</string>
+    <string name="pad_size">Controller size</string>
+    <string name="pad_opacity">Opacity</string>
+    <string name="pad_use_general">Use general</string>
+    <string name="pad_general_value">General · %d%%</string>
+    <string name="pad_layout">Button layout</string>
+    <string name="pad_layout_subtitle">Move, resize or hide each part of the controller. Portrait and landscape have separate layouts.</string>
+    <string name="pad_edit_layout">Edit layout</string>
+    <string name="pad_hud">Menu buttons on screen</string>
+    <string name="pad_hud_subtitle">Menu and fast forward over the game. Without them, open the menu with the back gesture.</string>
+    <string name="pad_reset_console">Restore this console\'s default controller</string>
+    <string name="pad_editor_title">Edit controller</string>
+    <string name="pad_editor_portrait">Portrait layout</string>
+    <string name="pad_editor_landscape">Landscape layout</string>
+    <string name="pad_editor_hint">Drag a part to move it. Tap a part (or its name above) to resize or hide it.</string>
+    <string name="pad_hidden_tag">hidden</string>
+    <string name="pad_element_size">Size</string>
+    <string name="pad_element_hide">Hide</string>
+    <string name="pad_element_show">Show</string>
+    <string name="pad_element_reset">Restore part</string>
+    <string name="pad_reset_layout">Restore all</string>
+    <string name="pad_save">Save</string>
+    <string name="pad_move_toolbar">Move this bar</string>
+    <string name="settings_pad_profiles">Controller per console</string>
+    <string name="settings_pad_profiles_subtitle">Each console can have its own on-screen controller (hidden, size, button positions). Adjust it in the game menu › Controls.</string>
+    <string name="settings_pad_profiles_reset">Restore all (%d)</string>
+</resources>

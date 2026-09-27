@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -108,6 +109,15 @@ class LibraryRepository(
     }
 
     private val scanLock = Mutex()
+
+    /**
+     * Varredura de `roms/` e extração nunca ao mesmo tempo: no meio de uma extração a pasta pode ter o
+     * .bin sem o .cue ainda, e a varredura cadastraria a faixa como um jogo à parte (que nunca mais sairia).
+     */
+    private val filesLock = Mutex()
+
+    /** Roda [block] (extração para `roms/` e o cadastro do resultado) sem uma varredura no meio. */
+    suspend fun <T> writingRoms(block: suspend () -> T): T = filesLock.withLock { block() }
     @Volatile private var rescanPending = false
 
     /**
@@ -137,7 +147,7 @@ class LibraryRepository(
         lastProgress = 0L
         val found = mutableListOf<Game>()
         try {
-            scanInternal(found)
+            filesLock.withLock { scanInternal(found) }
             val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
             // jogos na biblioteca; senão, favoritos e tempo de jogo seriam apagados por engano.
@@ -153,7 +163,8 @@ class LibraryRepository(
                 uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
                     (uri.startsWith("content://") || !File(uri).exists())
             }
-            if (missing.isNotEmpty()) dao.deleteByUris(missing)
+            // Em lotes: o SQLite do Android 8–10 aceita no máximo 999 parâmetros por comando.
+            missing.chunked(500).forEach { dao.deleteByUris(it) }
         } finally {
             _scan.value = ScanState(running = false, found = found.size)
         }
@@ -300,7 +311,9 @@ class LibraryRepository(
                 val input = resolver.openInputStream(uri) ?: throw LocalizedException(R.string.system_import_unreadable)
                 input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
                 if (!part.renameTo(dest)) throw IOException("rename ${part.name}")
-                val file = if (Archives.isArchive(dest) && !system.keepArchives) RomExtractor.extract(dest, dest.parentFile!!, system) else dest
+                val file = if (Archives.isArchive(dest) && !system.keepArchives) {
+                    writingRoms { RomExtractor.extract(dest, dest.parentFile!!, system) }
+                } else dest
                 copied += system to file
             } catch (c: CancellationException) {
                 part.delete()

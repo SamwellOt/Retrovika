@@ -138,7 +138,12 @@ class InternetArchiveSource : CatalogSource {
             is JsonPrimitive -> v.contentOrNull?.split(';')?.map { it.trim() }.orEmpty()
             else -> emptyList()
         }.filter { it.isNotBlank() }
-        fun one(key: String): String? = all(key).firstOrNull()
+        // Campos de texto livre não se dividem no ";": a descrição é HTML (&amp;nbsp;) e frases têm ponto e vírgula.
+        fun one(key: String): String? = when (val v = meta[key]) {
+            is JsonArray -> v.firstNotNullOfOrNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.ifBlank { null } }
+            is JsonPrimitive -> v.contentOrNull?.trim()?.ifBlank { null }
+            else -> null
+        }
         val subjects = all("subject").distinct()
         return SourceDetails(
             title = one("title") ?: entry.title,
