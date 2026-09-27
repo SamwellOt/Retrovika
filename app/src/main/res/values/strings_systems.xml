@@ -40,7 +40,7 @@
     <string name="bios_panafz1_bin" translatable="false">BIOS Panasonic FZ-1</string>
     <string name="bios_pcfx_rom" translatable="false">BIOS PC-FX</string>
     <string name="bios_pcsx2_bios_scph39001_bin">PS2 BIOS (required for LRPS2)</string>
-    <string name="bios_saturn_bios_bin">Saturn BIOS (optional on YabaSanshiro)</string>
+    <string name="bios_saturn_bios_bin">Saturn BIOS (YabaSanshiro)</string>
     <string name="bios_scph5500_bin">PS1 BIOS (Japan)</string>
     <string name="bios_scph5501_bin">PS1 BIOS (USA) — recommended</string>
     <string name="bios_scph5502_bin">PS1 BIOS (Europe)</string>

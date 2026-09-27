@@ -243,7 +243,14 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(state.message, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 460.dp))
         Spacer(Modifier.height(24.dp))
-        GradientButton(stringResource(R.string.game_back_to_library), onExit)
+        val action = state.action
+        if (action != null) {
+            GradientButton(action.label, action.run)
+            Spacer(Modifier.height(12.dp))
+            GhostButton(stringResource(R.string.game_back_to_library), onExit)
+        } else {
+            GradientButton(stringResource(R.string.game_back_to_library), onExit)
+        }
     }
 }
 

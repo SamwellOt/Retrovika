@@ -184,7 +184,7 @@ class LibraryRepository(
                     val ext = file.extension.lowercase()
                     val auxiliary = RomNaming.isAuxiliaryFile(
                         file.name, siblings,
-                        referenced = file.path.lowercase() in referenced,
+                        referenced = GameFiles.isReferenced(file.path.lowercase(), referenced),
                         sheetsKnown = folder !in unreadable,
                     )
                     if (ext in system.extensions && !auxiliary) {
@@ -241,7 +241,7 @@ class LibraryRepository(
             }
             val siblings = entries.map { it.second.lowercase() }.toSet()
             entries.forEach { (id, name, size) ->
-                val isReferenced = "$folderKey/$name".lowercase() in referenced
+                val isReferenced = GameFiles.isReferenced("$folderKey/$name".lowercase(), referenced)
                 if (RomNaming.isAuxiliaryFile(name, siblings, isReferenced, sheetsKnown)) return@forEach
                 val system = RomNaming.resolveSystem(name, folders) ?: return@forEach
                 val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id).toString()
@@ -316,7 +316,7 @@ class LibraryRepository(
             .flatMap { sheet -> GameFiles.referencedFiles(sheet.extension.lowercase(), runCatching { sheet.readText() }.getOrDefault(""), sheet.name) }
             .map { it.lowercase() }.toSet()
         copied.forEach { (system, file) ->
-            val auxiliary = RomNaming.isAuxiliaryFile(file.name, siblings, file.name.lowercase() in referenced, sheetsKnown = true)
+            val auxiliary = RomNaming.isAuxiliaryFile(file.name, siblings, GameFiles.isReferenced(file.name.lowercase(), referenced), sheetsKnown = true)
             if (!auxiliary) dao.insert(buildGame(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED))
         }
         ImportResult(unknown, failed)

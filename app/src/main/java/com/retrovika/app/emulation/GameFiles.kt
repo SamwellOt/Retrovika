@@ -48,11 +48,12 @@ object GameFiles {
             }
             // O núcleo pede o caminho exatamente como está no índice, então o arquivo virtual usa o mesmo.
             referenced.forEach { path ->
-                sibling(main, path)?.let { uri ->
-                    runCatching { resolver.openFileDescriptor(uri, "r") }.getOrNull()?.let { fd ->
-                        files += VirtualFile("$VFS_DIR/$path", fd)
-                    }
-                }
+                // Faixa citada sem extensão ("Jogo" para "Jogo.bin"): o arquivo real tem a extensão, mas o
+                // núcleo pede o nome como está no índice.
+                val candidates = if (hasExtension(path)) listOf(path) else listOf(path, "$path.bin")
+                candidates.firstNotNullOfOrNull { candidate ->
+                    sibling(main, candidate)?.let { uri -> runCatching { resolver.openFileDescriptor(uri, "r") }.getOrNull() }
+                }?.let { fd -> files += VirtualFile("$VFS_DIR/$path", fd) }
             }
         }
     }
@@ -77,6 +78,19 @@ object GameFiles {
         "ccd" -> selfName.substringBeforeLast('.').let { listOf("$it.img", "$it.sub") }
         else -> emptyList()
     }
+
+    /**
+     * Se o arquivo em [path] (minúsculo, com a mesma base dos caminhos de [referenced]) é citado por um
+     * índice. Há .cue que citam a faixa sem extensão ("Jogo" para "Jogo.bin"); os núcleos acham o arquivo
+     * mesmo assim, então ele também conta. Índices nunca contam como citados só pela base do nome.
+     */
+    fun isReferenced(path: String, referenced: Set<String>): Boolean {
+        if (path in referenced) return true
+        val ext = path.substringAfterLast('/').substringAfterLast('.', "")
+        return ext.isNotEmpty() && ext !in SHEET_EXTENSIONS && path.substringBeforeLast('.') in referenced
+    }
+
+    private fun hasExtension(path: String) = '.' in path.substringAfterLast('/')
 
     /** Só os nomes dos arquivos citados (sem pastas). */
     fun referencedFiles(ext: String, content: String, selfName: String): List<String> =

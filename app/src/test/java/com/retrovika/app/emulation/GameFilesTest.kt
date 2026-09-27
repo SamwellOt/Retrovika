@@ -1,6 +1,8 @@
 package com.retrovika.app.emulation
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameFilesTest {
@@ -41,5 +43,15 @@ class GameFilesTest {
         val gdi = "3\n1 0 4 2352 track01.bin 0\n2 756 0 2352 \"track 02.raw\" 0\n3 45000 4 2352 track03.bin 0"
         assertEquals(listOf("track01.bin", "track 02.raw", "track03.bin"), GameFiles.referencedPaths("gdi", gdi, "jogo.gdi"))
         assertEquals(listOf("Jogo.img", "Jogo.sub"), GameFiles.referencedPaths("ccd", "", "Jogo.ccd"))
+    }
+
+    @Test
+    fun `faixa citada sem extensao conta como citada, mas o indice nao`() {
+        val referenced = setOf("psx/brave fencer musashi (usa)(ptbr)", "psx/outro.bin")
+        assertTrue(GameFiles.isReferenced("psx/brave fencer musashi (usa)(ptbr).bin", referenced))
+        assertTrue(GameFiles.isReferenced("psx/outro.bin", referenced))
+        assertFalse(GameFiles.isReferenced("psx/brave fencer musashi (usa)(ptbr).cue", referenced))
+        assertFalse(GameFiles.isReferenced("psx/outro.iso", referenced))
+        assertFalse(GameFiles.isReferenced("psx/sem extensao", setOf("psx/sem")))
     }
 }

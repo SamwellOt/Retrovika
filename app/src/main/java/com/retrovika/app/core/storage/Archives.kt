@@ -79,7 +79,7 @@ object Archives {
                         zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
                     }
                 }
-                Format.SEVEN_Z -> sevenZ(archive).use { sz ->
+                Format.SEVEN_Z -> if (!extractSevenZNative(archive, names, out, ::target)) sevenZ(archive).use { sz ->
                     while (true) {
                         val entry = sz.nextEntry ?: break
                         if (entry.isDirectory || entry.name !in names) continue
@@ -95,6 +95,35 @@ object Archives {
             throw t
         }
         return out
+    }
+
+    /**
+     * Extrai pelo [SevenZipNative], com o dicionário fora do heap Java. Falso quando ele não serve (biblioteca
+     * ausente, método que ele não decodifica): aí nada foi gravado e o commons-compress tenta.
+     */
+    private fun extractSevenZNative(archive: File, names: Set<String>, out: MutableMap<String, File>, target: (String) -> File): Boolean {
+        if (!SevenZipNative.available) return false
+        val all = SevenZipNative.list(archive.path) ?: return false
+        val targets = arrayOfNulls<String>(all.size)
+        all.forEachIndexed { i, name ->
+            if (!name.endsWith('/') && name in names) {
+                val file = target(name)
+                out[name] = file
+                targets[i] = file.path
+            }
+        }
+        return when (SevenZipNative.extract(archive.path, targets)) {
+            SevenZipNative.OK -> true
+            SevenZipNative.UNSUPPORTED, SevenZipNative.OPEN -> {
+                out.values.forEach { it.delete() }
+                out.clear()
+                false
+            }
+            // Nem na memória nativa coube: o RomExtractor transforma isso na mensagem de memória.
+            SevenZipNative.MEMORY -> throw OutOfMemoryError("7z: ${archive.name}")
+            SevenZipNative.DATA -> throw LocalizedException(R.string.download_archive_corrupt, archive.name)
+            else -> throw LocalizedException(R.string.download_extract_failed, archive.name)
+        }
     }
 
     /** Pasta de primeiro nível comum a todas as entradas ("Jogo (USA)/"), ou "" se não houver. */
@@ -114,5 +143,13 @@ object Archives {
     private val SEVEN_Z_MAGIC = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
 
     private fun zip(file: File): ZipFile = ZipFile.builder().setFile(file).get()
-    private fun sevenZ(file: File): SevenZFile = SevenZFile.builder().setFile(file).get()
+    /**
+     * O LZMA/LZMA2 aloca o dicionário inteiro no heap (7z "ultra" chega a 256 MB ou mais). Com um teto
+     * abaixo do heap, um dicionário grande demais falha com [org.apache.commons.compress.MemoryLimitException]
+     * antes de alocar, em vez de um OutOfMemoryError que pode derrubar outras threads.
+     */
+    private fun sevenZ(file: File): SevenZFile = SevenZFile.builder()
+        .setFile(file)
+        .setMaxMemoryLimitKb((Runtime.getRuntime().maxMemory() / 4 * 3 / 1024).toInt())
+        .get()
 }

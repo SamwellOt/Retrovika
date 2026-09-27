@@ -26,7 +26,7 @@ object Systems {
             cores = listOf(
                 CoreInfo("fceumm", "FCEUmm", R.string.core_fceumm),
                 CoreInfo("nestopia", "Nestopia UE", R.string.core_nestopia),
-                CoreInfo("mesen", "Mesen", R.string.core_mesen),
+                CoreInfo("mesen", "Mesen", R.string.core_mesen, needsRealPath = true),
             ),
             layout = PadLayouts.NES, accent = 0xFFE53935,
             libretroDbName = "Nintendo - Nintendo Entertainment System",
@@ -40,7 +40,7 @@ object Systems {
             cores = listOf(
                 CoreInfo("snes9x", "Snes9x", R.string.core_snes9x),
                 CoreInfo("snes9x2010", "Snes9x 2010", R.string.core_snes9x2010),
-                CoreInfo("bsnes", "bsnes", R.string.core_bsnes),
+                CoreInfo("bsnes", "bsnes", R.string.core_bsnes, needsRealPath = true),
             ),
             layout = PadLayouts.SNES, accent = 0xFF7E57C2,
             libretroDbName = "Nintendo - Super Nintendo Entertainment System",
@@ -65,7 +65,7 @@ object Systems {
                         Preset.QUALITY to mapOf("mupen64plus-43screensize" to "1280x960", "mupen64plus-MultiSampling" to "4"),
                     ),
                 ),
-                CoreInfo("parallel_n64", "ParaLLEl N64", R.string.core_parallel_n64),
+                CoreInfo("parallel_n64", "ParaLLEl N64", R.string.core_parallel_n64, needsRealPath = true),
             ),
             layout = PadLayouts.N64, accent = 0xFF43A047,
             libretroDbName = "Nintendo - Nintendo 64",
@@ -118,7 +118,7 @@ object Systems {
                 ),
                 CoreInfo(
                     "desmume", "DeSmuME", R.string.core_desmume,
-                    defaults = mapOf("desmume_cpu_mode" to "jit", "desmume_frameskip" to "0"),
+                    defaults = mapOf("desmume_frameskip" to "0"),
                 ),
             ),
             layout = PadLayouts.NDS, accent = 0xFF90A4AE, orientation = Orientation.PORTRAIT,
@@ -135,7 +135,7 @@ object Systems {
             extensions = setOf("3ds", "3dsx", "cci", "cxi", "app"),
             cores = listOf(
                 CoreInfo("citra", "Citra", R.string.core_citra, experimental = true),
-                CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true),
+                CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true, needsRealPath = true),
             ),
             layout = PadLayouts.NDS, accent = 0xFFD32F2F, orientation = Orientation.PORTRAIT,
             libretroDbName = "Nintendo - Nintendo 3DS", experimental = true,
@@ -144,7 +144,7 @@ object Systems {
             id = "gc", name = "GameCube", shortName = "GC",
             manufacturer = "Nintendo", year = 2001,
             extensions = setOf("iso", "gcm", "rvz", "ciso", "gcz"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS))),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.GAMECUBE, accent = 0xFF6A1B9A,
             libretroDbName = "Nintendo - GameCube", experimental = true,
         ),
@@ -152,7 +152,7 @@ object Systems {
             id = "wii", name = "Nintendo Wii", shortName = "WII",
             manufacturer = "Nintendo", year = 2006,
             extensions = setOf("wbfs", "rvz", "wia", "iso", "gcz", "ciso", "wad"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS))),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.WII, accent = 0xFF90CAF9,
             libretroDbName = "Nintendo - Wii", experimental = true,
         ),
@@ -198,12 +198,12 @@ object Systems {
             manufacturer = "Sony", year = 2000,
             extensions = setOf("iso", "chd", "cso", "bin", "cue"),
             cores = listOf(
-                CoreInfo("play", "Play!", R.string.core_play, experimental = true),
+                CoreInfo("play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true),
                 CoreInfo("pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS)),
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,
             libretroDbName = "Sony - PlayStation 2",
-            bios = listOf(BiosFile("pcsx2/bios/scph39001.bin", R.string.bios_pcsx2_bios_scph39001_bin, required = false)),
+            bios = listOf(BiosFile("pcsx2/bios/scph39001.bin", R.string.bios_pcsx2_bios_scph39001_bin, required = false, format = BiosFormat.PS2)),
             experimental = true,
         ),
         GameSystem(
@@ -213,7 +213,7 @@ object Systems {
             cores = listOf(
                 CoreInfo(
                     "ppsspp", "PPSSPP", R.string.core_ppsspp,
-                    defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "Off"),
+                    defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "disabled"),
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf("ppsspp_internal_resolution" to "480x272", "ppsspp_frameskip" to "1"),
                         Preset.BALANCED to mapOf("ppsspp_internal_resolution" to "960x544"),
@@ -285,9 +285,9 @@ object Systems {
             layout = PadLayouts.SATURN, accent = 0xFF455A64,
             libretroDbName = "Sega - Saturn",
             bios = listOf(
-                BiosFile("saturn_bios.bin", R.string.bios_saturn_bios_bin, "af5828fdff51384f99b3c4926be27762", required = false),
-                BiosFile("sega_101.bin", R.string.bios_sega_101_bin, "85ec9ca47d8f6807718151cbcca8b964", required = false),
-                BiosFile("mpr-17933.bin", R.string.bios_mpr_17933_bin, "3240872c70984b6cbfda1586cab68dbe", required = false),
+                BiosFile("saturn_bios.bin", R.string.bios_saturn_bios_bin, "af5828fdff51384f99b3c4926be27762", group = "saturn"),
+                BiosFile("sega_101.bin", R.string.bios_sega_101_bin, "85ec9ca47d8f6807718151cbcca8b964", group = "saturn"),
+                BiosFile("mpr-17933.bin", R.string.bios_mpr_17933_bin, "3240872c70984b6cbfda1586cab68dbe", group = "saturn"),
             ),
             multiDisc = true,
         ),
@@ -302,10 +302,11 @@ object Systems {
                     // (caso do LibretroDroid); desligada, o Flycast desenha no mesmo thread do retro_run.
                     defaults = mapOf("reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "disabled"),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "enabled"),
+                        Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "1"),
                         Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960"),
                         Preset.QUALITY to mapOf("reicast_internal_resolution" to "1920x1440", "reicast_anisotropic_filtering" to "4"),
                     ),
+                    portDevice = RETRO_DEVICE_JOYPAD,
                 ),
             ),
             layout = PadLayouts.DREAMCAST, accent = 0xFFFF6F00,
@@ -478,7 +479,7 @@ object Systems {
             id = "pcfx", name = "NEC PC-FX", shortName = "PCFX",
             manufacturer = "NEC", year = 1994,
             extensions = setOf("cue", "ccd", "toc", "chd"),
-            cores = listOf(CoreInfo("mednafen_pcfx", "Beetle PC-FX", R.string.core_mednafen_pcfx)),
+            cores = listOf(CoreInfo("mednafen_pcfx", "Beetle PC-FX", R.string.core_mednafen_pcfx, portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.PC_FX, accent = 0xFF5E35B1,
             libretroDbName = "NEC - PC-FX",
             bios = listOf(BiosFile("pcfx.rom", R.string.bios_pcfx_rom, "08e36edbea28a017f79f8d4f7ff9b6d7")),
@@ -487,7 +488,7 @@ object Systems {
             id = "3do", name = "3DO Interactive Multiplayer", shortName = "3DO",
             manufacturer = "Panasonic", year = 1993,
             extensions = setOf("iso", "cue", "chd"),
-            cores = listOf(CoreInfo("opera", "Opera", R.string.core_opera)),
+            cores = listOf(CoreInfo("opera", "Opera", R.string.core_opera, portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.THREE_DO, accent = 0xFFC62828,
             libretroDbName = "The 3DO Company - 3DO",
             bios = listOf(
@@ -555,7 +556,7 @@ object Systems {
             id = "megaduck", name = "Mega Duck / Cougar Boy", shortName = "DUCK",
             manufacturer = "Welback", year = 1993,
             extensions = setOf("bin"),
-            cores = listOf(CoreInfo("sameduck", "SameDuck", R.string.core_sameduck)),
+            cores = listOf(CoreInfo("sameduck", "SameDuck", R.string.core_sameduck, needsRealPath = true)),
             layout = PadLayouts.GAMEBOY, accent = 0xFFFFCA28, orientation = Orientation.PORTRAIT,
         ),
         GameSystem(
@@ -574,7 +575,7 @@ object Systems {
             extensions = setOf("rom", "ri", "mx1", "mx2", "dsk", "cas"),
             cores = listOf(
                 CoreInfo("bluemsx", "blueMSX", R.string.core_bluemsx, systemAssets = listOf(BLUEMSX_ASSETS)),
-                CoreInfo("fmsx", "fMSX", R.string.core_fmsx),
+                CoreInfo("fmsx", "fMSX", R.string.core_fmsx, portDevice = FMSX_JOYSTICK_KEYBOARD),
             ),
             layout = PadLayouts.COMPUTER, accent = 0xFF3949AB,
             libretroDbName = "Microsoft - MSX",
@@ -589,8 +590,8 @@ object Systems {
             manufacturer = "Commodore", year = 1982,
             extensions = setOf("d64", "d71", "d81", "g64", "x64", "t64", "tap", "prg", "p00", "crt"),
             cores = listOf(
-                CoreInfo("vice_x64", "VICE x64", R.string.core_vice_x64),
-                CoreInfo("vice_x64sc", "VICE x64sc", R.string.core_vice_x64sc),
+                CoreInfo("vice_x64", "VICE x64", R.string.core_vice_x64, portDevice = RETRO_DEVICE_JOYPAD),
+                CoreInfo("vice_x64sc", "VICE x64sc", R.string.core_vice_x64sc, portDevice = RETRO_DEVICE_JOYPAD),
             ),
             layout = PadLayouts.COMPUTER, accent = 0xFF7986CB,
             libretroDbName = "Commodore - 64",
@@ -599,7 +600,7 @@ object Systems {
             id = "amiga", name = "Commodore Amiga", shortName = "AMIGA",
             manufacturer = "Commodore", year = 1985,
             extensions = setOf("adf", "adz", "dms", "ipf", "hdf", "hdz", "lha", "uae"),
-            cores = listOf(CoreInfo("puae", "PUAE", R.string.core_puae)),
+            cores = listOf(CoreInfo("puae", "PUAE", R.string.core_puae, portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.COMPUTER, accent = 0xFFE53935,
             libretroDbName = "Commodore - Amiga",
             bios = listOf(
@@ -619,7 +620,7 @@ object Systems {
             id = "cpc", name = "Amstrad CPC", shortName = "CPC",
             manufacturer = "Amstrad", year = 1984,
             extensions = setOf("dsk", "cdt", "cpr", "sna"),
-            cores = listOf(CoreInfo("cap32", "Caprice32", R.string.core_cap32), CoreInfo("crocods", "CrocoDS", R.string.core_crocods)),
+            cores = listOf(CoreInfo("cap32", "Caprice32", R.string.core_cap32, portDevice = RETRO_DEVICE_JOYPAD), CoreInfo("crocods", "CrocoDS", R.string.core_crocods)),
             layout = PadLayouts.COMPUTER, accent = 0xFF00897B,
             libretroDbName = "Amstrad - CPC",
         ),

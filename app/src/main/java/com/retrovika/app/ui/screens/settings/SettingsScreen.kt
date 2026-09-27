@@ -60,6 +60,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SdCard
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -114,6 +115,7 @@ import com.retrovika.app.ui.components.SelectChip
 import com.retrovika.app.ui.components.Wordmark
 import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.diagnostics.ErrorReport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -207,6 +209,17 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             NavRow(Icons.Rounded.Memory, Palette.Cyan, stringResource(R.string.settings_cores), stringResource(R.string.settings_cores_subtitle), onClick = onOpenCores)
             RowDivider()
             NavRow(Icons.Rounded.SdCard, Palette.Sun, stringResource(R.string.settings_bios), stringResource(R.string.settings_bios_subtitle), onClick = onOpenBios)
+            RowDivider()
+            NavRow(Icons.Rounded.BugReport, Palette.Coral, stringResource(R.string.settings_error_report), stringResource(R.string.settings_error_report_subtitle)) {
+                scope.launch {
+                    val report = withContext(Dispatchers.IO) { ErrorReport.build(context) }
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Retrovika")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, report)
+                    context.startActivity(android.content.Intent.createChooser(send, context.getString(R.string.settings_error_report)))
+                }
+            }
         }
 
         group(R.string.settings_group_pad) {

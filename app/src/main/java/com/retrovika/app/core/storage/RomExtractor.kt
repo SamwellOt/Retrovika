@@ -3,6 +3,7 @@ package com.retrovika.app.core.storage
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.systems.GameSystem
+import org.apache.commons.compress.MemoryLimitException
 import java.io.File
 
 /**
@@ -12,13 +13,20 @@ import java.io.File
  *
  * Toda falha vira [LocalizedException] com o motivo (sem espaço, formato não suportado, memória…),
  * e o compactado é apagado: ele não serve para nada depois de falhar e ocuparia espaço.
+ *
+ * Uma extração por vez: o dicionário de um .7z pode ocupar centenas de MB do heap, e dois
+ * downloads terminando juntos estourariam a memória mesmo quando cada um sozinho cabe.
  */
 object RomExtractor {
     private val ARCHIVE_EXTS = setOf("zip", "7z")
     private val SHEET_PRIORITY = listOf("m3u", "cue", "gdi", "ccd")
     private const val SPACE_MARGIN = 64L * 1024 * 1024
 
-    fun extract(archive: File, dir: File, system: GameSystem): File {
+    private val lock = Any()
+
+    fun extract(archive: File, dir: File, system: GameSystem): File = synchronized(lock) { extractLocked(archive, dir, system) }
+
+    private fun extractLocked(archive: File, dir: File, system: GameSystem): File {
         // Com extensão de compactado mas conteúdo de outro tipo: fica como veio.
         if (Archives.formatOf(archive) == null) return archive
         try {
@@ -42,7 +50,7 @@ object RomExtractor {
             archive.delete()
             throw when (t) {
                 is LocalizedException -> t
-                is OutOfMemoryError -> LocalizedException(R.string.download_extract_memory, archive.name)
+                is OutOfMemoryError, is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
                 else -> LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
             }
         }

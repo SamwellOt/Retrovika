@@ -20,6 +20,8 @@
     <string name="settings_cores_subtitle">Download, update or remove emulators</string>
     <string name="settings_bios">BIOS</string>
     <string name="settings_bios_subtitle">Import and verify system files</string>
+    <string name="settings_error_report">Send error report</string>
+    <string name="settings_error_report_subtitle">For a game that closes by itself: device info and the app\'s recent log</string>
     <string name="settings_group_pad">On-screen controls</string>
     <string name="settings_pad_opacity">Opacity</string>
     <string name="settings_pad_size">Size</string>
@@ -78,6 +80,7 @@
     <string name="cores_not_installed">Not installed</string>
     <string name="cores_unknown_error">Unknown error</string>
     <string name="cores_no_library">Core package has no .so library</string>
+    <string name="cores_unavailable_abi">%1$s has no build for this device\'s processor (%2$s). Pick another core for this console.</string>
     <string name="bios_ui_title">BIOS</string>
     <string name="bios_ui_subtitle">%1$d of %2$d consoles ready</string>
     <string name="bios_ui_intro">Select the BIOS files dumped from your consoles. Retrovika identifies each one by name or MD5 hash and puts it in the right place.</string>
@@ -87,6 +90,7 @@
     <string name="bios_ui_ready">READY</string>
     <string name="bios_ui_pending">PENDING</string>
     <string name="bios_ui_wrong_hash">hash doesn\'t match the expected one</string>
+    <string name="bios_ui_invalid">not a valid BIOS file for this console</string>
     <string name="bios_ui_one_of_group">one of the group</string>
     <string name="bios_ui_required">required</string>
     <!-- Nomes de idioma ficam no próprio idioma (não se traduzem). -->

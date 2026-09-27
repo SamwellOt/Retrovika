@@ -19,7 +19,28 @@ data class CoreInfo(
     val presets: Map<Preset, Map<String, String>> = emptyMap(),
     /** Pacotes de assets que o núcleo precisa dentro da pasta system/. */
     val systemAssets: List<SystemAsset> = emptyList(),
+    /**
+     * Tipo de controle (RETRO_DEVICE_*) informado ao núcleo em cada porta logo depois de carregar o jogo.
+     * O RetroArch sempre faz isso; o LibretroDroid não, e alguns núcleos só conectam o controle quando
+     * recebem a chamada (sem ela, Flycast, Dolphin, Opera, PC-FX, PUAE, VICE, Caprice32 e fMSX ignoram
+     * os botões). Não vale para todos: no Atari800 o JOYPAD puro troca o controle do 5200 por um genérico.
+     */
+    val portDevice: Int? = null,
+    /**
+     * O núcleo abre o jogo com o próprio I/O, sem a VFS do libretro: o caminho virtual dos jogos de pasta
+     * vinculada não existe para ele. Sem o acesso a todos os arquivos, o app pede a permissão em vez de
+     * deixar o núcleo seguir sem o jogo (o Play! fechava segundos depois).
+     */
+    val needsRealPath: Boolean = false,
+    /** Aceita o contexto GLES abaixo da versão que o núcleo pede (o Play! pede 3.2 e roda em 3.1). */
+    val relaxedGlesVersion: Boolean = false,
 )
+
+/** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */
+const val RETRO_DEVICE_JOYPAD = 1
+
+/** RETRO_DEVICE_SUBCLASS(JOYPAD, 0) do fMSX: joystick e, nos botões que sobram, teclas do MSX (F1-F5, espaço…). */
+const val FMSX_JOYSTICK_KEYBOARD = (1 shl 8) or RETRO_DEVICE_JOYPAD
 
 enum class Preset(@StringRes val label: Int) { PERFORMANCE(R.string.preset_performance), BALANCED(R.string.preset_balanced), QUALITY(R.string.preset_quality) }
 
@@ -39,7 +60,11 @@ data class BiosFile(
      * Só faz sentido junto com [required].
      */
     val group: String? = null,
+    /** Formato conferido pelo conteúdo, para BIOS sem um MD5 único (a do PS2 tem dezenas de versões). */
+    val format: BiosFormat? = null,
 )
+
+enum class BiosFormat { PS2 }
 
 enum class Orientation { LANDSCAPE, PORTRAIT, ANY }
 

@@ -20,6 +20,8 @@
     <string name="settings_cores_subtitle">Baixe, atualize ou remova emuladores</string>
     <string name="settings_bios">BIOS</string>
     <string name="settings_bios_subtitle">Importe e verifique arquivos de sistema</string>
+    <string name="settings_error_report">Enviar relatório de erros</string>
+    <string name="settings_error_report_subtitle">Para um jogo que fecha sozinho: dados do aparelho e o log recente do app</string>
     <string name="settings_group_pad">Controle na tela</string>
     <string name="settings_pad_opacity">Opacidade</string>
     <string name="settings_pad_size">Tamanho</string>
@@ -78,6 +80,7 @@
     <string name="cores_not_installed">Não instalado</string>
     <string name="cores_unknown_error">Erro desconhecido</string>
     <string name="cores_no_library">Pacote do núcleo sem biblioteca .so</string>
+    <string name="cores_unavailable_abi">O %1$s não tem versão para o processador deste aparelho (%2$s). Escolha outro núcleo para este console.</string>
     <string name="bios_ui_title">BIOS</string>
     <string name="bios_ui_subtitle">%1$d de %2$d consoles prontos</string>
     <string name="bios_ui_intro">Selecione os arquivos de BIOS extraídos dos seus consoles. O Retrovika identifica cada um pelo nome ou pelo hash MD5 e o coloca no lugar certo.</string>
@@ -87,6 +90,7 @@
     <string name="bios_ui_ready">PRONTO</string>
     <string name="bios_ui_pending">PENDENTE</string>
     <string name="bios_ui_wrong_hash">hash diferente do esperado</string>
+    <string name="bios_ui_invalid">não é um arquivo de BIOS válido para este console</string>
     <string name="bios_ui_one_of_group">uma do grupo</string>
     <string name="bios_ui_required">obrigatória</string>
 </resources>
