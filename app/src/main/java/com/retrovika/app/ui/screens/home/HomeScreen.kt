@@ -97,6 +97,7 @@ fun HomeScreen(
     val favorites by library.favorites.collectAsStateWithLifecycle()
     val newest by library.newest.collectAsStateWithLifecycle()
     val counts by library.counts.collectAsStateWithLifecycle()
+    val countsLoaded by library.countsLoaded.collectAsStateWithLifecycle()
     val scan by library.scan.collectAsStateWithLifecycle()
     // Só o contador: a lista de tarefas muda a cada aviso de progresso e recomporia a tela inteira.
     val activeDownloads by context.container.downloads.activeCount.collectAsStateWithLifecycle()
@@ -149,7 +150,8 @@ fun HomeScreen(
             }
         }
 
-        if (counts.isEmpty() && !scan.running) {
+        // Só depois da primeira resposta do banco: antes disso o cartão piscava para quem já tem jogos.
+        if (countsLoaded && counts.isEmpty() && !scan.running) {
             item(key = "welcome") { WelcomeCard(onAddFolder = onAddFolder, onExplore = onExplore) }
         }
 

@@ -54,7 +54,7 @@ class InternetArchiveSource : CatalogSource {
         val clauses = buildList {
             add("mediatype:(software)")
             add("($system)")
-            if (query.isNotBlank()) add("(${escape(query.trim())})")
+            escape(query).takeIf { it.isNotEmpty() }?.let { add("($it)") }
             // Os itens de software trazem o gênero (quando trazem) nos assuntos livres do acervo.
             genre?.let { g -> add("subject:(" + g.keywords.joinToString(" OR ") { "\"${escape(it)}\"" } + ")") }
         }
@@ -128,7 +128,9 @@ class InternetArchiveSource : CatalogSource {
         val MULTI_FILE = setOf("cue", "gdi", "ccd", "toc", "m3u", "bin", "img", "sub", "raw")
     }
 
-    private fun escape(q: String): String = q.replace(Regex("""[:\[\]"(){}]"""), " ").trim()
+    // Só letras, números, espaços e apóstrofo: "/", "\\", "!", "+", "-"… são sintaxe da busca do archive.org
+    // e uma consulta como "AC/DC" virava erro ou lista vazia.
+    private fun escape(q: String): String = q.replace(Regex("""[^\p{L}\p{N}\s']"""), " ").replace(Regex("""\s+"""), " ").trim()
 
     private fun text(element: JsonElement?): String? = when (element) {
         is JsonPrimitive -> element.contentOrNull

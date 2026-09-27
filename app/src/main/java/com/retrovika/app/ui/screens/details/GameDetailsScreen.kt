@@ -87,6 +87,7 @@ import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -163,8 +164,9 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 height = 56.dp,
             )
             if (system != null) {
-                val preferred by remember(system.id) { app.settings.coreFor(system.id) }.collectAsStateWithLifecycle(null)
-                CoreNotice(system.core(g.coreOverride ?: preferred))
+                // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
+                val preferred by remember(system.id) { app.settings.coreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
+                preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

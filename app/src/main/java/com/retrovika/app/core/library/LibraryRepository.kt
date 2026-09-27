@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,7 +61,10 @@ class LibraryRepository(
     val recent: StateFlow<List<Game>> = dao.observeRecent().cached()
     val favorites: StateFlow<List<Game>> = dao.observeFavorites().cached()
     val newest: StateFlow<List<Game>> = dao.observeNewest().cached()
-    val counts: StateFlow<List<SystemCount>> = dao.observeCounts().cached()
+    private val _countsLoaded = MutableStateFlow(false)
+    /** Falso até a primeira resposta do banco: a lista vazia inicial não significa "biblioteca vazia". */
+    val countsLoaded: StateFlow<Boolean> = _countsLoaded.asStateFlow()
+    val counts: StateFlow<List<SystemCount>> = dao.observeCounts().onEach { _countsLoaded.value = true }.cached()
 
     private fun <T> Flow<List<T>>.cached() = stateIn(scope, SharingStarted.Eagerly, emptyList())
     fun bySystem(systemId: String) = dao.observeBySystem(systemId)

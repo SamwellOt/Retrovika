@@ -1,6 +1,10 @@
 package com.retrovika.app.ui.screens.library
 
 import androidx.compose.ui.res.pluralStringResource
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retrovika.app.core.settings.localized
+import com.retrovika.app.ui.components.ScreenMessages
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.res.stringResource
 import com.retrovika.app.R
 import android.net.Uri
@@ -98,28 +102,30 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val all = loaded.orEmpty()
     // Busca e ordem aplicadas em memória: a lista de um console é pequena e já vem do Room.
     val games = remember(all, query, settings.gameSort) { all.filterByTitle(query).sortedFor(settings.gameSort) }
-    val selectedCore by remember(systemId) { app.settings.coreFor(systemId) }.collectAsStateWithLifecycle(null)
+    // null = ainda carregando; "" = sem escolha (o núcleo padrão).
+    val selectedCore by remember(systemId) { app.settings.coreFor(systemId).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
     val preset by remember(systemId) { app.settings.presetFor(systemId) }.collectAsStateWithLifecycle(Preset.BALANCED)
     // BIOS com hash errado também contam como ausentes; em grupos, basta uma alternativa válida.
     val biosMissing by produceState(emptyList<List<BiosFile>>(), systemId) {
         val ok = app.bios.checkAsync(system).filter { it.status == BiosStatus.OK }.map { it.bios }.toSet()
         value = BiosManager.unsatisfied(system.bios) { it in ok }
     }
-    var importMessage by remember { mutableStateOf<String?>(null) }
-    var importErrors by remember { mutableStateOf<String?>(null) }
+    val importStatus: ScreenMessages = viewModel { ScreenMessages() }
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         // No escopo do app: sair da tela no meio da cópia não a interrompe nem deixa arquivos pela metade.
         app.scope.launch(Dispatchers.Main) {
-            importMessage = context.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
-            importErrors = null
+            // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
+            val res = context.localized()
+            importStatus.message = res.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
+            importStatus.errors = null
             val result = app.library.importFiles(uris, system)
-            importMessage = if (result.unknown.isEmpty()) context.getString(R.string.system_import_done)
-            else context.getString(R.string.system_import_skipped, result.unknown.joinToString())
+            importStatus.message = if (result.unknown.isEmpty()) res.getString(R.string.system_import_done)
+            else res.getString(R.string.system_import_skipped, result.unknown.joinToString())
             // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
-            importErrors = result.failed.takeIf { it.isNotEmpty() }
-                ?.joinToString("\n") { (name, reason) -> context.getString(R.string.system_import_failed, name, reason) }
+            importStatus.errors = result.failed.takeIf { it.isNotEmpty() }
+                ?.joinToString("\n") { (name, reason) -> res.getString(R.string.system_import_failed, name, reason) }
         }
     }
 
@@ -157,9 +163,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 Spacer(Modifier.height(16.dp))
                 Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     GradientButton(stringResource(R.string.system_import_games), { importer.launch(arrayOf("*/*")) }, icon = Icons.Rounded.FileOpen, height = 44.dp)
-                    importMessage?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f)) }
+                    importStatus.message?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f)) }
                 }
-                importErrors?.let {
+                importStatus.errors?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.padding(horizontal = 4.dp))
                 }
@@ -207,7 +213,8 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         system.cores.forEach { c ->
                             SelectChip(
                                 if (c.experimental) stringResource(R.string.system_core_beta, c.displayName) else c.displayName,
-                                c.id == core.id,
+                                // Até a preferência chegar, nenhum chip aparece marcado (o padrão piscava selecionado).
+                                c.id == core.id && selectedCore != null,
                                 onClick = { scope.launch { app.settings.setCore(system.id, c.id) } },
                             )
                         }

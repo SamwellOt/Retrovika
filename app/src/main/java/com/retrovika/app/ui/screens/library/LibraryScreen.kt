@@ -56,8 +56,9 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val scan by library.scan.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var onlyWithGames by rememberSaveable { mutableStateOf(false) }
+    // null = consulta ainda em andamento: "sem resultados" só aparece com a resposta do banco na mão.
     val results by remember(query) { if (query.isBlank()) flowOf(emptyList()) else library.search(query) }
-        .collectAsStateWithLifecycle(emptyList())
+        .collectAsStateWithLifecycle(null)
 
     val settings by app.settings.cached.collectAsStateWithLifecycle()
     val countMap = remember(counts) { counts.associate { it.systemId to it.count } }
@@ -108,10 +109,10 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
         }
 
         if (query.isNotBlank()) {
-            if (results.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+            if (results?.isEmpty() == true) item(span = { GridItemSpan(maxLineSpan) }) {
                 EmptyState(stringResource(R.string.library_no_results_title), stringResource(R.string.library_no_results_message, query), icon = Icons.Rounded.SearchOff)
             }
-            items(results, key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
+            items(results.orEmpty(), key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
         } else {
             items(systems, key = { it.id }, contentType = { "system" }) { system ->
                 SystemTile(system, countMap[system.id] ?: 0, onClick = { onOpenSystem(system.id) })

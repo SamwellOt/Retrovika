@@ -65,6 +65,7 @@ object Http {
         headers: Map<String, String> = emptyMap(),
         onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit = {},
+        onSaved: (File) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
         // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
         // no mesmo .part ao mesmo tempo.
@@ -114,6 +115,8 @@ object Http {
             part.delete()
             throw LocalizedException(R.string.download_move_failed, part.name)
         }
+        // Avisado antes do retorno: um cancelamento que chegue agora ainda deixa quem chamou apagar o arquivo.
+        onSaved(target)
         target
     }
 

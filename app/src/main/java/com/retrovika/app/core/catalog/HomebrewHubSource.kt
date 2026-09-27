@@ -33,18 +33,19 @@ class HomebrewHubSource : CatalogSource {
     )
 
     @Serializable
+    // Campos com padrão: uma entrada incompleta é pulada, em vez de fazer a página inteira falhar.
     private data class Entry(
-        val slug: String,
-        val title: String,
+        val slug: String = "",
+        val title: String = "",
         /** Pode vir como texto ou como lista de autores. */
         val developer: JsonElement? = null,
-        val platform: String,
+        val platform: String = "",
         val typetag: String? = null,
         val screenshots: List<String> = emptyList(),
         val files: List<FileEntry> = emptyList(),
         val tags: List<String> = emptyList(),
         val website: String? = null,
-        val basepath: String,
+        val basepath: String = "",
     )
 
     @Serializable
@@ -64,6 +65,7 @@ class HomebrewHubSource : CatalogSource {
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.entries.mapNotNull { e ->
+            if (e.slug.isBlank() || e.basepath.isBlank()) return@mapNotNull null
             if (genre != null && !genre.matches(e.tags + listOfNotNull(e.typetag))) return@mapNotNull null
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
             val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
@@ -72,7 +74,7 @@ class HomebrewHubSource : CatalogSource {
             CatalogEntry(
                 id = e.slug,
                 sourceId = id,
-                title = e.title,
+                title = e.title.ifBlank { e.slug },
                 systemId = system,
                 developer = developerName(e.developer),
                 coverUrl = shots.firstOrNull { it.contains("cover", true) } ?: shots.firstOrNull(),

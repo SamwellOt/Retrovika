@@ -1,7 +1,10 @@
 package com.retrovika.app.ui.screens.settings
 
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.retrovika.app.R
+import com.retrovika.app.core.settings.localized
+import com.retrovika.app.ui.components.ScreenMessages
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -68,10 +71,9 @@ fun BiosScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val bios = app.bios
-    var version by remember { mutableIntStateOf(0) }
-    var message by remember { mutableStateOf<String?>(null) }
+    val status: ScreenMessages = viewModel { ScreenMessages() }
     val systems = remember { Systems.all.filter { it.bios.isNotEmpty() } }
-    val checks by produceState(emptyMap<GameSystem, List<BiosCheck>>(), version) {
+    val checks by produceState(emptyMap<GameSystem, List<BiosCheck>>(), status.version) {
         value = systems.associateWith { bios.checkAsync(it) }
     }
 
@@ -79,9 +81,11 @@ fun BiosScreen(onBack: () -> Unit) {
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         app.scope.launch(Dispatchers.Main) {
             val found = bios.import(uris)
-            message = if (found.isEmpty()) context.getString(R.string.bios_ui_none_recognized)
-            else context.getString(R.string.bios_ui_imported, found.joinToString())
-            version++
+            // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
+            val res = context.localized()
+            status.message = if (found.isEmpty()) res.getString(R.string.bios_ui_none_recognized)
+            else res.getString(R.string.bios_ui_imported, found.joinToString())
+            status.version++
         }
     }
 
@@ -99,7 +103,7 @@ fun BiosScreen(onBack: () -> Unit) {
                 stringResource(R.string.bios_ui_import), { picker.launch(arrayOf("*/*")) },
                 Modifier.padding(horizontal = 20.dp, vertical = 14.dp), icon = Icons.Rounded.FileOpen,
             )
-            message?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Success, modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) }
+            status.message?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Success, modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) }
         }
         items(systems, key = { it.id }) { system ->
             Column(
