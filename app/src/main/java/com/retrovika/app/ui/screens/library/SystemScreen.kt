@@ -75,6 +75,8 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.VideogameAsset
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCard
+import com.retrovika.app.ui.components.GameCardSkeleton
+import com.retrovika.app.ui.components.bleed
 import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.components.LocalBottomInset
@@ -245,13 +247,19 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         SearchField(query, { query = it }, stringResource(R.string.system_search, system.shortName), onSearch = { focus.clearFocus() })
                         Spacer(Modifier.height(10.dp))
                     }
-                    ChipStrip(contentPadding = PaddingValues(0.dp)) {
+                    // Corre até a borda da tela, em vez de cortar os chips na margem da grade.
+                    ChipStrip(Modifier.bleed(16.dp), contentPadding = PaddingValues(horizontal = 16.dp)) {
                         GameSort.entries.forEach { sort ->
                             SelectChip(stringResource(sort.label), sort == settings.gameSort, onClick = { scope.launch { app.settings.setGameSort(sort) } })
                         }
                     }
                 }
             }
+        }
+
+        // Room ainda respondendo: capas-esqueleto em vez de um espaço vazio.
+        if (loaded == null) {
+            items(6, key = { "skeleton-$it" }, contentType = { "skeleton" }) { GameCardSkeleton() }
         }
 
         if (all.isNotEmpty() && games.isEmpty()) {

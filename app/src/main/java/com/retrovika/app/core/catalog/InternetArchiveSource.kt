@@ -47,7 +47,7 @@ class InternetArchiveSource : CatalogSource {
         val creator: JsonElement? = null,
     )
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         // Sem console escolhido não há como classificar/baixar: não retorna nada.
         val system = systemId?.let { systemTerms[it] } ?: return CatalogPage(emptyList(), page, 1, 0)
 
@@ -55,6 +55,8 @@ class InternetArchiveSource : CatalogSource {
             add("mediatype:(software)")
             add("($system)")
             if (query.isNotBlank()) add("(${escape(query.trim())})")
+            // Os itens de software trazem o gênero (quando trazem) nos assuntos livres do acervo.
+            genre?.let { g -> add("subject:(" + g.keywords.joinToString(" OR ") { "\"${escape(it)}\"" } + ")") }
         }
         val url = Uri.parse("https://archive.org/advancedsearch.php").buildUpon().apply {
             appendQueryParameter("q", clauses.joinToString(" AND "))

@@ -59,7 +59,11 @@ interface CatalogSource {
     /** Algumas fontes só fazem sentido com um console escolhido (ex.: Internet Archive). */
     val requiresSystem: Boolean get() = false
 
-    suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage
+    /**
+     * Uma página de resultados. [genre] é o filtro especial de gênero: cada fonte o aplica como
+     * pode (etiquetas ou busca textual, ver [Genre]), então o resultado é aproximado.
+     */
+    suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre? = null): CatalogPage
 
     /**
      * Lista os arquivos baixáveis de uma entrada, para o usuário escolher qual ROM baixar.

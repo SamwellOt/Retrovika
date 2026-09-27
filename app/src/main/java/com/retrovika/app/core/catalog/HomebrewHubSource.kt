@@ -50,10 +50,11 @@ class HomebrewHubSource : CatalogSource {
     @Serializable
     private data class FileEntry(val filename: String, val default: Boolean = false, val playable: Boolean = false)
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         val url = Uri.parse("$base/api/search").buildUpon().apply {
             appendQueryParameter("page", page.toString())
-            appendQueryParameter("results", "30")
+            // Com gênero, o filtro é feito aqui pelas etiquetas: páginas maiores rendem mais acertos por pedido.
+            appendQueryParameter("results", if (genre != null) "60" else "30")
             if (query.isNotBlank()) appendQueryParameter("q", query.trim())
             systemId?.let { platformBySystem[it] }?.let { appendQueryParameter("platform", it) }
             kind?.let { appendQueryParameter("typetag", it) }
@@ -63,6 +64,7 @@ class HomebrewHubSource : CatalogSource {
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))
         val entries = response.entries.mapNotNull { e ->
+            if (genre != null && !genre.matches(e.tags + listOfNotNull(e.typetag))) return@mapNotNull null
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
             val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
             val entryBase = "$base/static/${e.basepath}/entries/${e.slug}"

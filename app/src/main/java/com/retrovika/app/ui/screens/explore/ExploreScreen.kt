@@ -1,12 +1,8 @@
 package com.retrovika.app.ui.screens.explore
 
-import androidx.compose.ui.res.stringResource
-import com.retrovika.app.R
-import com.retrovika.app.ui.components.regionLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,39 +15,43 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Castle
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.FilterAltOff
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Nightlight
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RocketLaunch
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.SportsMma
+import androidx.compose.material.icons.rounded.SportsMotorsports
+import androidx.compose.material.icons.rounded.SportsSoccer
+import androidx.compose.material.icons.rounded.Stairs
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -59,43 +59,52 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retrovika.app.R
 import com.retrovika.app.container
 import com.retrovika.app.core.catalog.CatalogEntry
-import com.retrovika.app.core.catalog.RomVariant
-import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.catalog.DownloadStatus
 import com.retrovika.app.core.catalog.DownloadTask
+import com.retrovika.app.core.catalog.Genre
+import com.retrovika.app.core.catalog.RomVariant
+import com.retrovika.app.core.catalog.downloadKey
+import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
+import com.retrovika.app.ui.components.AccentChip
 import com.retrovika.app.ui.components.ChipStrip
 import com.retrovika.app.ui.components.DownloadProgressBar
-import com.retrovika.app.ui.components.HeaderIconButton
-import com.retrovika.app.ui.components.ScrollToTopOnReselect
-import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.ui.components.EmptyState
+import com.retrovika.app.ui.components.FilterLabel
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
+import com.retrovika.app.ui.components.HeaderIconButton
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.components.ScreenHeader
+import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import com.retrovika.app.ui.components.SearchField
 import com.retrovika.app.ui.components.SelectChip
 import com.retrovika.app.ui.components.ambientGlow
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.SearchOff
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import com.retrovika.app.ui.components.bleed
 import com.retrovika.app.ui.components.readableAccent
+import com.retrovika.app.ui.components.regionLabel
+import com.retrovika.app.ui.components.shimmer
 import com.retrovika.app.ui.theme.Palette
+
+/** Margem lateral da grade; as faixas de chips "sangram" por ela até a borda da tela. */
+private val Gutter = 16.dp
 
 @Composable
 fun ExploreScreen(onOpenBrowser: () -> Unit) {
@@ -110,6 +119,10 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
     // Um mapa por lista de downloads, não uma busca por card: títulos se repetem entre consoles e
     // fontes, e a lista muda a cada aviso de progresso. A lista vem do mais novo para o mais antigo.
     val downloadsByEntry = remember(downloads) { downloads.asReversed().filter { it.entryKey != null }.associateBy { it.entryKey } }
+    val current = vm.sources.first { it.id == state.sourceId }
+    val isHomebrew = state.sourceId == "homebrewhub"
+    val filtersActive = state.query.isNotBlank() || state.genre != null ||
+        (!current.requiresSystem && state.systemId != null) || (isHomebrew && state.kind != "game")
 
     val nearEnd by remember {
         derivedStateOf {
@@ -124,58 +137,88 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
         state = gridState,
         columns = GridCells.Adaptive(150.dp),
         modifier = Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan, secondary = Palette.Neon),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = LocalBottomInset.current + 24.dp),
+        contentPadding = PaddingValues(start = Gutter, end = Gutter, bottom = LocalBottomInset.current + 24.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
+        item(span = { GridItemSpan(maxLineSpan) }, contentType = "filters") {
             Column {
-                ScreenHeader(stringResource(R.string.tab_explore), subtitle = stringResource(R.string.explore_subtitle, state.totalResults), inset = 4.dp) {
+                val subtitle = if (state.initialLoading) stringResource(R.string.explore_searching)
+                else stringResource(R.string.explore_subtitle, state.totalResults)
+                ScreenHeader(stringResource(R.string.tab_explore), subtitle = subtitle, inset = 4.dp) {
                     // Os downloads têm aba própria; aqui fica o atalho para o navegador interno.
                     HeaderIconButton(Icons.Rounded.Language, stringResource(R.string.explore_open_site), onClick = onOpenBrowser)
                 }
                 Spacer(Modifier.height(16.dp))
                 SearchField(state.query, onChange = vm::setQuery, placeholder = stringResource(R.string.explore_search_hint), onSearch = { focus.clearFocus() })
-                Spacer(Modifier.height(12.dp))
+
                 if (vm.sources.size > 1) {
-                    ChipStrip(contentPadding = PaddingValues(0.dp)) {
-                        vm.sources.forEach { src -> SelectChip(src.nameRes?.let { stringResource(it) } ?: src.name, state.sourceId == src.id, onClick = { vm.setSource(src.id) }) }
+                    FilterSection(stringResource(R.string.explore_filter_source)) {
+                        vm.sources.forEach { src ->
+                            SelectChip(src.nameRes?.let { stringResource(it) } ?: src.name, state.sourceId == src.id, onClick = { vm.setSource(src.id) })
+                        }
                     }
-                    Spacer(Modifier.height(10.dp))
                 }
-                ChipStrip(contentPadding = PaddingValues(0.dp)) {
-                    val current = vm.sources.first { it.id == state.sourceId }
-                    if (!current.requiresSystem) SystemChip(stringResource(R.string.explore_filter_all), state.systemId == null, Palette.TextSecondary) { vm.setSystem(null) }
+
+                FilterSection(stringResource(R.string.explore_filter_console)) {
+                    if (!current.requiresSystem) AccentChip(stringResource(R.string.explore_filter_all), state.systemId == null, Palette.TextSecondary, onClick = { vm.setSystem(null) })
                     vm.systems.mapNotNull(Systems::byId).forEach { sys ->
-                        SystemChip(sys.shortName, state.systemId == sys.id, sys.readableAccent()) { vm.setSystem(sys.id) }
-                    }
-                    if (state.sourceId == "homebrewhub") {
-                        Spacer(Modifier.width(8.dp))
-                        SystemChip(stringResource(R.string.explore_kind_games), state.kind == "game", Palette.Sun) { vm.setKind("game") }
-                        SystemChip(stringResource(R.string.explore_kind_demos), state.kind == "demo", Palette.Sun) { vm.setKind("demo") }
-                        SystemChip(stringResource(R.string.explore_kind_everything), state.kind == null, Palette.Sun) { vm.setKind(null) }
+                        AccentChip(sys.shortName, state.systemId == sys.id, sys.readableAccent(), onClick = { vm.setSystem(sys.id) })
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Info, null, tint = Palette.TextMuted, modifier = Modifier.size(14.dp))
+
+                // Filtros especiais: tocar no gênero ativo o desmarca.
+                FilterSection(stringResource(R.string.explore_filter_genre)) {
+                    Genre.entries.forEach { g ->
+                        AccentChip(stringResource(g.label), state.genre == g, g.accent, onClick = { vm.toggleGenre(g) }, icon = g.icon)
+                    }
+                }
+
+                if (isHomebrew) {
+                    FilterSection(stringResource(R.string.explore_filter_type)) {
+                        SelectChip(stringResource(R.string.explore_kind_games), state.kind == "game", onClick = { vm.setKind("game") })
+                        SelectChip(stringResource(R.string.explore_kind_demos), state.kind == "demo", onClick = { vm.setKind("demo") })
+                        SelectChip(stringResource(R.string.explore_kind_everything), state.kind == null, onClick = { vm.setKind(null) })
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Rounded.Info, null, tint = Palette.TextMuted, modifier = Modifier.padding(top = 2.dp).size(14.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(stringResource(vm.sources.first { it.id == state.sourceId }.description), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(current.description), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
+                        // O gênero sai das etiquetas e descrições de cada site: é bom avisar que é aproximado.
+                        if (state.genre != null) Text(stringResource(R.string.explore_genre_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
+                    }
+                    if (filtersActive) {
+                        Spacer(Modifier.width(8.dp))
+                        ClearFiltersButton(vm::clearFilters)
+                    }
                 }
             }
         }
 
         state.error?.let { error ->
-            item(span = { GridItemSpan(maxLineSpan) }) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "message") {
                 EmptyState(stringResource(R.string.explore_error_title), stringResource(error), icon = Icons.Rounded.CloudOff) {
                     GhostButton(stringResource(R.string.common_retry), vm::retry, icon = Icons.Rounded.Refresh)
                 }
             }
         }
 
+        // Primeira página chegando: cartões-esqueleto no lugar dos jogos, em vez de uma tela vazia.
+        if (state.initialLoading) {
+            items(6, key = { "skeleton-$it" }, contentType = { "skeleton" }) { SkeletonCard() }
+        }
+
         if (!state.loading && state.error == null && state.entries.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState(stringResource(R.string.explore_empty_title), stringResource(R.string.explore_empty_message, state.query), icon = Icons.Rounded.SearchOff)
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "message") {
+                val message = if (state.query.isBlank()) stringResource(R.string.explore_empty_filtered)
+                else stringResource(R.string.explore_empty_message, state.query)
+                EmptyState(stringResource(R.string.explore_empty_title), message, icon = Icons.Rounded.SearchOff) {
+                    if (filtersActive) GhostButton(stringResource(R.string.explore_clear_filters), vm::clearFilters, icon = Icons.Rounded.FilterAltOff)
+                }
             }
         }
 
@@ -189,9 +232,11 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
             )
         }
 
-        if (state.loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        if (state.loading && state.entries.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "loading") {
+                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp, color = Palette.Cyan)
+                }
             }
         }
     }
@@ -200,35 +245,94 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
     }
 }
 
+/** Grupo de filtros: rótulo em caixa alta e uma faixa de chips que corre até a borda da tela. */
+@Composable
+private fun FilterSection(label: String, chips: @Composable () -> Unit) {
+    Spacer(Modifier.height(16.dp))
+    FilterLabel(label)
+    Spacer(Modifier.height(8.dp))
+    ChipStrip(Modifier.bleed(Gutter), contentPadding = PaddingValues(horizontal = Gutter)) { chips() }
+}
+
+@Composable
+private fun ClearFiltersButton(onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.FilterAltOff, null, tint = Palette.Neon, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(stringResource(R.string.explore_clear_filters), style = MaterialTheme.typography.labelMedium, color = Palette.Neon)
+    }
+}
+
+/** Ícone de cada gênero nos chips e no selo do cartão. */
+private val Genre.icon: ImageVector
+    get() = when (this) {
+        Genre.ACTION -> Icons.Rounded.Bolt
+        Genre.ADVENTURE -> Icons.Rounded.Map
+        Genre.RPG -> Icons.Rounded.Shield
+        Genre.PLATFORM -> Icons.Rounded.Stairs
+        Genre.PUZZLE -> Icons.Rounded.Extension
+        Genre.SHOOTER -> Icons.Rounded.RocketLaunch
+        Genre.RACING -> Icons.Rounded.SportsMotorsports
+        Genre.SPORTS -> Icons.Rounded.SportsSoccer
+        Genre.FIGHTING -> Icons.Rounded.SportsMma
+        Genre.STRATEGY -> Icons.Rounded.Castle
+        Genre.HORROR -> Icons.Rounded.Nightlight
+        Genre.MUSIC -> Icons.Rounded.MusicNote
+    }
+
+/** Cor de cada gênero, tirada da paleta synthwave e de tons vizinhos a ela. */
+private val Genre.accent: Color
+    get() = when (this) {
+        Genre.ACTION -> Palette.Orange
+        Genre.ADVENTURE -> Palette.Success
+        Genre.RPG -> Palette.Violet
+        Genre.PLATFORM -> Palette.Sun
+        Genre.PUZZLE -> Palette.Cyan
+        Genre.SHOOTER -> Palette.Neon
+        Genre.RACING -> Palette.Coral
+        Genre.SPORTS -> Color(0xFF7FD4FF)
+        Genre.FIGHTING -> Color(0xFFFF6A5C)
+        Genre.STRATEGY -> Color(0xFFB9A4FF)
+        Genre.HORROR -> Color(0xFFC3BCDA)
+        Genre.MUSIC -> Color(0xFFFF9EDB)
+    }
+
+private val CardShape = RoundedCornerShape(20.dp)
+
 @Composable
 private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: String?, onDownload: () -> Unit, onPlay: () -> Unit) {
     val system = Systems.byId(entry.systemId)
+    val genre = remember(entry.tags) { Genre.of(entry.tags).firstOrNull() }
     Column(
         Modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(CardShape)
             .background(Palette.SurfaceHigh)
-            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), RoundedCornerShape(20.dp)),
+            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), CardShape),
     ) {
         Box {
             GameCover(
                 entry.title, system, entry.coverUrl,
                 Modifier.fillMaxWidth().aspectRatio(10f / 9f), corner = 0.dp,
             )
-            sourceLabel?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Palette.TextPrimary,
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Palette.SurfaceHigh.copy(alpha = 0.85f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
+            sourceLabel?.let { CoverTag(it, Palette.TextPrimary, Modifier.align(Alignment.TopStart)) }
+            genre?.let { g ->
+                Icon(
+                    g.icon, stringResource(g.label), tint = g.accent,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(26.dp)
+                        .background(Palette.Ink.copy(alpha = 0.75f), RoundedCornerShape(8.dp)).padding(5.dp),
                 )
             }
         }
         Column(Modifier.padding(12.dp)) {
-            Text(entry.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Duas linhas fixas: os cartões da mesma fileira ficam com a mesma altura.
+            Text(entry.title, style = MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
             Text(
                 listOfNotNull(system?.shortName, entry.developer).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
@@ -260,12 +364,47 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                     GhostButton(stringResource(R.string.common_retry), onDownload, Modifier.fillMaxWidth(), icon = Icons.Rounded.Download, tint = Palette.Coral)
                 }
                 DownloadStatus.DONE -> GradientButton(stringResource(R.string.common_play), onPlay, Modifier.fillMaxWidth(), icon = Icons.Rounded.PlayArrow, height = 44.dp)
-                else -> GhostButton(
-                    stringResource(if (task?.status == DownloadStatus.FAILED) R.string.common_retry else R.string.common_download),
-                    onDownload, Modifier.fillMaxWidth(), icon = Icons.Rounded.Download,
-                    tint = if (task?.status == DownloadStatus.FAILED) Palette.Coral else Palette.TextPrimary,
-                )
+                else -> GhostButton(stringResource(R.string.common_download), onDownload, Modifier.fillMaxWidth(), icon = Icons.Rounded.Download)
             }
+        }
+    }
+}
+
+/** Etiqueta pequena sobre a capa (fonte do resultado na busca unificada). */
+@Composable
+private fun CoverTag(text: String, color: Color, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = modifier
+            .padding(8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Palette.Ink.copy(alpha = 0.75f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+/** Cartão-esqueleto com as mesmas proporções do [CatalogCard]. */
+@Composable
+private fun SkeletonCard() {
+    Column(
+        Modifier
+            .clip(CardShape)
+            .background(Palette.SurfaceHigh)
+            .border(1.dp, Palette.Outline.copy(alpha = 0.5f), CardShape),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(10f / 9f).shimmer(RectangleShape))
+        Column(Modifier.padding(12.dp)) {
+            Box(Modifier.fillMaxWidth(0.85f).height(14.dp).shimmer())
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth(0.55f).height(14.dp).shimmer())
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth(0.4f).height(10.dp).shimmer())
+            Spacer(Modifier.height(10.dp))
+            Box(Modifier.fillMaxWidth().height(44.dp).shimmer(RoundedCornerShape(50)))
         }
     }
 }
@@ -278,14 +417,16 @@ private fun VariantPickerSheet(
     onPick: (CatalogEntry, RomVariant) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(), containerColor = Palette.Surface) {
         Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
             Text(prompt.entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(stringResource(R.string.explore_pick_rom), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
             Spacer(Modifier.height(12.dp))
             when (prompt) {
-                is VariantPrompt.Loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                is VariantPrompt.Loading -> Column(Modifier.fillMaxWidth()) {
+                    repeat(3) {
+                        Box(Modifier.fillMaxWidth().height(52.dp).padding(vertical = 6.dp).shimmer(RoundedCornerShape(12.dp)))
+                    }
                 }
                 is VariantPrompt.Failed -> Text(
                     stringResource(R.string.explore_variants_failed),
@@ -296,8 +437,9 @@ private fun VariantPickerSheet(
                     Row(
                         Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable { onPick(prompt.entry, variant) }
-                            .padding(vertical = 14.dp),
+                            .padding(vertical = 14.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -308,29 +450,10 @@ private fun VariantPickerSheet(
                             }
                         }
                         Spacer(Modifier.width(12.dp))
-                        Icon(Icons.Rounded.Download, stringResource(R.string.common_download), Modifier.size(20.dp))
+                        Icon(Icons.Rounded.Download, stringResource(R.string.common_download), Modifier.size(20.dp), tint = Palette.Cyan)
                     }
                 }
             }
         }
-    }
-}
-
-/** Chip de filtro com ponto na cor do console. */
-@Composable
-private fun SystemChip(label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(50)
-    Row(
-        Modifier
-            .clip(shape)
-            .background(if (selected) color.copy(alpha = 0.18f) else Palette.SurfaceHigh)
-            .border(1.dp, if (selected) color.copy(alpha = 0.8f) else Palette.Outline, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(7.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.TextPrimary else Palette.TextSecondary)
     }
 }

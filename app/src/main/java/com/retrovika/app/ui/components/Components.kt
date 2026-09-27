@@ -2,7 +2,14 @@ package com.retrovika.app.ui.components
 
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -70,6 +77,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -433,6 +441,18 @@ fun GameCard(game: Game, onClick: () -> Unit, modifier: Modifier = Modifier, wid
     }
 }
 
+/** Esqueleto com as proporções do [GameCard], mostrado enquanto a lista ainda carrega. */
+@Composable
+fun GameCardSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Box(Modifier.fillMaxWidth().aspectRatio(0.75f).shimmer(RoundedCornerShape(16.dp)))
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth(0.8f).height(13.dp).shimmer())
+        Spacer(Modifier.height(5.dp))
+        Box(Modifier.fillMaxWidth(0.45f).height(10.dp).shimmer())
+    }
+}
+
 private fun Color.compositeOverInk(): Color {
     // Escurece cores de marca muito claras para o texto branco continuar legível.
     val lum = 0.299f * red + 0.587f * green + 0.114f * blue
@@ -569,23 +589,106 @@ fun SearchField(value: String, onChange: (String) -> Unit, placeholder: String, 
     )
 }
 
-/** Chip de seleção próprio: preenchido com o degradê quando ativo. */
+/**
+ * Chip de seleção próprio: preenchido com o degradê quando ativo. Anuncia o estado ao leitor de
+ * tela (`selectable`) e tem altura mínima de 36dp, para o toque não escapar em listas densas.
+ */
 @Composable
 fun SelectChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(50)
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (selected) Color(0xFF1C0010) else Palette.TextSecondary,
-        modifier = modifier
+    Box(
+        modifier
+            .defaultMinSize(minHeight = 36.dp)
             .clip(shape)
             .then(
                 if (selected) Modifier.background(Palette.SunsetHorizontal)
                 else Modifier.background(Palette.SurfaceHigh).border(1.dp, Palette.Outline, shape),
             )
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Color(0xFF1C0010) else Palette.TextSecondary, maxLines = 1)
+    }
+}
+
+/**
+ * Chip de filtro tingido por uma cor própria (a do console, a do gênero): ponto ou ícone na
+ * cor [accent] e, quando ativo, fundo e borda nessa mesma cor.
+ */
+@Composable
+fun AccentChip(
+    text: String,
+    selected: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        modifier
+            .defaultMinSize(minHeight = 36.dp)
+            .clip(shape)
+            .background(if (selected) accent.copy(alpha = 0.18f) else Palette.SurfaceHigh)
+            .border(1.dp, if (selected) accent.copy(alpha = 0.85f) else Palette.Outline, shape)
+            .selectable(selected = selected, role = Role.Checkbox, onClick = onClick)
+            .padding(start = if (icon != null) 10.dp else 12.dp, end = 14.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) Icon(icon, null, tint = accent, modifier = Modifier.size(16.dp))
+        else Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
+        Spacer(Modifier.width(if (icon != null) 6.dp else 7.dp))
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.TextPrimary else Palette.TextSecondary, maxLines = 1)
+    }
+}
+
+/** Rótulo curto em caixa alta acima de um grupo de filtros ("CONSOLE", "GÊNERO"…). */
+@Composable
+fun FilterLabel(text: String, modifier: Modifier = Modifier, trailing: @Composable RowScope.() -> Unit = {}) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted, modifier = Modifier.weight(1f))
+        trailing()
+    }
+}
+
+/**
+ * Placeholder de carregamento: bloco na cor de superfície com um brilho que atravessa em loop.
+ * O progresso é lido só na fase de desenho, então a animação não recompõe quem usa.
+ */
+@Composable
+fun Modifier.shimmer(shape: Shape = RoundedCornerShape(8.dp)): Modifier {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val progress = transition.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
+        label = "shimmer",
     )
+    return clip(shape).background(Palette.SurfaceHighest.copy(alpha = 0.7f)).drawBehind {
+        val w = size.width
+        val x = -w + progress.value * 2f * w
+        drawRect(
+            Brush.linearGradient(
+                listOf(Color.Transparent, Color.White.copy(alpha = 0.07f), Color.Transparent),
+                start = Offset(x, 0f), end = Offset(x + w, size.height),
+            ),
+        )
+    }
+}
+
+/**
+ * Estende o elemento [horizontal] para cada lado, além do padding do pai. Usado em faixas com
+ * rolagem dentro de listas com margem: os chips correm até a borda da tela em vez de serem
+ * cortados na margem, e o 1º continua alinhado ao conteúdo (com o mesmo padding interno).
+ */
+fun Modifier.bleed(horizontal: Dp): Modifier = layout { measurable, constraints ->
+    if (!constraints.hasBoundedWidth) {
+        val placeable = measurable.measure(constraints)
+        return@layout layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    }
+    val extra = horizontal.roundToPx() * 2
+    val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra))
+    layout(placeable.width - extra, placeable.height) { placeable.place(-extra / 2, 0) }
 }
 
 /** Faixa horizontal de chips com rolagem, alinhada às margens da tela. */
