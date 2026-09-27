@@ -85,4 +85,5 @@
     <string name="browser_site_archive">Collections and homebrew</string>
     <string name="explore_info_toggle">About this source</string>
     <string name="explore_waiting_slow">The sites that already answered have no games for this filter. Still waiting for the slower ones (the Internet Archive can take a few seconds)…</string>
+    <string name="explore_open_game">Open game page</string>
 </resources>

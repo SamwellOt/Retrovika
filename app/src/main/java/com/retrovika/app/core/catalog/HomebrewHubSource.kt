@@ -1,5 +1,7 @@
 package com.retrovika.app.core.catalog
 
+import com.retrovika.app.core.gameinfo.HtmlText
+import com.retrovika.app.core.gameinfo.SourceDetails
 import com.retrovika.app.R
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
@@ -88,6 +90,44 @@ class HomebrewHubSource : CatalogSource {
             )
         }
         return CatalogPage(entries, response.page_current, response.page_total, response.results)
+    }
+
+    @Serializable
+    private data class Detail(
+        val slug: String = "",
+        val title: String = "",
+        val developer: JsonElement? = null,
+        val platform: String = "",
+        val typetag: String? = null,
+        val screenshots: List<String> = emptyList(),
+        val tags: List<String> = emptyList(),
+        val website: String? = null,
+        val basepath: String = "",
+        val description: String? = null,
+        val license: String? = null,
+        val date: String? = null,
+        val firstadded_date: String? = null,
+    )
+
+    /** A ficha completa da entrada (a busca não traz descrição, licença nem datas). */
+    override suspend fun details(entry: CatalogEntry): SourceDetails {
+        val d = Http.json.decodeFromString(Detail.serializer(), Http.getString("$base/api/entry/${Urls.encode(entry.id)}.json"))
+        val entryBase = "$base/static/${d.basepath}/entries/${d.slug}"
+        val shots = if (d.basepath.isBlank()) entry.screenshots else d.screenshots.map { "$entryBase/${Urls.encode(it, "/")}" }
+        return SourceDetails(
+            title = d.title.ifBlank { entry.title },
+            description = d.description?.let { HtmlText.of(it) }?.ifBlank { null },
+            coverUrl = entry.coverUrl,
+            screenshots = shots.ifEmpty { entry.screenshots },
+            releaseDate = d.date?.take(10)?.ifBlank { null },
+            developers = developerName(d.developer)?.split(", ").orEmpty(),
+            genres = d.tags.filterNot { it.startsWith("event:") },
+            tags = d.tags.filter { it.startsWith("event:") }.map { it.removePrefix("event:") },
+            website = d.website?.takeIf { it.isNotBlank() },
+            addedDate = d.firstadded_date?.take(10),
+            license = d.license?.takeIf { it.isNotBlank() },
+            format = entry.fileName.substringAfterLast('.', "").uppercase().ifBlank { null },
+        )
     }
 
     private fun developerName(element: JsonElement?): String? = when (element) {

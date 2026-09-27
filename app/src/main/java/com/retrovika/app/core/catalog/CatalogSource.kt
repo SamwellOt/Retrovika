@@ -1,6 +1,7 @@
 package com.retrovika.app.core.catalog
 
 import androidx.annotation.StringRes
+import com.retrovika.app.core.gameinfo.SourceDetails
 
 data class CatalogEntry(
     val id: String,
@@ -84,6 +85,12 @@ interface CatalogSource {
         listOf(RomVariant(fileName = entry.fileName, downloadUrl = entry.downloadUrl, label = entry.fileName))
 
     /**
+     * Ficha do jogo como a fonte a conhece (descrição, região, idiomas, data, nota dos usuários…), para
+     * a página do jogo. O padrão usa só o que a busca já trouxe; fontes com página de jogo a leem aqui.
+     */
+    suspend fun details(entry: CatalogEntry): SourceDetails = entry.basicDetails()
+
+    /**
      * Converte um [CatalogEntry] no link final de download. Fontes com URL direto
      * (padrão) devolvem a própria entrada; fontes que só expõem um identificador
      * resolvem o arquivo real aqui, na hora de baixar.
@@ -93,3 +100,13 @@ interface CatalogSource {
         return entry.copy(downloadUrl = variant.downloadUrl, fileName = variant.fileName)
     }
 }
+
+/** O que a própria entrada da busca já diz sobre o jogo. */
+fun CatalogEntry.basicDetails(): SourceDetails = SourceDetails(
+    title = title,
+    coverUrl = coverUrl,
+    screenshots = screenshots,
+    developers = listOfNotNull(developer),
+    tags = tags,
+    website = website,
+)

@@ -1,5 +1,8 @@
 package com.retrovika.app.core.catalog
 
+import com.retrovika.app.core.gameinfo.HtmlText
+import com.retrovika.app.core.gameinfo.SourceDetails
+import kotlinx.serialization.json.jsonObject
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.Urls
@@ -121,6 +124,35 @@ class InternetArchiveSource : CatalogSource {
                 sizeBytes = file.size?.toLongOrNull(),
             )
         }
+    }
+
+    /**
+     * Metadados do item: título, descrição (HTML), data ou ano, autor, publicadora, assuntos e idioma.
+     * Cada item é enviado por um usuário diferente, então os campos variam muito; os ausentes ficam nulos.
+     */
+    override suspend fun details(entry: CatalogEntry): SourceDetails {
+        val json = Http.json.parseToJsonElement(Http.getString("https://archive.org/metadata/${Urls.encode(entry.id)}")).jsonObject
+        val meta = json["metadata"]?.jsonObject ?: return entry.basicDetails()
+        fun all(key: String): List<String> = when (val v = meta[key]) {
+            is JsonArray -> v.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            is JsonPrimitive -> v.contentOrNull?.split(';')?.map { it.trim() }.orEmpty()
+            else -> emptyList()
+        }.filter { it.isNotBlank() }
+        fun one(key: String): String? = all(key).firstOrNull()
+        val subjects = all("subject").distinct()
+        return SourceDetails(
+            title = one("title") ?: entry.title,
+            description = one("description")?.let { HtmlText.of(it) }?.ifBlank { null },
+            coverUrl = entry.coverUrl,
+            releaseDate = (one("date") ?: one("year"))?.take(10),
+            developers = all("creator").distinct(),
+            publisher = one("publisher"),
+            languages = all("language").distinct(),
+            tags = subjects.take(12),
+            website = entry.website,
+            addedDate = one("addeddate")?.take(10),
+            license = one("licenseurl"),
+        )
     }
 
     private companion object {

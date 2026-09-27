@@ -1,4 +1,5 @@
-# Mede a velocidade dos filtros do Explorar contra os sites reais (CatalogSpeedTest).
+# Mede a velocidade dos filtros do Explorar (CatalogSpeedTest) e confere os dados da página do jogo
+# (GameInfoNetworkTest) contra os sites reais.
 # Roda quando o código do catálogo muda e pode ser disparado à mão; não entra no build normal
 # porque depende da internet e dos sites de terceiros.
 name: Catalog speed
@@ -9,6 +10,8 @@ on:
     paths:
       - 'app/src/main/java/com/retrovika/app/core/catalog/**'
       - 'app/src/main/java/com/retrovika/app/core/net/**'
+      - 'app/src/main/java/com/retrovika/app/core/gameinfo/**'
+      - 'app/src/test/java/com/retrovika/app/core/gameinfo/GameInfoNetworkTest.kt'
       - 'app/src/test/java/com/retrovika/app/core/catalog/CatalogSpeedTest.kt'
       - '.github/workflows/catalog-speed.yml'
   workflow_dispatch:
@@ -26,3 +29,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Velocidade dos filtros
         run: ./gradlew testDebugUnitTest -PnetworkTests=true --tests '*CatalogSpeedTest*'
+      # Página do jogo: Backloggd, Wikipedia/Wikidata e a ficha de cada fonte, contra os sites reais.
+      - name: Dados da página do jogo
+        if: always()
+        run: ./gradlew testDebugUnitTest -PnetworkTests=true --tests '*GameInfoNetworkTest*'

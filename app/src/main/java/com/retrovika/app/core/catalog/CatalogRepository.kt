@@ -46,6 +46,21 @@ class CatalogRepository {
     /** Resolve o link final de download pela fonte que originou a entrada. */
     suspend fun resolve(entry: CatalogEntry): CatalogEntry = source(entry.sourceId).resolve(entry)
 
+    /** Ficha do jogo pela fonte que originou a entrada (para a página do jogo). */
+    suspend fun details(entry: CatalogEntry) = source(entry.sourceId).details(entry)
+
+    /**
+     * Entradas abertas na página do jogo, pela [downloadKey]: a rota leva só a chave, e a entrada
+     * (que veio de uma busca) fica aqui enquanto a página existir.
+     */
+    private val opened = object : LinkedHashMap<String, CatalogEntry>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CatalogEntry>) = size > 64
+    }
+
+    fun open(entry: CatalogEntry): String = synchronized(opened) { opened[entry.downloadKey] = entry; entry.downloadKey }
+
+    fun opened(key: String): CatalogEntry? = synchronized(opened) { opened[key] }
+
     /** Arquivos baixáveis de uma entrada (para escolher qual ROM baixar). */
     suspend fun variants(entry: CatalogEntry): List<RomVariant> = source(entry.sourceId).variants(entry)
 

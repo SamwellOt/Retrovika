@@ -1,6 +1,9 @@
 package com.retrovika.app.core.catalog
 
 import com.retrovika.app.R
+import com.retrovika.app.core.gameinfo.HtmlText
+import com.retrovika.app.core.gameinfo.SiteRating
+import com.retrovika.app.core.gameinfo.SourceDetails
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
@@ -190,7 +193,7 @@ class CdRomanceSource : CatalogSource {
      * devolve a tabela de arquivos — uma variante por arquivo/região.
      */
     override suspend fun variants(entry: CatalogEntry): List<RomVariant> {
-        val page = Jsoup.parse(Http.getString(entry.id), base)
+        val page = Jsoup.parse(gamePage(entry.id), base)
         val postId = page.selectFirst("#acf-content-wrapper")?.attr("data-id")?.takeIf { it.isNotBlank() }
             ?: throw LocalizedException(R.string.catalog_no_downloads, entry.id)
 
@@ -214,6 +217,70 @@ class CdRomanceSource : CatalogSource {
         }
         if (variants.isEmpty()) throw LocalizedException(R.string.catalog_no_downloadable_file, entry.id)
         return variants
+    }
+
+    /**
+     * Página do jogo, guardada por alguns minutos: a página de detalhes a lê para a ficha e, logo
+     * depois, o download a lê de novo para achar o `post_id`.
+     */
+    private suspend fun gamePage(url: String): String {
+        val now = System.currentTimeMillis()
+        synchronized(gamePages) { gamePages[url] }?.takeIf { now - it.first < PAGE_TTL_MS }?.let { return it.second }
+        val html = Http.getString(url)
+        synchronized(gamePages) { gamePages[url] = now to html }
+        return html
+    }
+
+    private val gamePages = object : LinkedHashMap<String, Pair<Long, String>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, String>>) = size > 6
+    }
+
+    override suspend fun details(entry: CatalogEntry): SourceDetails = parseDetails(gamePage(entry.id), entry)
+
+    /**
+     * A tabela "GAME INFORMATION" (região, lançamento, gênero, publicadora, idiomas, formato, ID do
+     * jogo, downloads), a nota dos usuários, a descrição de quem enviou e as capturas de tela.
+     */
+    internal fun parseDetails(html: String, entry: CatalogEntry): SourceDetails {
+        val doc = Jsoup.parse(html, base)
+        val rows = doc.select("table.rom-info tr").mapNotNull { tr ->
+            val th = tr.selectFirst("th")?.text()?.trim()?.lowercase() ?: return@mapNotNull null
+            val td = tr.selectFirst("td") ?: return@mapNotNull null
+            th to td
+        }.toMap()
+        fun cell(vararg names: String): Element? = names.firstNotNullOfOrNull { rows[it] }
+        fun list(vararg names: String): List<String> =
+            cell(*names)?.let { td -> td.select("a").map { it.text().trim() }.ifEmpty { td.text().split(',') } }
+                ?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+        fun text(vararg names: String): String? = cell(*names)?.text()?.trim()?.ifBlank { null }
+
+        val rating = doc.selectFirst("[itemprop=aggregateRating]")?.let { r ->
+            val value = r.selectFirst("meta[itemprop=ratingValue]")?.attr("content")?.toDoubleOrNull()
+            val count = r.selectFirst("meta[itemprop=ratingCount]")?.attr("content")?.toIntOrNull()
+            val best = r.selectFirst("meta[itemprop=bestRating]")?.attr("content")?.toDoubleOrNull() ?: 5.0
+            if (value != null && count != null && count > 0) SiteRating(value, best, count) else null
+        }
+        val shots = doc.select("#lightgallery .game-box-layout").mapNotNull { it.absUrl("data-src").ifBlank { null } }
+            .ifEmpty { doc.select("a[itemprop=screenshot]").mapNotNull { it.absUrl("href").ifBlank { null } } }
+        return SourceDetails(
+            title = text("game name") ?: entry.title,
+            description = doc.selectFirst("#custom-description")?.let { HtmlText.of(it) }?.ifBlank { null },
+            coverUrl = doc.selectFirst(".post-thumbnail img")?.absUrl("src")?.ifBlank { null } ?: entry.coverUrl,
+            screenshots = shots,
+            releaseDate = cell("game release")?.let { td -> td.selectFirst("[itemprop=datePublished]")?.text() ?: td.text().substringBefore('(') }
+                ?.trim()?.ifBlank { null },
+            developers = list("developer", "developers"),
+            publisher = text("publisher")?.takeIf { it.length > 1 },
+            genres = list("genre", "genres"),
+            languages = list("languages", "language"),
+            region = text("region"),
+            serial = text("game id", "serial"),
+            format = text("image format", "format"),
+            downloads = text("downloads")?.filter(Char::isDigit)?.toLongOrNull(),
+            rating = rating,
+            tags = entry.tags,
+            website = entry.website,
+        )
     }
 
     private fun pagePath(page: Int): String = if (page > 1) "page/$page/" else ""
@@ -245,6 +312,7 @@ class CdRomanceSource : CatalogSource {
     }
 
     private companion object {
+        const val PAGE_TTL_MS = 10 * 60 * 1000L
         /** Jogos por página nas listagens e na busca do site (conferido no HTML). */
         const val PAGE_SIZE = 30
     }
