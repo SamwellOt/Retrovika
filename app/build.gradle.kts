@@ -29,8 +29,8 @@ android {
         applicationId = "com.retrovika.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.2.7"
+        versionCode = 10
+        versionName = "0.2.8"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -62,6 +62,12 @@ android {
     testOptions {
         // Os testes de unidade rodam na JVM: chamadas a android.* devolvem valores padrão em vez de falhar.
         unitTests.isReturnDefaultValues = true
+        // Testes de rede (velocidade dos filtros contra os sites reais) só rodam quando pedidos.
+        unitTests.all { test ->
+            val network = project.findProperty("networkTests")?.toString() ?: "false"
+            test.systemProperty("networkTests", network)
+            if (network == "true") test.testLogging { showStandardStreams = true }
+        }
     }
 
     compileOptions {

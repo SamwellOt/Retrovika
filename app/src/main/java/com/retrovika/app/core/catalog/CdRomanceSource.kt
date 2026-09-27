@@ -2,7 +2,7 @@ package com.retrovika.app.core.catalog
 
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
-import android.net.Uri
+import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.HttpStatusException
 import org.jsoup.Jsoup
@@ -77,9 +77,13 @@ class CdRomanceSource : CatalogSource {
         // O site não tem filtro de gênero: o termo entra na busca do WordPress, que procura no
         // título e no texto de cada jogo (onde o gênero aparece na descrição).
         val q = listOfNotNull(query.trim().takeIf { it.isNotBlank() }, genre?.searchTerm).joinToString(" ")
+        val section = systemId?.let { sectionBySystem[it] }
         val url = when {
-            q.isNotBlank() -> "$base/${pagePath(page)}?s=${Uri.encode(q)}"
-            systemId != null -> sectionBySystem[systemId]?.let { "$base/$it/${pagePath(page)}" }
+            // Busca dentro da seção do console (/gba-roms/?s=action): o site já filtra. Buscar no site
+            // todo e descartar os outros consoles deixava as páginas quase vazias e a lista lenta.
+            q.isNotBlank() && section != null -> "$base/$section/${pagePath(page)}?s=${Urls.encode(q)}"
+            q.isNotBlank() -> "$base/${pagePath(page)}?s=${Urls.encode(q)}"
+            systemId != null -> section?.let { "$base/$it/${pagePath(page)}" }
                 ?: return CatalogPage(emptyList(), page, 1, 0) // console sem categoria navegável: peça um termo
             else -> "$base/${pagePath(page)}" // home: lançamentos recentes
         }
@@ -92,12 +96,21 @@ class CdRomanceSource : CatalogSource {
             throw e
         }
         val doc = Jsoup.parse(html, base)
-        // Na página de categoria o console é o da própria categoria.
-        val listingSystem = if (q.isBlank()) systemId else null
+        // Na seção de um console (listagem ou busca dentro dela) os cartões vêm sem o selo de console.
+        val listingSystem = if (section != null) systemId else null
         val entries = parseCards(doc, listingSystem)
             .let { list -> if (systemId != null) list.filter { it.systemId == systemId } else list }
-        val hasCards = doc.select("div.game-container").isNotEmpty()
-        return CatalogPage(entries, page, totalPages(doc, page, hasCards), entries.size)
+        val cards = doc.select("div.game-container").size
+        val pages = totalPages(doc, page, cards > 0)
+        // O site não informa o total de jogos, só as páginas: o total é estimado por elas. Antes ia o
+        // tamanho desta página (30), e "Todas as fontes" mostrava menos jogos que um único console.
+        val total = when {
+            page >= pages -> (page - 1) * PAGE_SIZE + entries.size
+            // Busca filtrada por console: estima pela proporção de acertos desta página.
+            cards > 0 && entries.size < cards -> pages * entries.size
+            else -> pages * PAGE_SIZE
+        }
+        return CatalogPage(entries, page, pages, total, approximate = page < pages)
     }
 
     internal fun parseCards(html: String, listingSystem: String?): List<CatalogEntry> =
@@ -229,5 +242,10 @@ class CdRomanceSource : CatalogSource {
             else -> 1024L
         }
         return (value * unit).toLong()
+    }
+
+    private companion object {
+        /** Jogos por página nas listagens e na busca do site (conferido no HTML). */
+        const val PAGE_SIZE = 30
     }
 }

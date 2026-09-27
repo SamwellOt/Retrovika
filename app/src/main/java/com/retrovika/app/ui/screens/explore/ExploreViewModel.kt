@@ -11,6 +11,8 @@ import com.retrovika.app.core.catalog.RomVariant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import com.retrovika.app.core.catalog.CatalogPage
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,8 +48,11 @@ data class ExploreState(
     val page: Int = 0,
     val totalPages: Int = 1,
     val totalResults: Int = 0,
+    val totalApproximate: Boolean = false,
     val loading: Boolean = false,
     @StringRes val error: Int? = null,
+    /** Algum site já respondeu sem jogos e os mais lentos ainda estão buscando: a tela explica a espera. */
+    val waitingSlowSources: Boolean = false,
 ) {
     val canLoadMore get() = !loading && error == null && page < totalPages
     val aggregated get() = sourceId == ALL_SOURCES
@@ -57,8 +62,6 @@ data class ExploreState(
 
 const val ALL_SOURCES = "all"
 
-/** Quantas páginas vazias seguidas buscamos antes de esperar o usuário rolar de novo. */
-private const val MAX_EMPTY_PAGES = 3
 
 @OptIn(FlowPreview::class)
 class ExploreViewModel(private val app: AppContainer) : ViewModel() {
@@ -134,7 +137,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(350)
-            _state.update { it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null) }
+            _state.update { it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false) }
             fetch(1)
         }
     }
@@ -148,36 +151,48 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun fetch(page: Int, emptyStreak: Int = 0) {
-        val s = _state.value
-        // HTML/JSON das fontes é interpretado fora da thread principal: páginas grandes travavam a rolagem.
-        val call = runCatching {
-            withContext(Dispatchers.Default) {
-                if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre)
-                else app.catalog.source(s.sourceId).search(s.query, s.systemId, page, s.kind, s.genre)
-            }
+    /** Uma página da fonte atual (ou de todas), interpretada fora da thread principal. */
+    private suspend fun fetchPage(s: ExploreState, page: Int, onPartial: ((CatalogPage) -> Unit)? = null): CatalogPage =
+        withContext(Dispatchers.Default) {
+            if (s.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre) { onPartial?.invoke(it) }
+            else app.catalog.search(app.catalog.source(s.sourceId), s.query, s.systemId, page, s.kind, s.genre)
         }
-        call
-            .onSuccess { result ->
-                _state.update {
-                    it.copy(
-                        entries = (it.entries + result.entries).distinctBy { e -> e.sourceId + e.id },
-                        page = result.page, totalPages = result.totalPages, totalResults = result.totalResults,
-                        loading = false,
-                    )
-                }
-                // Página sem nada deste filtro (ex.: busca do CDRomance só com outros consoles): a lista
-                // não cresce, a rolagem não pede mais e tudo parava. Segue para as próximas algumas vezes.
-                if (result.entries.isEmpty() && result.page < result.totalPages && emptyStreak < MAX_EMPTY_PAGES) {
-                    _state.update { it.copy(loading = true) }
-                    fetch(result.page + 1, emptyStreak + 1)
+
+    /** Acrescenta uma página ao estado; o total vem da 1ª e as seguintes só o corrigem para cima. */
+    private fun appendPage(result: CatalogPage) = _state.update {
+        it.copy(
+            entries = (it.entries + result.entries).distinctBy { e -> e.sourceId + e.id },
+            page = maxOf(it.page, result.page), totalPages = maxOf(result.totalPages, result.page),
+            totalResults = if (result.page == 1) result.totalResults else maxOf(it.totalResults, result.totalResults),
+            totalApproximate = if (result.page == 1) result.approximate else it.totalApproximate && result.approximate,
+        )
+    }
+
+    private suspend fun fetch(page: Int) {
+        val s = _state.value
+        val before = s.entries
+        val job = coroutineContext[Job]
+        val first = try {
+            fetchPage(s, page) { partial ->
+                // Cada site aparece assim que responde; o indicador de carga segue até o último.
+                if (job?.isActive == true) _state.update {
+                    val entries = (before + partial.entries).distinctBy { e -> e.sourceId + e.id }
+                    it.copy(entries = entries, waitingSlowSources = entries.isEmpty())
                 }
             }
-            .onFailure { t ->
-                if (t is kotlinx.coroutines.CancellationException) throw t
-                android.util.Log.w("Explore", "Falha ao buscar catálogo", t)
-                _state.update { it.copy(loading = false, error = R.string.explore_error_network) }
-            }
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            android.util.Log.w("Explore", "Falha ao buscar catálogo", t)
+            _state.update { it.copy(loading = false, error = R.string.explore_error_network, waitingSlowSources = false) }
+            return
+        }
+        _state.update { it.copy(entries = before, waitingSlowSources = false) }
+        appendPage(first)
+
+        // Filtro que rende pouco por página: as próximas vêm em paralelo até encher a tela.
+        app.catalog.fillAfter(first, loaded = { _state.value.entries.size }, fetch = { p -> fetchPage(s, p) }, onPage = ::appendPage)
+        _state.update { it.copy(loading = false) }
     }
 
     /**

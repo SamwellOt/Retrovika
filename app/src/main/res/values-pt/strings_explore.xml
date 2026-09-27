@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Explorar -->
-    <string name="explore_subtitle">Catálogo livre · %d títulos</string>
+    <string name="explore_subtitle">Catálogo livre · %s títulos</string>
+    <string name="explore_subtitle_approx">Catálogo livre · cerca de %s títulos</string>
     <string name="explore_open_site">Abrir site</string>
     <string name="explore_downloads">Downloads</string>
     <string name="explore_search_hint">Buscar jogos para baixar</string>
@@ -82,4 +83,6 @@
     <string name="browser_site_vimm">Acervo grande, arquivos em .7z</string>
     <string name="browser_site_cdromance">Jogos em disco e traduções</string>
     <string name="browser_site_archive">Coleções e homebrew</string>
+    <string name="explore_info_toggle">Sobre esta fonte</string>
+    <string name="explore_waiting_slow">Os sites que já responderam não têm jogos com esse filtro. Aguardando os mais lentos (o Internet Archive pode levar alguns segundos)…</string>
 </resources>
