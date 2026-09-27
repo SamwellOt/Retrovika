@@ -1,0 +1,67 @@
+package com.retrovika.app.core.diagnostics
+
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
+import android.content.Context
+import android.os.Build
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Relatório para diagnosticar um jogo que fecha sozinho num aparelho que não está à mão: modelo,
+ * versões, os últimos encerramentos que o Android registrou e o log recente do próprio app. O log de
+ * um processo que caiu continua legível pelo mesmo app na abertura seguinte, com o backtrace do crash
+ * e as mensagens dos núcleos ("Libretro Core"). Só texto: o usuário decide se e para quem envia.
+ */
+object ErrorReport {
+    private const val LOG_LINES = 1500
+    private const val EXITS = 5
+
+    fun build(context: Context): String = buildString {
+        val am = context.getSystemService(ActivityManager::class.java)
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+        appendLine("Retrovika $version")
+        appendLine("Aparelho: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), SoC ${socName()}")
+        appendLine("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ABIs ${Build.SUPPORTED_ABIS.joinToString()}")
+        val gles = am.deviceConfigurationInfo.reqGlEsVersion
+        appendLine("OpenGL ES ${gles shr 16}.${gles and 0xFFFF}")
+        val mem = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        appendLine("RAM ${mem.totalMem / (1024 * 1024)} MB, heap Java ${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            appendLine()
+            appendLine("== Últimos encerramentos ==")
+            val format = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+            runCatching { am.getHistoricalProcessExitReasons(context.packageName, 0, EXITS) }.getOrDefault(emptyList()).forEach { exit ->
+                appendLine("${format.format(Date(exit.timestamp))} ${reason(exit.reason)} status=${exit.status} ${exit.description.orEmpty()}")
+            }
+        }
+
+        appendLine()
+        appendLine("== Log recente ==")
+        // Um app só lê as próprias linhas do log; "*:I" deixa de fora o ruído de depuração.
+        val log = runCatching {
+            val process = ProcessBuilder("logcat", "-d", "-b", "main,system,crash", "-v", "time", "-t", "$LOG_LINES", "*:I")
+                .redirectErrorStream(true).start()
+            process.inputStream.bufferedReader().use { it.readText() }.also { process.waitFor() }
+        }.getOrElse { "(log indisponível: ${it.message})" }
+        append(log)
+    }
+
+    private fun socName(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else Build.HARDWARE
+
+    private fun reason(reason: Int): String = when (reason) {
+        ApplicationExitInfo.REASON_CRASH -> "CRASH(Java)"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH(nativo)"
+        ApplicationExitInfo.REASON_ANR -> "ANR"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "POUCA_MEMÓRIA"
+        ApplicationExitInfo.REASON_SIGNALED -> "SINAL"
+        ApplicationExitInfo.REASON_EXIT_SELF -> "SAIU"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "USUÁRIO"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "RECURSOS"
+        ApplicationExitInfo.REASON_OTHER -> "OUTRO"
+        else -> "motivo $reason"
+    }
+}

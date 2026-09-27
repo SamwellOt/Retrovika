@@ -19,7 +19,7 @@
     <string name="game_file_not_found">Arquivo não encontrado</string>
     <string name="game_error_load_library">O núcleo não pôde ser carregado neste aparelho.</string>
     <string name="game_error_load_game">O núcleo não conseguiu abrir este arquivo. Ele pode estar corrompido ou ser de outra região/formato.</string>
-    <string name="game_error_load_game_bios">Alguns núcleos deste console precisam de uma BIOS que está faltando. Importe em Ajustes › BIOS:</string>
+    <string name="game_error_load_game_bios">Alguns núcleos deste console precisam de uma BIOS que está faltando ou é inválida. Importe em Ajustes › BIOS:</string>
     <string name="game_error_gl">Seu aparelho não suporta a versão de OpenGL ES exigida por este núcleo.</string>
     <string name="game_error_serialization">Falha ao ler ou gravar o save state.</string>
     <string name="game_error_unexpected">Erro inesperado no emulador (código %d).</string>

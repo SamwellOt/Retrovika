@@ -12,7 +12,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 
-enum class BiosStatus { OK, WRONG_HASH, MISSING }
+/** INVALID: o conteúdo não é do formato esperado (BiosFile.format), mesmo com o nome certo. */
+enum class BiosStatus { OK, WRONG_HASH, INVALID, MISSING }
 
 data class BiosCheck(val bios: BiosFile, val status: BiosStatus)
 
@@ -29,6 +30,7 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
         val status = when {
             !file.exists() -> BiosStatus.MISSING
             bios.md5 != null && !md5(file).equals(bios.md5, ignoreCase = true) -> BiosStatus.WRONG_HASH
+            bios.format != null && !BiosFormats.isValid(bios.format, file) -> BiosStatus.INVALID
             else -> BiosStatus.OK
         }
         BiosCheck(bios, status)
@@ -46,7 +48,13 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
      * (o LRPS2 exige a do PS2, o Play! não): servem de pista quando o núcleo não abre o jogo.
      */
     fun missingOptional(system: GameSystem): List<BiosFile> =
-        system.bios.filter { !it.required && !File(paths.system, it.fileName).exists() }
+        system.bios.filter { !it.required && !usable(it) }
+
+    /** Presente e, quando há formato conhecido, com o conteúdo certo (só lê o diretório da ROM). */
+    private fun usable(bios: BiosFile): Boolean {
+        val file = File(paths.system, bios.fileName)
+        return file.exists() && (bios.format == null || BiosFormats.isValid(bios.format, file))
+    }
 
     /** [check] calcula MD5 de cada arquivo; use esta versão a partir da UI. */
     suspend fun checkAsync(system: GameSystem): List<BiosCheck> = withContext(Dispatchers.IO) { check(system) }
@@ -58,8 +66,12 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
             val tmp = File(paths.downloadsTmp, "bios-import")
             resolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
             val hash = md5(tmp)
+            // Pelo MD5, pelo nome ou, para BIOS com formato conhecido, pelo conteúdo: uma BIOS de PS2 com
+            // outro nome (SCPH-70012.bin) vale tanto quanto a scph39001.bin. Nome certo com conteúdo
+            // errado é recusado, senão apareceria como presente sem funcionar.
             val match = known.firstOrNull { it.md5 != null && it.md5.equals(hash, true) }
-                ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) }
+                ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) && (it.format == null || BiosFormats.isValid(it.format, tmp)) }
+                ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, tmp) }
             if (match == null) { tmp.delete(); return@mapNotNull null }
             val dest = File(paths.system, match.fileName)
             dest.parentFile?.mkdirs()

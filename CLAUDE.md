@@ -48,6 +48,7 @@ App data lives in `/sdcard/Android/data/com.retrovika.app/files/Retrovika/`, wit
 - `keepArchives` for systems whose core runs the `.zip` itself (arcade, DOS), so downloads are not extracted
 - `folderOnlyExtensions` for extensions too generic to identify the console on their own (PICO-8 `.png`)
 - `portDevice` for cores that ignore input until the frontend calls `retro_set_controller_port_device` (Flycast, Dolphin, Opera, PC-FX, PUAE, VICE, Caprice32, fMSX). It is set on every port before the first `retro_run`. Don't add it to every core: on atari800 a plain JOYPAD replaces its 5200 controller
+- BIOS entries without a single MD5 can declare a `format` (`BiosFormat.PS2`): `BiosFormats` checks the content with the core's own rules, Ajustes shows `INVALID` for a right name with wrong content, and import accepts a valid file under any name
 - BIOS entries can share a `group`: the group is satisfied when any one file in it is present (3DO, Neo Geo CD)
 
 To add a console, you mostly just add an entry here, plus folder aliases in `RomNaming` and, for cartridge systems with a No-Intro DAT, an entry in `DatCatalog`. `SystemsTest` checks the catalog for consistency. The Gradle `fetchCores` task finds core IDs by regex-matching `CoreInfo("<id>"` in this file, so keep that literal form.
@@ -87,6 +88,8 @@ To add a console, you mostly just add an entry here, plus folder aliases in `Rom
 - Below that, it stores the choice in SharedPreferences and `Languages.wrap` is applied in `attachBaseContext` of the Application, `MainActivity` and `GameActivity`.
 
 **Navigation.** `ui/navigation/RetrovikaNavHost.kt` uses string routes. The tabs are `home`, `library`, `explore`, `downloads` and `settings`; pushed screens are `system/{id}`, `game/{id}`, `browser`, `settings/cores` and `settings/bios`. Tapping the open tab again emits its route on `LocalTabReselect`, and each tab screen calls `ScrollToTopOnReselect(route, state)` with its list state. `AppSettings.reduceMotion` turns the screen transitions off. The NavHost also owns the SAF folder-picker launcher and runs a rescan on startup.
+
+**Diagnostics.** Ajustes › "Enviar relatório de erros" (`core/diagnostics/ErrorReport`) shares device/GLES info, `ApplicationExitInfo` and the app's own recent logcat, which still holds the native backtrace and core messages of a crashed game on the next launch. Ask users for it when a core crashes on a device you can't reach.
 
 ## Constraints
 

@@ -203,7 +203,7 @@ object Systems {
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,
             libretroDbName = "Sony - PlayStation 2",
-            bios = listOf(BiosFile("pcsx2/bios/scph39001.bin", R.string.bios_pcsx2_bios_scph39001_bin, required = false)),
+            bios = listOf(BiosFile("pcsx2/bios/scph39001.bin", R.string.bios_pcsx2_bios_scph39001_bin, required = false, format = BiosFormat.PS2)),
             experimental = true,
         ),
         GameSystem(

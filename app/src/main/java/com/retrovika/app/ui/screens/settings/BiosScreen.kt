@@ -121,7 +121,7 @@ fun BiosScreen(onBack: () -> Unit) {
                     Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         val (icon, tint) = when (check.status) {
                             BiosStatus.OK -> Icons.Rounded.CheckCircle to Palette.Success
-                            BiosStatus.WRONG_HASH -> Icons.Rounded.ErrorOutline to Palette.Coral
+                            BiosStatus.WRONG_HASH, BiosStatus.INVALID -> Icons.Rounded.ErrorOutline to Palette.Coral
                             BiosStatus.MISSING -> Icons.Rounded.RadioButtonUnchecked to (if (check.bios.required) Palette.Coral else Palette.TextMuted)
                         }
                         Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
@@ -129,7 +129,11 @@ fun BiosScreen(onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(check.bios.fileName, style = MaterialTheme.typography.labelMedium)
                             Text(
-                                stringResource(check.bios.description) + if (check.status == BiosStatus.WRONG_HASH) " · " + stringResource(R.string.bios_ui_wrong_hash) else "",
+                                stringResource(check.bios.description) + when (check.status) {
+                                    BiosStatus.WRONG_HASH -> " · " + stringResource(R.string.bios_ui_wrong_hash)
+                                    BiosStatus.INVALID -> " · " + stringResource(R.string.bios_ui_invalid)
+                                    else -> ""
+                                },
                                 style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                             )
                         }

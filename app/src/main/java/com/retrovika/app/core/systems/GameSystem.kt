@@ -60,7 +60,11 @@ data class BiosFile(
      * Só faz sentido junto com [required].
      */
     val group: String? = null,
+    /** Formato conferido pelo conteúdo, para BIOS sem um MD5 único (a do PS2 tem dezenas de versões). */
+    val format: BiosFormat? = null,
 )
+
+enum class BiosFormat { PS2 }
 
 enum class Orientation { LANDSCAPE, PORTRAIT, ANY }
 
