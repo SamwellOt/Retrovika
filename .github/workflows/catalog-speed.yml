@@ -12,6 +12,7 @@ on:
       - 'app/src/main/java/com/retrovika/app/core/net/**'
       - 'app/src/main/java/com/retrovika/app/core/gameinfo/**'
       - 'app/src/test/java/com/retrovika/app/core/gameinfo/GameInfoNetworkTest.kt'
+      - '.github/scripts/**'
       - 'app/src/test/java/com/retrovika/app/core/catalog/CatalogSpeedTest.kt'
       - '.github/workflows/catalog-speed.yml'
   workflow_dispatch:
@@ -33,3 +34,15 @@ jobs:
       - name: Dados da página do jogo
         if: always()
         run: ./gradlew testDebugUnitTest -PnetworkTests=true --tests '*GameInfoNetworkTest*'
+
+  # A verificação em JavaScript da CDN do Backloggd, vencida por um navegador de verdade (Chromium,
+  # o motor do WebView) e reaproveitada fora dele, como o app faz com o OkHttp.
+  backloggd-challenge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - run: python .github/scripts/backloggd_challenge.py
