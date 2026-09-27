@@ -1,0 +1,33 @@
+# Temporário: mede a latência das fontes com filtro de gênero (removido em seguida).
+name: Probe genre
+on:
+  push:
+    branches: [claude/menu-navigation-performance-qyjolq]
+    paths: ['.github/workflows/probe-genre.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          UA="Retrovika/0.1 (Android)"
+          t() { curl -sS -A "$UA" -o out.txt -w "%{http_code} %{time_total}s %{size_download}B  $1\n" "$1" || echo "ERRO $1"; }
+          for i in 1 2; do
+            echo "== rodada $i"
+            t "https://cdromance.org/"
+            t "https://cdromance.org/?s=action"
+            t "https://cdromance.org/?s=sports"
+            t "https://cdromance.org/page/2/?s=sports"
+            t "https://hh.gbdev.io/api/search?page=1&results=30&typetag=game&sort=firstadded_date&order=desc"
+            t "https://hh.gbdev.io/api/search?page=1&results=60&typetag=game&sort=firstadded_date&order=desc"
+            t "https://hh.gbdev.io/api/search?page=1&results=30&tags=Puzzle&sort=firstadded_date&order=desc"
+            python3 -c "import json;d=json.load(open('out.txt'));print('tags=Puzzle ->',d.get('results'),[e.get('tags') for e in d.get('entries',[])[:3]])" || true
+            t "https://hh.gbdev.io/api/search?page=1&results=30&tags=Sports&sort=firstadded_date&order=desc"
+            python3 -c "import json;d=json.load(open('out.txt'));print('tags=Sports ->',d.get('results'))" || true
+            t "https://archive.org/advancedsearch.php?q=subject%3A(%22sports%22)&fl%5B%5D=identifier&rows=30&output=json"
+          done
+          echo "== etiquetas mais comuns no Homebrew Hub (amostra de 300)"
+          curl -sS -A "$UA" "https://hh.gbdev.io/api/search?page=1&results=300" -o all.json
+          python3 -c "
+          import json,collections
+          d=json.load(open('all.json'));c=collections.Counter(t for e in d['entries'] for t in e.get('tags',[]))
+          print(d.get('results'), c.most_common(60))"
