@@ -1,0 +1,34 @@
+# Temporário: compara variações da consulta ao Internet Archive (removido em seguida).
+name: Probe IA
+on:
+  push:
+    branches: [claude/menu-navigation-performance-qyjolq]
+    paths: ['.github/workflows/probe-ia.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import time, urllib.parse, urllib.request, json
+          def q(label, query, sort=True, rows=30):
+              p=[("q",query),("fl[]","identifier"),("fl[]","title"),("fl[]","creator"),("rows",str(rows)),("page","1"),("output","json")]
+              if sort: p.append(("sort[]","downloads desc"))
+              url="https://archive.org/advancedsearch.php?"+urllib.parse.urlencode(p)
+              t=time.time()
+              try:
+                  d=json.load(urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"Retrovika/0.1"}),timeout=30))
+                  n=d["response"]["numFound"]
+              except Exception as e: n="ERRO "+str(e)
+              print(f"{(time.time()-t)*1000:7.0f} ms  found={n}  {label}")
+          cases=[("psx","PlayStation","horror","survival horror"),("snes","Super Nintendo","sports","football"),("gba","Game Boy Advance","racing","kart"),("n64","Nintendo 64","fighting","fighter"),("genesis","Mega Drive Genesis","rpg","jrpg")]
+          for rnd in (1,2):
+              print("== rodada",rnd)
+              for sid,term,g1,g2 in cases:
+                  subj=f'subject:("{g1}" OR "{g2}")'
+                  q(f"{sid} atual (texto livre + subject + sort)", f"mediatype:(software) AND ({term}) AND {subj}")
+                  q(f"{sid} sem sort", f"mediatype:(software) AND ({term}) AND {subj}", sort=False)
+                  q(f"{sid} console em subject", f'mediatype:(software) AND subject:("{term}") AND {subj}')
+                  q(f"{sid} console em subject sem sort", f'mediatype:(software) AND subject:("{term}") AND {subj}', sort=False)
+                  q(f"{sid} sem gênero (base)", f"mediatype:(software) AND ({term})")
+          PY
