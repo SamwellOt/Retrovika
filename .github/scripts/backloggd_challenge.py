@@ -2,6 +2,7 @@
 (Chromium, o mesmo motor do WebView) abre o site, passa pela verificação, e os pedidos seguem fora
 dele com o cookie e o User-Agent do navegador (como o OkHttp faz no app)."""
 import json
+import sys
 import time
 import urllib.request
 
@@ -26,7 +27,6 @@ def fetch(url, headers):
 ua_plain = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 print("sem verificação:", [fetch(u, {"User-Agent": ua_plain})[0] for u in URLS])
 
-import sys
 headed = "--headed" in sys.argv
 with sync_playwright() as p:
     # Como um WebView: janela de verdade (xvfb no Actions) e sem as marcas de automação.
@@ -65,4 +65,6 @@ for u in URLS:
     code, body = fetch(u, {"User-Agent": ua, "Cookie": cookie, "Accept-Language": "en-US,en;q=0.9"})
     print("com o cookie do navegador:", code, u, body)
     ok = ok and code == 200
-print("RESULTADO:", "headed" if headed else "headless", "passou" if ok else "falhou")
+print("cookie fora do navegador (informativo; o app não depende disso):", "passou" if ok else "falhou")
+if not inside:
+    sys.exit("fetch() dentro da página não trouxe o conteúdo do Backloggd")
