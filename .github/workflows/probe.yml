@@ -11,24 +11,38 @@ jobs:
       - name: Sondas
         run: |
           UA='Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36'
-          get() { echo; echo "=================== $1"; curl -sL -A "$UA" -H 'Accept-Language: en-US,en;q=0.9' --max-time 20 -o /tmp/out -w "HTTP %{http_code} %{size_download}B %{time_total}s %{url_effective}\n" "$1"; }
-          strip() { sed -e 's/<script[^>]*>.*<\/script>//g' /tmp/out | tr '\n' ' ' | sed -e 's/<[^>]*>/\n/g' | sed -e 's/^[ \t]*//' | grep -v '^$' | head -n ${1:-150}; }
-          get "https://backloggd.com/search/games/super%20mario%2064/"; head -c 600 /tmp/out; echo; grep -o 'href="/games/[^"]*"' /tmp/out | sort -u | head -20; grep -o '<div class="[^"]*card[^"]*"[^>]*>' /tmp/out | head -5
-          get "https://backloggd.com/autocomplete.json?query=super%20mario%2064"; head -c 2000 /tmp/out; echo
-          get "https://backloggd.com/games/super-mario-64/"; strip 260
-          echo "--- class names"; grep -o 'class="[^"]*"' /tmp/out | sort | uniq -c | sort -rn | head -120
-          echo "--- rating html"; grep -n -i -E 'rating|avg|score|chart|played|backlog|wishlist|playing|reviews|release|developer|publisher|genre|platform|igdb|og:' /tmp/out | head -150
-          get "https://backloggd.com/games/chrono-trigger/"; grep -n -i -E 'rating|avg|score|og:image|og:description' /tmp/out | head -40
-          get "https://www.wikidata.org/w/api.php?action=wbsearchentities&search=Super%20Mario%2064&language=en&type=item&limit=5&format=json"; head -c 1500 /tmp/out; echo
-          get "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q1036323&props=claims|labels|sitelinks&languages=en|pt&format=json"; head -c 300 /tmp/out; echo; grep -o '"P[0-9]*"' /tmp/out | sort | uniq -c | sort -rn | head -80
-          get "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fp%20%3FpLabel%20WHERE%20%7B%20%3Fp%20wikibase%3ApropertyType%20wikibase%3AExternalId%20.%20%3Fp%20rdfs%3Alabel%20%3FpLabel%20.%20FILTER(LANG(%3FpLabel)%3D%22en%22%20%26%26%20(CONTAINS(LCASE(%3FpLabel)%2C%22backloggd%22)%20%7C%7C%20CONTAINS(LCASE(%3FpLabel)%2C%22igdb%22)%20%7C%7C%20CONTAINS(LCASE(%3FpLabel)%2C%22howlongtobeat%22)%20%7C%7C%20CONTAINS(LCASE(%3FpLabel)%2C%22mobygames%20game%22)%20%7C%7C%20CONTAINS(LCASE(%3FpLabel)%2C%22metacritic%22)))%20%7D"; cat /tmp/out | head -c 3000; echo
-          get "https://en.wikipedia.org/api/rest_v1/page/summary/Super_Mario_64"; head -c 1500 /tmp/out; echo
-          get "https://pt.wikipedia.org/api/rest_v1/page/summary/Super_Mario_64"; head -c 800 /tmp/out; echo
-          get "https://hh3.gbdev.io/api/search?page=1"; head -c 400 /tmp/out; echo
-          SLUG=$(python3 -c "import json;print(json.load(open('/tmp/out'))['entries'][0]['slug'])" 2>/dev/null); echo "slug=$SLUG"
-          get "https://hh3.gbdev.io/api/entry/$SLUG.json"; head -c 3000 /tmp/out; echo
-          get "https://cdromance.org/psx-iso/"; grep -o 'href="https://cdromance.org/psx-iso/[^"/]*/"' /tmp/out | sort -u | head -5
-          G=$(grep -o 'https://cdromance.org/psx-iso/[^"/]*/' /tmp/out | grep -v '/page/' | sed -n 3p); echo "game=$G"
-          get "$G"; strip 220
-          echo "--- tables"; grep -n -i -E 'Region|Language|Size|Genre|Developer|Publisher|Release|Serial|Rating|Downloads|Views' /tmp/out | head -60
-          get "https://archive.org/metadata/chrono-trigger-usa"; head -c 1500 /tmp/out; echo
+          get() { echo; echo "=================== $1"; curl -sL -A "$UA" -H 'Accept-Language: en-US,en;q=0.9' --max-time 20 -o /tmp/out -w "HTTP %{http_code} %{size_download}B %{time_total}s\n" "$1"; }
+          sq() { tr -s ' \t' ' ' < /tmp/out | grep -v '^ *$'; }
+          get "https://backloggd.com/games/super-mario-64/"
+          sq | sed -n '/og:title/,/og:title/p' | head -3
+          echo "----- header"; sq | awk '/t_1080p/{f=1} f{print} /id="game-rating"/{exit}' | grep -v 'shimmer' | head -150
+          echo "----- counters"; sq | awk '/log-counters/{f=1} f{print} /time-played-overview mt-3/{exit}' | head -170
+          echo "----- related"; sq | grep -n -i -E 'related|remake|port|series|mod' | head -20
+          get "https://backloggd.com/reviews/preview/super-mario-64/?sort_by=trending"; sq | head -150
+          get "https://backloggd.com/autocomplete.json?query=kamen%20rider"; head -c 1200 /tmp/out; echo
+          get "https://backloggd.com/autocomplete.json?query=chrono%20trigger"; head -c 600 /tmp/out; echo
+          get "https://backloggd.com/games/chrono-trigger/"; sq | grep -n -E 'game-page-platform|/games/lib/popular/release_year|href="/company' | head -20
+          get "https://cdromance.org/psx-iso/digimon-world-2003-rb-select/"
+          echo "----- article"; sq | awk '/<article /{f=1} f{print} /Show Links/{exit}' | grep -v rmp- | head -140
+          echo "----- screenshots"; sq | grep -n -i -E 'screenshot|gallery|lightbox|wp-content/uploads' | head -30
+          get "https://cdromance.org/gba-roms/"; G=$(grep -o 'https://cdromance.org/gba-roms/[^"/]*/' /tmp/out | grep -v '/page/' | sed -n 5p); echo "game=$G"
+          get "$G"; sq | awk '/<article /{f=1} f{print} /Show Links/{exit}' | grep -v rmp- | sed -e 's/<[^>]*>/ /g' | tr -s ' ' | grep -v '^ *$' | head -80
+          get "https://archive.org/metadata/chrono-trigger-usa/metadata"; head -c 2500 /tmp/out; echo
+          get "https://archive.org/advancedsearch.php?q=mediatype%3A(software)%20AND%20(Super%20Nintendo)&fl[]=identifier&rows=3&output=json"; I=$(python3 -c "import json;print(json.load(open('/tmp/out'))['response']['docs'][0]['identifier'])"); echo $I
+          get "https://archive.org/metadata/$I/metadata"; head -c 2500 /tmp/out; echo
+          get "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q216995&props=claims&format=json"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/out'))['entities']['Q216995']['claims']
+          for p in ['P31','P136','P178','P123','P577','P400','P404','P179','P86','P57','P444','P2816','P11688','P1933','P5794','P12054','P1712','P750','P437','P408','P407','P852','P908','P914','P155','P156','P18','P154','P856']:
+              if p in d:
+                  out=[]
+                  for c in d[p][:4]:
+                      v=c['mainsnak'].get('datavalue',{}).get('value')
+                      q={k:[x.get('datavalue',{}).get('value') for x in vv] for k,vv in c.get('qualifiers',{}).items()}
+                      out.append((v,q) if q else v)
+                  print(p, json.dumps(out)[:400])
+          PY
+          get "https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch=Chrono%20Trigger%20jogo%20eletr%C3%B4nico&srlimit=3&format=json"; head -c 800 /tmp/out; echo
+          get "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=Chrono%20Trigger%20video%20game&srlimit=3&format=json"; head -c 800 /tmp/out; echo
+          get "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q1080026|Q150248|Q170323&props=labels&languages=pt|en&format=json"; head -c 800 /tmp/out; echo
