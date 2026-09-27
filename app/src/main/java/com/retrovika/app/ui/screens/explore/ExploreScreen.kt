@@ -113,6 +113,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import java.text.NumberFormat
 
 /** Margem lateral da grade; as faixas de chips "sangram" por ela até a borda da tela. */
 private val Gutter = 16.dp
@@ -157,7 +158,10 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
         item(span = { GridItemSpan(maxLineSpan) }, contentType = "filters") {
             Column {
                 val subtitle = if (state.initialLoading) stringResource(R.string.explore_searching)
-                else stringResource(R.string.explore_subtitle, state.totalResults)
+                else stringResource(
+                    if (state.totalApproximate) R.string.explore_subtitle_approx else R.string.explore_subtitle,
+                    NumberFormat.getIntegerInstance().format(state.totalResults),
+                )
                 ScreenHeader(stringResource(R.string.tab_explore), subtitle = subtitle, inset = 4.dp) {
                     // Os downloads têm aba própria; aqui fica o atalho para o navegador interno.
                     HeaderIconButton(Icons.Rounded.Language, stringResource(R.string.explore_open_site), onClick = onOpenBrowser)

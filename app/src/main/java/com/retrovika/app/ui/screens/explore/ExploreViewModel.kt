@@ -47,6 +47,7 @@ data class ExploreState(
     val page: Int = 0,
     val totalPages: Int = 1,
     val totalResults: Int = 0,
+    val totalApproximate: Boolean = false,
     val loading: Boolean = false,
     @StringRes val error: Int? = null,
 ) {
@@ -173,7 +174,10 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
                 _state.update {
                     it.copy(
                         entries = (before + result.entries).distinctBy { e -> e.sourceId + e.id },
-                        page = result.page, totalPages = result.totalPages, totalResults = result.totalResults,
+                        page = result.page, totalPages = result.totalPages,
+                        // O total vem da 1ª página; as seguintes só o corrigem para cima (estimativas por página).
+                        totalResults = if (result.page == 1) result.totalResults else maxOf(it.totalResults, result.totalResults),
+                        totalApproximate = if (result.page == 1) result.approximate else it.totalApproximate && result.approximate,
                         loading = false,
                     )
                 }

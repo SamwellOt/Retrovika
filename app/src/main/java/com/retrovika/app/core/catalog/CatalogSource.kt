@@ -17,7 +17,17 @@ data class CatalogEntry(
     val kind: String,
 )
 
-data class CatalogPage(val entries: List<CatalogEntry>, val page: Int, val totalPages: Int, val totalResults: Int)
+/**
+ * Uma página de resultados. [totalResults] é o total da busca inteira (não só desta página);
+ * [approximate] marca quando a fonte não informa o total e ele foi estimado pelas páginas.
+ */
+data class CatalogPage(
+    val entries: List<CatalogEntry>,
+    val page: Int,
+    val totalPages: Int,
+    val totalResults: Int,
+    val approximate: Boolean = false,
+)
 
 /**
  * Um arquivo baixável concreto de uma [CatalogEntry]. Uma mesma entrada pode oferecer

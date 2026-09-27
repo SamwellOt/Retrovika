@@ -96,8 +96,17 @@ class CdRomanceSource : CatalogSource {
         val listingSystem = if (q.isBlank()) systemId else null
         val entries = parseCards(doc, listingSystem)
             .let { list -> if (systemId != null) list.filter { it.systemId == systemId } else list }
-        val hasCards = doc.select("div.game-container").isNotEmpty()
-        return CatalogPage(entries, page, totalPages(doc, page, hasCards), entries.size)
+        val cards = doc.select("div.game-container").size
+        val pages = totalPages(doc, page, cards > 0)
+        // O site não informa o total de jogos, só as páginas: o total é estimado por elas. Antes ia o
+        // tamanho desta página (30), e "Todas as fontes" mostrava menos jogos que um único console.
+        val total = when {
+            page >= pages -> (page - 1) * PAGE_SIZE + entries.size
+            // Busca filtrada por console: estima pela proporção de acertos desta página.
+            cards > 0 && entries.size < cards -> pages * entries.size
+            else -> pages * PAGE_SIZE
+        }
+        return CatalogPage(entries, page, pages, total, approximate = page < pages)
     }
 
     internal fun parseCards(html: String, listingSystem: String?): List<CatalogEntry> =
@@ -229,5 +238,10 @@ class CdRomanceSource : CatalogSource {
             else -> 1024L
         }
         return (value * unit).toLong()
+    }
+
+    private companion object {
+        /** Jogos por página nas listagens e na busca do site (conferido no HTML). */
+        const val PAGE_SIZE = 30
     }
 }

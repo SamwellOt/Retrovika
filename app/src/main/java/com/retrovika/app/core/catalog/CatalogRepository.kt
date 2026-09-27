@@ -94,6 +94,7 @@ class CatalogRepository {
         page = page,
         totalPages = pages.maxOfOrNull { it.totalPages } ?: 1,
         totalResults = pages.sumOf { it.totalResults },
+        approximate = pages.any { it.approximate },
     )
 
     /** Intercala listas em rodízio: 1ª de cada fonte, depois 2ª de cada, e assim por diante. */

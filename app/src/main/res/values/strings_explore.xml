@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Explorar -->
-    <string name="explore_subtitle">Free catalog · %d titles</string>
+    <string name="explore_subtitle">Free catalog · %s titles</string>
+    <string name="explore_subtitle_approx">Free catalog · about %s titles</string>
     <string name="explore_open_site">Open website</string>
     <string name="explore_downloads">Downloads</string>
     <string name="explore_search_hint">Search games to download</string>
