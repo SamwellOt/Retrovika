@@ -29,8 +29,8 @@ android {
         applicationId = "com.retrovika.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.2.7"
+        versionCode = 10
+        versionName = "0.2.8"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
