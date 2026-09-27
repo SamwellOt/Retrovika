@@ -140,4 +140,6 @@ public class LibretroDroid {
 
     public static native Controller[][] getControllers();
     public static native void setControllerType(int port, int type);
+
+    public static native void setRelaxedGlesVersion(boolean relaxed);
 }

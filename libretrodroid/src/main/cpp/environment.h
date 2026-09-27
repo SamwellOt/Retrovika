@@ -90,6 +90,7 @@ public:
     bool isUseHwAcceleration() const;
     bool isUseDepth() const;
     bool isHwContextRejected() const;
+    void setRelaxedGlesVersion(bool relaxed);
     const retro_frame_time_callback& getFrameTimeCallback() const { return frameTimeCallback; }
     bool isUseStencil() const;
     bool isBottomLeftOrigin() const;
@@ -136,6 +137,7 @@ private:
     bool useHWAcceleration = false;
     bool useDepth = false;
     bool hwContextRejected = false;
+    bool relaxedGlesVersion = false;
     retro_frame_time_callback frameTimeCallback {};
     bool useStencil = false;
     bool bottomLeftOrigin = false;

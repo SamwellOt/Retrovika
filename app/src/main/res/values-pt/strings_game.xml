@@ -13,6 +13,9 @@
     <string name="game_starting">Iniciando %s…</string>
     <string name="game_file_inaccessible">Arquivo inacessível</string>
     <string name="game_file_inaccessible_message">Não foi possível abrir %s. Revincule a pasta em Ajustes.</string>
+    <string name="game_needs_file_access">Permissão necessária</string>
+    <string name="game_needs_file_access_message">O %1$s abre o arquivo do jogo diretamente e não consegue lê-lo de uma pasta vinculada. Permita o acesso a todos os arquivos para o app entregar o arquivo real.</string>
+    <string name="game_allow_file_access">Permitir acesso</string>
     <string name="game_file_not_found">Arquivo não encontrado</string>
     <string name="game_error_load_library">O núcleo não pôde ser carregado neste aparelho.</string>
     <string name="game_error_load_game">O núcleo não conseguiu abrir este arquivo. Ele pode estar corrompido ou ser de outra região/formato.</string>

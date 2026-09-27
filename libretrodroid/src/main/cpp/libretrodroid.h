@@ -153,6 +153,7 @@ protected:
     static uintptr_t callback_get_current_framebuffer();
 
     [[noreturn]] void throwLoadGameError();
+    void throwIfHwContextMissing();
     static void callback_retro_set_input_poll();
 
 private:

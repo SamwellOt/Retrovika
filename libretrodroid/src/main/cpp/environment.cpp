@@ -57,6 +57,7 @@ void Environment::deinitialize() {
     pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
     useHWAcceleration = false;
     hwContextRejected = false;
+    relaxedGlesVersion = false;
     frameTimeCallback = {};
     useDepth = false;
     useStencil = false;
@@ -198,7 +199,8 @@ bool Environment::environment_handle_set_hw_render(struct retro_hw_render_callba
         GLint major = 0, minor = 0;
         glGetIntegerv(GL_MAJOR_VERSION, &major);
         glGetIntegerv(GL_MINOR_VERSION, &minor);
-        if (major > 0 && (unsigned) (major * 100 + minor) < requiredMajor * 100 + requiredMinor) {
+        // Núcleos marcados (o Play! pede 3.2 mas roda em 3.1) passam mesmo com o contexto abaixo do pedido.
+        if (!relaxedGlesVersion && major > 0 && (unsigned) (major * 100 + minor) < requiredMajor * 100 + requiredMinor) {
             LOGE("Core requires OpenGL ES %u.%u, context is %d.%d", requiredMajor, requiredMinor, major, minor);
             hwContextRejected = true;
             return false;
@@ -469,6 +471,10 @@ bool Environment::isUseHwAcceleration() const {
 
 bool Environment::isHwContextRejected() const {
     return hwContextRejected;
+}
+
+void Environment::setRelaxedGlesVersion(bool relaxed) {
+    relaxedGlesVersion = relaxed;
 }
 
 bool Environment::isUseDepth() const {

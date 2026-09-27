@@ -164,6 +164,14 @@ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_ge
     return result;
 }
 
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRelaxedGlesVersion(
+    JNIEnv* env,
+    jclass obj,
+    jboolean relaxed
+) {
+    Environment::getInstance().setRelaxedGlesVersion(relaxed);
+}
+
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setControllerType(
     JNIEnv* env,
     jclass obj,

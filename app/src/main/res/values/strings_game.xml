@@ -13,6 +13,9 @@
     <string name="game_starting">Starting %s…</string>
     <string name="game_file_inaccessible">File inaccessible</string>
     <string name="game_file_inaccessible_message">Couldn\'t open %s. Link the folder again in Settings.</string>
+    <string name="game_needs_file_access">Permission needed</string>
+    <string name="game_needs_file_access_message">%1$s opens the game file directly and can\'t read it from a linked folder. Allow access to all files so the app can hand it the real file.</string>
+    <string name="game_allow_file_access">Allow access</string>
     <string name="game_file_not_found">File not found</string>
     <string name="game_error_load_library">The core couldn\'t be loaded on this device.</string>
     <string name="game_error_load_game">The core couldn\'t open this file. It may be corrupted or from another region/format.</string>

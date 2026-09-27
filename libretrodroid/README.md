@@ -52,4 +52,9 @@ mesmo submódulo do LibretroDroid 0.13.2.
   Dolphin, Opera, Beetle PC-FX, PUAE, VICE, Caprice32, fMSX): todos os botões eram ignorados.
 - **`GET_INPUT_BITMASKS` e `RETRO_DEVICE_ID_JOYPAD_MASK`** (`environment.cpp`, `input.cpp`). O LRPS2 só lê
   os botões pela máscara e ficava sem nenhum; o caminho sem máscara do Beetle PC-FX lê os botões errados.
+- **Jogo carregado sem o contexto pedido falha com `ERROR_GL_NOT_COMPATIBLE`** (`libretrodroid.cpp`,
+  `throwIfHwContextMissing`). O Play! ignora a recusa do `SET_HW_RENDER`, diz que carregou e caía segundos
+  depois ao usar o vídeo que nunca foi criado.
+- **`GLRetroViewData.relaxedGlesVersion`**: aceita o contexto abaixo da versão pedida, para núcleos que
+  pedem mais do que usam (o Play! pede GLES 3.2 e roda em 3.1).
 - `#include <functional>` em `rumble.h` e `utils/javautils.h`, exigido pelos NDKs atuais.

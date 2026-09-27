@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.hardware.input.InputManager
 import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -39,6 +40,7 @@ import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
+import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
@@ -64,8 +66,11 @@ import java.io.File
 sealed interface EmulationUi {
     data class Preparing(val message: String, val progress: Float?) : EmulationUi
     data class Running(val view: GLRetroView) : EmulationUi
-    data class Failed(val title: String, val message: String) : EmulationUi
+    data class Failed(val title: String, val message: String, val action: FailAction? = null) : EmulationUi
 }
+
+/** Botão extra da tela de falha, para o que o usuário pode resolver na hora (ex.: conceder uma permissão). */
+data class FailAction(val label: String, val run: () -> Unit)
 
 class GameActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: android.content.Context) = super.attachBaseContext(com.retrovika.app.core.settings.Languages.wrap(newBase))
@@ -105,6 +110,8 @@ class GameActivity : ComponentActivity() {
     private lateinit var game: Game
     private lateinit var system: GameSystem
     private lateinit var core: CoreInfo
+    /** A tela de falha pediu o acesso a todos os arquivos: ao voltar com ele concedido, o jogo recomeça. */
+    private var awaitingFileAccess = false
     private lateinit var states: SaveStates
     private var settings = AppSettings()
     private var retroView: GLRetroView? = null
@@ -254,7 +261,18 @@ class GameActivity : ComponentActivity() {
 
         val data = GLRetroViewData(this).apply {
             coreFilePath = corePath
-            if (game.isContentUri) {
+            val realFile = if (game.isContentUri) withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } else null
+            if (realFile != null) {
+                // Com acesso aos arquivos, o núcleo recebe o caminho real: funciona até nos que não usam a VFS.
+                gameFilePath = realFile.path
+            } else if (game.isContentUri && core.needsRealPath) {
+                awaitingFileAccess = true
+                return fail(
+                    getString(R.string.game_needs_file_access),
+                    getString(R.string.game_needs_file_access_message, core.displayName),
+                    FailAction(getString(R.string.game_allow_file_access)) { startActivity(StorageAccess.settingsIntent(this@GameActivity)) },
+                )
+            } else if (game.isContentUri) {
                 // IPC com o provedor SAF: fora da thread principal.
                 gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
                     if (it is kotlinx.coroutines.CancellationException) throw it
@@ -271,6 +289,7 @@ class GameActivity : ComponentActivity() {
             shader = settings.shader.toShaderConfig()
             preferLowLatencyAudio = settings.lowLatencyAudio
             rumbleEventsEnabled = true
+            relaxedGlesVersion = core.relaxedGlesVersion
             // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
             core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
         }
@@ -368,14 +387,19 @@ class GameActivity : ComponentActivity() {
         return true
     }
 
-    private fun fail(title: String, message: String) {
-        ui = EmulationUi.Failed(title, message)
+    private fun fail(title: String, message: String, action: FailAction? = null) {
+        ui = EmulationUi.Failed(title, message, action)
     }
 
     // region Ciclo de vida
 
     override fun onResume() {
         super.onResume()
+        if (awaitingFileAccess && StorageAccess.granted(this)) {
+            awaitingFileAccess = false
+            recreate()
+            return
+        }
         activityResumed = true
         hideSystemBars()
         updateEmulationState()

@@ -324,6 +324,15 @@ void LibretroDroid::throwLoadGameError() {
     throw std::runtime_error("Cannot load game");
 }
 
+void LibretroDroid::throwIfHwContextMissing() {
+    // Alguns núcleos (o Play!) ignoram a recusa do SET_HW_RENDER e dizem que carregaram: sem contexto,
+    // caíam segundos depois ao usar o vídeo que nunca foi criado.
+    if (Environment::getInstance().isHwContextRejected() && !Environment::getInstance().isUseHwAcceleration()) {
+        LOGE("Game loaded without the hardware context it asked for. Leaving.");
+        throw LibretroDroidError("The GPU does not support the context this core requires", ERROR_GL_NOT_COMPATIBLE);
+    }
+}
+
 void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     LOGD("Performing libretrodroid loadGameFromPath");
     struct retro_system_info system_info {};
@@ -346,6 +355,7 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     if (!result) {
         throwLoadGameError();
     }
+    throwIfHwContextMissing();
 
     afterGameLoad();
 }
@@ -372,6 +382,7 @@ void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
     if (!result) {
         throwLoadGameError();
     }
+    throwIfHwContextMissing();
 
     afterGameLoad();
 }
@@ -412,6 +423,7 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) 
     if (!result) {
         throwLoadGameError();
     }
+    throwIfHwContextMissing();
 
     afterGameLoad();
 }

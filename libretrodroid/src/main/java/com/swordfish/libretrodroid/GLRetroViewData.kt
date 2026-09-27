@@ -36,4 +36,6 @@ class GLRetroViewData(context: Context) {
     var immersiveMode: ImmersiveMode? = null
     /** Tipo de controle (RETRO_DEVICE_*) de cada porta, informado ao núcleo logo após carregar o jogo. */
     var controllerTypes: IntArray = intArrayOf()
+    /** Aceita o contexto GLES mesmo abaixo da versão que o núcleo pede no SET_HW_RENDER. */
+    var relaxedGlesVersion: Boolean = false
 }

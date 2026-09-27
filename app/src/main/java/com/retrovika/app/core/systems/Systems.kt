@@ -26,7 +26,7 @@ object Systems {
             cores = listOf(
                 CoreInfo("fceumm", "FCEUmm", R.string.core_fceumm),
                 CoreInfo("nestopia", "Nestopia UE", R.string.core_nestopia),
-                CoreInfo("mesen", "Mesen", R.string.core_mesen),
+                CoreInfo("mesen", "Mesen", R.string.core_mesen, needsRealPath = true),
             ),
             layout = PadLayouts.NES, accent = 0xFFE53935,
             libretroDbName = "Nintendo - Nintendo Entertainment System",
@@ -40,7 +40,7 @@ object Systems {
             cores = listOf(
                 CoreInfo("snes9x", "Snes9x", R.string.core_snes9x),
                 CoreInfo("snes9x2010", "Snes9x 2010", R.string.core_snes9x2010),
-                CoreInfo("bsnes", "bsnes", R.string.core_bsnes),
+                CoreInfo("bsnes", "bsnes", R.string.core_bsnes, needsRealPath = true),
             ),
             layout = PadLayouts.SNES, accent = 0xFF7E57C2,
             libretroDbName = "Nintendo - Super Nintendo Entertainment System",
@@ -65,7 +65,7 @@ object Systems {
                         Preset.QUALITY to mapOf("mupen64plus-43screensize" to "1280x960", "mupen64plus-MultiSampling" to "4"),
                     ),
                 ),
-                CoreInfo("parallel_n64", "ParaLLEl N64", R.string.core_parallel_n64),
+                CoreInfo("parallel_n64", "ParaLLEl N64", R.string.core_parallel_n64, needsRealPath = true),
             ),
             layout = PadLayouts.N64, accent = 0xFF43A047,
             libretroDbName = "Nintendo - Nintendo 64",
@@ -135,7 +135,7 @@ object Systems {
             extensions = setOf("3ds", "3dsx", "cci", "cxi", "app"),
             cores = listOf(
                 CoreInfo("citra", "Citra", R.string.core_citra, experimental = true),
-                CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true),
+                CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true, needsRealPath = true),
             ),
             layout = PadLayouts.NDS, accent = 0xFFD32F2F, orientation = Orientation.PORTRAIT,
             libretroDbName = "Nintendo - Nintendo 3DS", experimental = true,
@@ -198,7 +198,7 @@ object Systems {
             manufacturer = "Sony", year = 2000,
             extensions = setOf("iso", "chd", "cso", "bin", "cue"),
             cores = listOf(
-                CoreInfo("play", "Play!", R.string.core_play, experimental = true),
+                CoreInfo("play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true),
                 CoreInfo("pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS)),
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,
@@ -556,7 +556,7 @@ object Systems {
             id = "megaduck", name = "Mega Duck / Cougar Boy", shortName = "DUCK",
             manufacturer = "Welback", year = 1993,
             extensions = setOf("bin"),
-            cores = listOf(CoreInfo("sameduck", "SameDuck", R.string.core_sameduck)),
+            cores = listOf(CoreInfo("sameduck", "SameDuck", R.string.core_sameduck, needsRealPath = true)),
             layout = PadLayouts.GAMEBOY, accent = 0xFFFFCA28, orientation = Orientation.PORTRAIT,
         ),
         GameSystem(

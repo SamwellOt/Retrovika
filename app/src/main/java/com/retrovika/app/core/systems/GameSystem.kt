@@ -26,6 +26,14 @@ data class CoreInfo(
      * os botões). Não vale para todos: no Atari800 o JOYPAD puro troca o controle do 5200 por um genérico.
      */
     val portDevice: Int? = null,
+    /**
+     * O núcleo abre o jogo com o próprio I/O, sem a VFS do libretro: o caminho virtual dos jogos de pasta
+     * vinculada não existe para ele. Sem o acesso a todos os arquivos, o app pede a permissão em vez de
+     * deixar o núcleo seguir sem o jogo (o Play! fechava segundos depois).
+     */
+    val needsRealPath: Boolean = false,
+    /** Aceita o contexto GLES abaixo da versão que o núcleo pede (o Play! pede 3.2 e roda em 3.1). */
+    val relaxedGlesVersion: Boolean = false,
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */

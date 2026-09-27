@@ -107,6 +107,8 @@ class GLRetroView(
             getDeviceLanguage()
         )
         LibretroDroid.setRumbleEnabled(data.rumbleEventsEnabled)
+        // Depois do create, que reinicia o Environment; o jogo só carrega no onSurfaceCreated.
+        LibretroDroid.setRelaxedGlesVersion(data.relaxedGlesVersion)
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
