@@ -64,8 +64,9 @@ object Http {
         target: File,
         headers: Map<String, String> = emptyMap(),
         onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
-        onProgress: (Float) -> Unit = {},
         onSaved: (File) -> Unit = {},
+        // Por último: quem chama passa o progresso como lambda final.
+        onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
         // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
         // no mesmo .part ao mesmo tempo.
