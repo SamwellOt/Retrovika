@@ -82,4 +82,5 @@
     <string name="browser_site_vimm">Large collection, files in .7z</string>
     <string name="browser_site_cdromance">Disc games and translations</string>
     <string name="browser_site_archive">Collections and homebrew</string>
+    <string name="explore_info_toggle">About this source</string>
 </resources>

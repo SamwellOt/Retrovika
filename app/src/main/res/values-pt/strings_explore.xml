@@ -82,4 +82,5 @@
     <string name="browser_site_vimm">Acervo grande, arquivos em .7z</string>
     <string name="browser_site_cdromance">Jogos em disco e traduções</string>
     <string name="browser_site_archive">Coleções e homebrew</string>
+    <string name="explore_info_toggle">Sobre esta fonte</string>
 </resources>

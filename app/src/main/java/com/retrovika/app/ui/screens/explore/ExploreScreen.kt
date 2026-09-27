@@ -102,6 +102,17 @@ import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.components.regionLabel
 import com.retrovika.app.ui.components.shimmer
 import com.retrovika.app.ui.theme.Palette
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 /** Margem lateral da grade; as faixas de chips "sangram" por ela até a borda da tela. */
 private val Gutter = 16.dp
@@ -184,18 +195,29 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Rounded.Info, null, tint = Palette.TextMuted, modifier = Modifier.padding(top = 2.dp).size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Column(Modifier.weight(1f)) {
+                Spacer(Modifier.height(10.dp))
+                // A explicação da fonte fica recolhida: só aparece ao tocar no "i".
+                var showInfo by rememberSaveable { mutableStateOf(false) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val infoLabel = stringResource(R.string.explore_info_toggle)
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(onClickLabel = infoLabel) { showInfo = !showInfo }
+                            .semantics { contentDescription = infoLabel },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Info, null, tint = if (showInfo) Palette.Cyan else Palette.TextMuted, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (filtersActive) ClearFiltersButton(vm::clearFilters)
+                }
+                AnimatedVisibility(visible = showInfo, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)) {
                         Text(stringResource(current.description), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                         // O gênero sai das etiquetas e descrições de cada site: é bom avisar que é aproximado.
                         if (state.genre != null) Text(stringResource(R.string.explore_genre_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
-                    }
-                    if (filtersActive) {
-                        Spacer(Modifier.width(8.dp))
-                        ClearFiltersButton(vm::clearFilters)
                     }
                 }
             }
