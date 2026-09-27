@@ -119,15 +119,22 @@ class HomebrewHubSource : CatalogSource {
             description = d.description?.let { HtmlText.of(it) }?.ifBlank { null },
             coverUrl = entry.coverUrl,
             screenshots = shots.ifEmpty { entry.screenshots },
-            releaseDate = d.date?.take(10)?.ifBlank { null },
+            releaseDate = d.date?.let(::isoDate),
             developers = developerName(d.developer)?.split(", ").orEmpty(),
             genres = d.tags.filterNot { it.startsWith("event:") },
             tags = d.tags.filter { it.startsWith("event:") }.map { it.removePrefix("event:") },
             website = d.website?.takeIf { it.isNotBlank() },
-            addedDate = d.firstadded_date?.take(10),
+            addedDate = d.firstadded_date?.let(::isoDate),
             license = d.license?.takeIf { it.isNotBlank() },
             format = entry.fileName.substringAfterLast('.', "").uppercase().ifBlank { null },
         )
+    }
+
+    /** "2026-7-19" (sem zeros, como algumas entradas vêm) → "2026-07-19"; a hora é descartada. */
+    private fun isoDate(raw: String): String? {
+        val m = Regex("""^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?""").find(raw.trim()) ?: return raw.take(10).ifBlank { null }
+        val (y, mo, d) = m.destructured
+        return if (d.isEmpty()) "$y-${mo.padStart(2, '0')}" else "$y-${mo.padStart(2, '0')}-${d.padStart(2, '0')}"
     }
 
     private fun developerName(element: JsonElement?): String? = when (element) {

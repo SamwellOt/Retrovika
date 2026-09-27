@@ -68,7 +68,7 @@ class WikiClient {
         }
         val summary = article?.let { (l, t) -> async { runCatching { summary(l, t) }.getOrNull() } }
 
-        val itemProps = listOf(DEVELOPER, PUBLISHER, GENRE, MODE, SERIES, DIRECTOR, COMPOSER, PLATFORM, ESRB, PEGI, CERO)
+        val itemProps = listOf(DEVELOPER, PUBLISHER, GENRE, MODE, SERIES, DIRECTOR, COMPOSER, PLATFORM, ESRB, PEGI, CERO, USK)
         val scores = claims[REVIEW_SCORE]?.jsonArray.orEmpty().mapNotNull { claim ->
             val score = value(claim)?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             val reviewer = qualifierIds(claim, REVIEWER).firstOrNull() ?: return@mapNotNull null
@@ -89,7 +89,7 @@ class WikiClient {
                 ?.let { add(ExternalLink("Metacritic", it)) }
             igdb?.let { add(ExternalLink("IGDB", "https://www.igdb.com/games/$it")) }
         }
-        val ages = listOf(ESRB to "ESRB", PEGI to "PEGI", CERO to "CERO").flatMap { (prop, board) ->
+        val ages = listOf(ESRB to "ESRB", PEGI to "PEGI", CERO to "CERO", USK to "USK").flatMap { (prop, board) ->
             names(prop).map { label -> if (label.contains(board, true)) label else "$board $label" }
         }
 
@@ -193,7 +193,8 @@ class WikiClient {
         const val REVIEWER = "P447"
         const val ESRB = "P852"
         const val PEGI = "P908"
-        const val CERO = "P914"
+        const val CERO = "P853"
+        const val USK = "P914"
         const val HLTB = "P2816"
         const val MOBYGAMES = "P11688"
         const val MOBYGAMES_OLD = "P1933"

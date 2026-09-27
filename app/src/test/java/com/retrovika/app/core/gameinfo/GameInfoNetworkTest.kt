@@ -25,6 +25,27 @@ class GameInfoNetworkTest {
         return value
     }
 
+    /** Diagnóstico: status do Backloggd para cada combinação de cabeçalhos pelo OkHttp do app. */
+    @Test
+    fun `backloggd responde ao cliente do app`() {
+        val urls = listOf(
+            "https://backloggd.com/autocomplete.json?query=chrono%20trigger",
+            "https://backloggd.com/games/chrono-trigger/",
+            "https://backloggd.com/reviews/preview/chrono-trigger/?sort_by=trending",
+        )
+        val variants = listOf(
+            "padrão do app" to emptyMap(),
+            "navegador" to mapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36", "Accept-Language" to "en-US,en;q=0.9"),
+            "navegador + Accept" to mapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36", "Accept" to "*/*"),
+            "curl" to mapOf("User-Agent" to "curl/8.5.0", "Accept" to "*/*"),
+        )
+        for (url in urls) for ((label, headers) in variants) {
+            val request = okhttp3.Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
+            val result = runCatching { com.retrovika.app.core.net.Http.client.newCall(request).execute().use { "${it.code} ${it.header("server")} ${it.header("cf-mitigated")} ${it.body?.string()?.take(80)?.replace('\n', ' ')}" } }
+            println("  $label · ${url.substringAfter(".com")} → ${result.getOrElse { it.toString() }}")
+        }
+    }
+
     @Test
     fun `backloggd acha o jogo certo entre titulos repetidos`() = runBlocking {
         val client = BackloggdClient()
