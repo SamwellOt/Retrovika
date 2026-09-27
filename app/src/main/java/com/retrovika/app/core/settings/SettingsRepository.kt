@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
+import com.retrovika.app.emulation.input.PadProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -86,6 +87,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
+        fun padProfile(coreId: String) = stringPreferencesKey("pad_profile_$coreId")
     }
 
     private val optionsSerializer = MapSerializer(String.serializer(), String.serializer())
@@ -177,7 +179,29 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     suspend fun resetCoreOptions(coreId: String) = context.dataStore.edit { it.remove(Keys.coreOptions(coreId)) }
 
+    /** Controle virtual do núcleo [coreId] (visível, tamanho, posições…); o padrão quando nunca foi ajustado. */
+    fun padProfile(coreId: String): Flow<PadProfile> = data.map { p -> decodeProfile(p[Keys.padProfile(coreId)]) }
+
+    suspend fun setPadProfile(coreId: String, profile: PadProfile) = context.dataStore.edit { p ->
+        if (profile.isDefault) p.remove(Keys.padProfile(coreId))
+        else p[Keys.padProfile(coreId)] = Http.json.encodeToString(PadProfile.serializer(), profile)
+    }
+
+    /** Núcleos com o controle ajustado, para a lista de Ajustes. */
+    val customizedPads: Flow<Set<String>> = data.map { p ->
+        p.asMap().keys.map { it.name }.filter { it.startsWith(PAD_PREFIX) }.map { it.removePrefix(PAD_PREFIX) }.toSet()
+    }
+
+    suspend fun resetAllPadProfiles() = context.dataStore.edit { p ->
+        p.asMap().keys.filter { it.name.startsWith(PAD_PREFIX) }.toList().forEach { p.remove(it) }
+    }
+
+    // Um perfil ilegível (versão antiga, campo renomeado) volta ao padrão em vez de impedir o jogo de abrir.
+    private fun decodeProfile(raw: String?): PadProfile =
+        raw?.let { runCatching { Http.json.decodeFromString(PadProfile.serializer(), it) }.getOrNull() } ?: PadProfile()
+
     companion object {
         const val MAX_PARALLEL_DOWNLOADS = 4
+        private const val PAD_PREFIX = "pad_profile_"
     }
 }

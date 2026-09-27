@@ -16,6 +16,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -68,6 +71,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -82,6 +86,8 @@ import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.emulation.input.PadListener
 import com.retrovika.app.emulation.input.VirtualGamepad
+import com.retrovika.app.emulation.input.PadProfile
+import android.graphics.Bitmap
 import com.retrovika.app.ui.components.BrandMark
 import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
@@ -110,6 +116,9 @@ fun GameScreen(
     menuOpen: Boolean,
     fastForward: Boolean,
     showPad: Boolean,
+    padProfile: PadProfile,
+    padEditing: Boolean,
+    editorBackdrop: Bitmap?,
     toast: String?,
     padListener: PadListener,
     menu: MenuActions,
@@ -122,38 +131,57 @@ fun GameScreen(
             is EmulationUi.Failed -> FailedView(state, onExit = menu::exit)
             is EmulationUi.Running -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 val portrait = maxHeight > maxWidth
+                val padShown = showPad && system != null && padProfile.visible
+                // Sem controle (ou com ele sobreposto) o jogo fica com a tela inteira: jogos só de toque
+                // no DS/3DS usam a tela toda.
+                val fullVideo = padProfile.fullScreenVideo(portrait, padShown)
                 // A estrutura é sempre a mesma (vídeo + controle) para o GLRetroView nunca ser recriado ao girar a tela.
                 AndroidView(
                     factory = { state.view },
-                    modifier = if (portrait) Modifier.fillMaxWidth().fillMaxHeight(0.55f).align(Alignment.TopCenter) else Modifier.fillMaxSize(),
+                    modifier = if (fullVideo) Modifier.fillMaxSize() else Modifier.fillMaxWidth().fillMaxHeight(VIDEO_SPLIT).align(Alignment.TopCenter),
                 )
-                if (showPad && system != null) {
+                if (padShown && system != null) {
                     VirtualGamepad(
                         layout = system.layout,
                         listener = padListener,
-                        opacity = if (portrait) 1f else settings.padOpacity,
-                        scale = settings.padScale,
+                        opacity = padProfile.opacity ?: if (fullVideo) settings.padOpacity else 1f,
+                        scale = padProfile.scale ?: settings.padScale,
                         haptics = settings.haptics,
                         portrait = portrait,
-                        modifier = if (portrait) {
-                            Modifier.fillMaxWidth().fillMaxHeight(0.45f).align(Alignment.BottomCenter).padding(top = 48.dp, bottom = 16.dp)
-                        } else Modifier.fillMaxSize(),
+                        overlay = fullVideo,
+                        elements = padProfile.elements(portrait),
+                        modifier = padModifier(fullVideo),
                     )
                 }
-                Hud(
-                    fastForward = fastForward,
-                    onMenu = menu::open,
-                    onFastForward = menu::toggleFastForward,
-                    modifier = if (portrait) {
-                        Modifier.align(Alignment.TopCenter).padding(top = maxHeight * 0.55f + 4.dp)
-                    } else Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
-                    vertical = false,
-                )
+                if (padProfile.showHud) {
+                    Hud(
+                        fastForward = fastForward,
+                        onMenu = menu::open,
+                        onFastForward = menu::toggleFastForward,
+                        modifier = if (!fullVideo) {
+                            Modifier.align(Alignment.TopCenter).padding(top = maxHeight * VIDEO_SPLIT + 4.dp)
+                        } else Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                        vertical = false,
+                        // Sem controle na tela os botões ficam discretos para não tapar o jogo.
+                        dimmed = !padShown,
+                    )
+                }
             }
         }
 
-        AnimatedVisibility(visible = menuOpen, enter = fadeIn(), exit = fadeOut()) {
-            PauseMenu(game, system, menu, fastForward, settings.shader)
+        AnimatedVisibility(visible = menuOpen && !padEditing, enter = fadeIn(), exit = fadeOut()) {
+            PauseMenu(game, system, menu, fastForward, settings, padProfile)
+        }
+
+        if (menuOpen && padEditing && system != null) {
+            PadLayoutEditor(
+                layout = system.layout,
+                profile = padProfile,
+                settings = settings,
+                backdrop = editorBackdrop,
+                onSave = { menu.setPadProfile(it); menu.stopPadEditor() },
+                onCancel = menu::stopPadEditor,
+            )
         }
 
         AnimatedVisibility(
@@ -178,14 +206,23 @@ fun GameScreen(
     }
 }
 
+/** Fração da altura do jogo em retrato dividido; o controle fica com o resto. */
+internal const val VIDEO_SPLIT = 0.55f
+
+/** Área do controle: metade de baixo em retrato dividido, a tela toda quando sobreposto. */
+internal fun BoxScope.padModifier(overlay: Boolean): Modifier =
+    if (overlay) Modifier.fillMaxSize()
+    else Modifier.fillMaxWidth().fillMaxHeight(1f - VIDEO_SPLIT).align(Alignment.BottomCenter).padding(top = 48.dp, bottom = 16.dp)
+
 @Composable
-private fun Hud(fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, modifier: Modifier, vertical: Boolean) {
+private fun Hud(fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, modifier: Modifier, vertical: Boolean, dimmed: Boolean = false) {
     val content: @Composable () -> Unit = {
         HudButton(Icons.Rounded.Menu, stringResource(R.string.game_menu), false, onMenu)
         HudButton(Icons.Rounded.FastForward, stringResource(R.string.game_fast_forward), fastForward, onFastForward)
     }
-    if (vertical) Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
-    else Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    val m = if (dimmed) modifier.alpha(0.45f) else modifier
+    if (vertical) Column(m, verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    else Row(m, horizontalArrangement = Arrangement.spacedBy(10.dp)) { content() }
 }
 
 @Composable
@@ -254,10 +291,12 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
     }
 }
 
-private enum class MenuTab(@StringRes val label: Int) { STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CORE(R.string.game_tab_core) }
+private enum class MenuTab(@StringRes val label: Int) {
+    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core)
+}
 
 @Composable
-private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastForward: Boolean, shader: ShaderOption) {
+private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastForward: Boolean, settings: AppSettings, padProfile: PadProfile) {
     var tab by remember { mutableStateOf(MenuTab.STATES) }
     var refresh by remember { mutableIntStateOf(0) }
 
@@ -300,14 +339,15 @@ private fun PauseMenu(game: Game?, system: GameSystem?, menu: MenuActions, fastF
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MenuTab.entries.forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { tab = t }) }
             }
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     MenuTab.STATES -> if (compact) StatesList(menu, refresh) { refresh++ } else StatesTab(menu, refresh) { refresh++ }
-                    MenuTab.OPTIONS -> OptionsTab(menu, fastForward, shader)
+                    MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader)
+                    MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, menu.coreName(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
                 }
             }

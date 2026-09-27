@@ -100,6 +100,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.rounded.Tune
 import coil3.SingletonImageLoader
 import com.retrovika.app.container
 import com.retrovika.app.core.settings.ShaderOption
@@ -238,6 +239,20 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             SwitchRow(Icons.Rounded.Vibration, Palette.Neon, stringResource(R.string.settings_haptics), stringResource(R.string.settings_haptics_subtitle), s.haptics) { scope.launch { repo.setHaptics(it) } }
             RowDivider()
             SwitchRow(Icons.Rounded.Gamepad, Palette.Violet, stringResource(R.string.settings_hide_pad), stringResource(R.string.settings_hide_pad_subtitle), s.hidePadWithController) { scope.launch { repo.setHidePadWithController(it) } }
+            RowDivider()
+            // O controle de cada núcleo se ajusta dentro do jogo (menu › Controle); aqui só dá para restaurar todos.
+            val customized by repo.customizedPads.collectAsStateWithLifecycle(emptySet())
+            NavRow(
+                Icons.Rounded.Tune, Palette.Cyan, stringResource(R.string.settings_pad_profiles), stringResource(R.string.settings_pad_profiles_subtitle),
+                trailing = {
+                    if (customized.isNotEmpty()) {
+                        TextButton(onClick = { scope.launch { repo.resetAllPadProfiles() } }) {
+                            Text(stringResource(R.string.settings_pad_profiles_reset, customized.size), color = Palette.Neon)
+                        }
+                    }
+                },
+                onClick = {},
+            )
         }
 
         group(R.string.settings_group_emulation) {

@@ -46,6 +46,7 @@ import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.input.MotionSources
+import com.retrovika.app.emulation.input.PadProfile
 import com.retrovika.app.emulation.input.PadListener
 import com.retrovika.app.ui.theme.RetrovikaTheme
 import com.swordfish.libretrodroid.GLRetroView
@@ -97,6 +98,12 @@ class GameActivity : ComponentActivity() {
      */
     private var controllerActive by mutableStateOf(false)
     private var toast by mutableStateOf<String?>(null)
+    /** Controle virtual deste núcleo (visível, tamanho, posições), carregado com o jogo. */
+    private var padProfile by mutableStateOf(PadProfile())
+    /** Editor do layout aberto a partir do menu: a emulação segue pausada por baixo. */
+    private var padEditing by mutableStateOf(false)
+    /** A tela do jogo em tamanho real, capturada ao abrir o menu: fundo do editor de layout. */
+    private var menuFrame by mutableStateOf<Bitmap?>(null)
     private var menuSnapshot: Bitmap? = null
     private var menuOpening = false
 
@@ -159,6 +166,9 @@ class GameActivity : ComponentActivity() {
                     menuOpen = menuOpen,
                     fastForward = fastForward,
                     showPad = !(controllerActive && settings.hidePadWithController),
+                    padProfile = padProfile,
+                    padEditing = padEditing,
+                    editorBackdrop = menuFrame,
                     toast = toast,
                     padListener = padListener,
                     menu = menuActions,
@@ -207,6 +217,7 @@ class GameActivity : ComponentActivity() {
 
         val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(coreId)
+        padProfile = app.settings.padProfile(core.id).first()
 
         // 1. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
@@ -372,7 +383,7 @@ class GameActivity : ComponentActivity() {
             delay(BLACK_SCREEN_INTERVAL_MS)
             // Pausado ou em segundo plano a captura não diz nada sobre o jogo.
             if (menuOpen || !activityResumed) return@repeat
-            val frame = suspendCancellableCoroutine { cont -> captureFrame(view) { if (cont.isActive) cont.resume(it) } }
+            val frame = suspendCancellableCoroutine { cont -> captureFrame(view) { thumb, _ -> if (cont.isActive) cont.resume(thumb) } }
             if (frame == null) return@repeat
             if (!isBlack(frame)) return
             if (++black >= 2) {
@@ -481,6 +492,8 @@ class GameActivity : ComponentActivity() {
         override fun open() = openMenu()
         override fun close() {
             menuOpen = false
+            padEditing = false
+            menuFrame = null
             // A captura vale só para este menu; reaproveitá-la depois ilustraria o save com uma tela antiga.
             menuSnapshot = null
             updateEmulationState()
@@ -577,6 +590,15 @@ class GameActivity : ComponentActivity() {
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
 
+        override fun setPadProfile(profile: PadProfile) {
+            padProfile = profile
+            if (::core.isInitialized) app.scope.launch { app.settings.setPadProfile(core.id, profile) }
+        }
+
+        override fun startPadEditor() { padEditing = true }
+
+        override fun stopPadEditor() { padEditing = false }
+
         override fun exit() {
             persist(auto = settings.autoSave)
             // O LibretroDroid é global e o onDestroy desta Activity roda só depois que a próxima tela
@@ -590,6 +612,8 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun toggleMenu() {
+        // No editor de layout, voltar retorna ao menu (o que foi mexido e não salvo é descartado).
+        if (padEditing) { padEditing = false; return }
         if (menuOpen) menuActions.close() else openMenu()
     }
 
@@ -602,7 +626,7 @@ class GameActivity : ComponentActivity() {
         releaseAllInputs(view)
         menuOpening = true
         // Captura a tela antes de pausar: vira a miniatura dos save states.
-        captureFrame(view) { bmp ->
+        captureFrame(view) { bmp, full ->
             lifecycleScope.launch {
                 // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
                 // é ele que o menu grava nos slots e no salvamento automático.
@@ -611,23 +635,24 @@ class GameActivity : ComponentActivity() {
                 if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }
                 menuSnapshot = bmp
+                menuFrame = full
                 menuOpen = true
                 updateEmulationState()
             }
         }
     }
 
-    private fun captureFrame(view: GLRetroView, done: (Bitmap?) -> Unit) {
-        if (view.width == 0 || view.height == 0) return done(null)
+    /** [done] recebe a miniatura dos save states e a captura em tamanho real (fundo do editor de layout). */
+    private fun captureFrame(view: GLRetroView, done: (Bitmap?, Bitmap?) -> Unit) {
+        if (view.width == 0 || view.height == 0) return done(null, null)
         val bmp = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         runCatching {
             PixelCopy.request(view, bmp, { result ->
-                val scaled = if (result == PixelCopy.SUCCESS) {
-                    Bitmap.createScaledBitmap(bmp, 320, (320f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true)
-                } else null
-                done(scaled)
+                if (result == PixelCopy.SUCCESS) {
+                    done(Bitmap.createScaledBitmap(bmp, 320, (320f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true), bmp)
+                } else done(null, null)
             }, Handler(Looper.getMainLooper()))
-        }.onFailure { done(null) }
+        }.onFailure { done(null, null) }
     }
 
     // endregion
@@ -764,5 +789,8 @@ interface MenuActions {
     fun changeDisk(index: Int)
     fun reset()
     fun coreName(): String
+    fun setPadProfile(profile: PadProfile)
+    fun startPadEditor()
+    fun stopPadEditor()
     fun exit()
 }
