@@ -65,4 +65,53 @@ class CdRomanceSourceTest {
         assertEquals("snes", source.classify("snes-rom"))
         assertNull(source.classify("windows"))
     }
+
+    @Test
+    fun `le a ficha do jogo a nota dos usuarios e as capturas`() {
+        val url = "https://cdromance.org/psx-iso/digimon-world-2003-rb-select/"
+        val html = """
+            <article class="post-308571 psx-iso"><div class="entry-content">
+            <div class="post-thumbnail"><img src="https://cdromance.org/wp-content/uploads/2026/09/cover.jpg"></div>
+            <table class="rom-info"><thead><tr><th colspan="2">GAME INFORMATION</th></thead><tbody>
+              <tr><th><span itemprop="applicationCategory">Game</span> Name</th><td><span itemprop="name">Digimon World 2003 (RB Select)</span></td></tr>
+              <tr><th>Region</th><td><a href="#">Europe</a></td></tr>
+              <tr><th>Console</th><td><a href="/psx-iso/"><span>PlayStation</span></a></td></tr>
+              <tr><th>Game Release</th><td><span itemprop="datePublished">2002-11-29</span> (23 years ago)</td></tr>
+              <tr><th>Genre</th><td><span itemprop="genre"><a href="#">Hack</a>, <a href="#">RPG</a></span></td></tr>
+              <tr><th>Publisher</th><td>Bandai</td></tr>
+              <tr><th>Languages</th><td><span><a href="#">English</a>, <a href="#">French</a>, <a href="#">German</a></span></td></tr>
+              <tr><th>Image Format</th><td>BIN/CUE</td></tr>
+              <tr><th>Game ID</th><td>SLES-03936</td></tr>
+              <tr><th>Downloads</th><td>46,559</td></tr>
+              <tr><th>Users Score</th><td><span itemprop="aggregateRating" itemscope>
+                <meta itemprop="ratingValue" content="4.2"><meta itemprop="ratingCount" content="85">
+                <meta itemprop="worstRating" content="1"><meta itemprop="bestRating" content="5"></span></td></tr>
+            </tbody></table>
+            <div class="game-description"><h2>Game Description:</h2><div id="custom-description">
+              <p>A curated patch list.</p>
+              <p>Flawe's Mod v2.0<br />
+            Enables fast travel.</p>
+            </div></div>
+            <div class="games-loop" id="lightgallery">
+              <div class="game-box-layout" data-src="https://cdromance.org/wp-content/uploads/2026/09/shot1.jpg"></div>
+              <div class="game-box-layout" data-src="https://cdromance.org/wp-content/uploads/2026/09/shot2.jpg"></div>
+            </div></div></article>
+        """.trimIndent()
+        val entry = CatalogEntry(url, "cdromance", "Digimon World 2003", "psx", null, null, emptyList(), emptyList(), url, url, "x.zip", "game")
+        val d = source.parseDetails(html, entry)
+        assertEquals("Digimon World 2003 (RB Select)", d.title)
+        assertEquals("Europe", d.region)
+        assertEquals("2002-11-29", d.releaseDate)
+        assertEquals(listOf("Hack", "RPG"), d.genres)
+        assertEquals("Bandai", d.publisher)
+        assertEquals(listOf("English", "French", "German"), d.languages)
+        assertEquals("BIN/CUE", d.format)
+        assertEquals("SLES-03936", d.serial)
+        assertEquals(46559L, d.downloads)
+        assertEquals(4.2, d.rating!!.value, 0.001)
+        assertEquals(85, d.rating!!.count)
+        assertEquals("https://cdromance.org/wp-content/uploads/2026/09/cover.jpg", d.coverUrl)
+        assertEquals(2, d.screenshots.size)
+        assertEquals("A curated patch list.\n\nFlawe's Mod v2.0\nEnables fast travel.", d.description)
+    }
 }

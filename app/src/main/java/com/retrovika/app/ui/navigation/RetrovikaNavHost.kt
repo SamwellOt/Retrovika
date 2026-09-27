@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.navigation
 
+import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.compose.ui.res.stringResource
 import com.retrovika.app.R
@@ -84,6 +85,7 @@ import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.screens.browser.BrowserScreen
 import com.retrovika.app.ui.screens.details.GameDetailsScreen
 import com.retrovika.app.ui.screens.downloads.DownloadsScreen
+import com.retrovika.app.ui.screens.explore.CatalogGameScreen
 import com.retrovika.app.ui.screens.explore.ExploreScreen
 import com.retrovika.app.ui.screens.home.HomeScreen
 import com.retrovika.app.ui.screens.library.LibraryScreen
@@ -204,7 +206,17 @@ fun RetrovikaNavHost() {
                     LibraryScreen(onOpenSystem = { nav.open(entry, "system/$it") }, onOpenGame = { nav.open(entry, "game/$it") })
                 }
                 composable("explore") { entry ->
-                    ExploreScreen(onOpenBrowser = { nav.open(entry, "browser") })
+                    ExploreScreen(
+                        onOpenBrowser = { nav.open(entry, "browser") },
+                        onOpenGame = { key -> nav.open(entry, "catalog/${Uri.encode(key)}") },
+                    )
+                }
+                composable("catalog/{key}", arguments = listOf(navArgument("key") { type = NavType.StringType })) { entry ->
+                    CatalogGameScreen(
+                        entryKey = entry.arguments?.getString("key").orEmpty(),
+                        onBack = { nav.back(entry) },
+                        onOpenDownloads = openDownloads,
+                    )
                 }
                 composable("browser") { entry ->
                     BrowserScreen(onBack = { nav.back(entry) }, onOpenDownloads = openDownloads)

@@ -1,5 +1,7 @@
 package com.retrovika.app.ui.screens.explore
 
+import com.retrovika.app.ui.components.pressScale
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -119,7 +121,7 @@ import java.text.NumberFormat
 private val Gutter = 16.dp
 
 @Composable
-fun ExploreScreen(onOpenBrowser: () -> Unit) {
+fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
     val vm: ExploreViewModel = viewModel { ExploreViewModel(context.container) }
@@ -264,6 +266,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit) {
             CatalogCard(
                 entry, task,
                 sourceLabel = if (state.aggregated) vm.sourceName(entry.sourceId) else null,
+                onOpen = { onOpenGame(context.container.catalog.open(entry)) },
                 onDownload = { vm.requestDownload(entry) },
                 onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } },
             )
@@ -307,7 +310,7 @@ private fun ClearFiltersButton(onClick: () -> Unit) {
 }
 
 /** Ícone de cada gênero nos chips e no selo do cartão. */
-private val Genre.icon: ImageVector
+internal val Genre.icon: ImageVector
     get() = when (this) {
         Genre.ACTION -> Icons.Rounded.Bolt
         Genre.ADVENTURE -> Icons.Rounded.Map
@@ -324,7 +327,7 @@ private val Genre.icon: ImageVector
     }
 
 /** Cor de cada gênero, tirada da paleta synthwave e de tons vizinhos a ela. */
-private val Genre.accent: Color
+internal val Genre.accent: Color
     get() = when (this) {
         Genre.ACTION -> Palette.Orange
         Genre.ADVENTURE -> Palette.Success
@@ -343,14 +346,18 @@ private val Genre.accent: Color
 private val CardShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: String?, onDownload: () -> Unit, onPlay: () -> Unit) {
+private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: String?, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
     val system = Systems.byId(entry.systemId)
     val genre = remember(entry.tags) { Genre.of(entry.tags).firstOrNull() }
+    val source = remember { MutableInteractionSource() }
+    // O cartão inteiro abre a página do jogo; o botão de baixo continua baixando direto.
     Column(
         Modifier
+            .pressScale(source, pressed = 0.98f)
             .clip(CardShape)
             .background(Palette.SurfaceHigh)
-            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), CardShape),
+            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), CardShape)
+            .clickable(source, null, onClickLabel = stringResource(R.string.explore_open_game), onClick = onOpen),
     ) {
         Box {
             GameCover(
@@ -449,7 +456,7 @@ private fun SkeletonCard() {
 /** Seletor de "qual ROM baixar": lista as versões (região/revisão/formato) da entrada. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VariantPickerSheet(
+internal fun VariantPickerSheet(
     prompt: VariantPrompt,
     onPick: (CatalogEntry, RomVariant) -> Unit,
     onDismiss: () -> Unit,

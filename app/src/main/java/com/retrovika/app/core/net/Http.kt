@@ -44,6 +44,14 @@ object Http {
         }
     }
 
+    /** Tamanho do arquivo em [url] pelo cabeçalho de um HEAD, sem baixá-lo; nulo quando o servidor não informa. */
+    suspend fun contentLength(url: String): Long? = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(url).head().build()
+        client.newCall(request).executeCancellable { res ->
+            if (!res.isSuccessful) null else res.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
+        }
+    }
+
     /** POST de formulário (application/x-www-form-urlencoded), usado por fontes que expõem os links via AJAX. */
     suspend fun postForm(url: String, form: Map<String, String>, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()
