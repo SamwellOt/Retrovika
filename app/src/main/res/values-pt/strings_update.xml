@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Atualização do app pelas releases do GitHub (AppUpdater). -->
+<resources>
+    <string name="update_kicker">Atualização</string>
+    <string name="update_available_title">Saiu o Retrovika %1$s</string>
+    <string name="update_current">Você tem a versão %1$s</string>
+    <string name="update_action">Atualizar · %1$s</string>
+    <string name="update_later">Depois</string>
+    <string name="update_downloading">Baixando a versão %1$s…</string>
+    <string name="update_downloaded">Pronto para instalar</string>
+    <string name="update_install">Instalar</string>
+    <string name="update_installing">Abrindo o instalador…</string>
+    <string name="update_install_hint">O Android pede para confirmar. Jogos, saves e ajustes continuam como estão. Se ele pedir, permita que o Retrovika instale apps e toque em Instalar de novo.</string>
+    <string name="update_failed">A atualização falhou</string>
+    <string name="update_retry">Tentar de novo</string>
+    <string name="update_open_page">Abrir no GitHub</string>
+    <string name="update_error_signature">Esta versão foi assinada com outra chave, e o Android não a instala por cima da que você tem. Faça backup da pasta do Retrovika (saves e estados), desinstale o app e instale o APK novo pelo GitHub.</string>
+    <string name="update_error_invalid">O arquivo baixado não é um APK do Retrovika.</string>
+    <string name="update_error_install">O Android não instalou a atualização: %1$s</string>
+
+    <string name="settings_group_updates">Atualizações</string>
+    <string name="settings_check_updates">Verificar atualizações</string>
+    <string name="settings_check_updates_idle">Procura uma versão nova no GitHub</string>
+    <string name="settings_check_updates_checking">Verificando…</string>
+    <string name="settings_check_updates_latest">Você está na versão mais recente (%1$s)</string>
+    <string name="settings_check_updates_available">A versão %1$s está disponível</string>
+    <string name="settings_check_updates_failed">Não deu para verificar: %1$s</string>
+    <string name="settings_auto_update">Verificar ao abrir</string>
+    <string name="settings_auto_update_subtitle">Mostra um aviso na tela inicial quando sair uma versão nova</string>
+</resources>

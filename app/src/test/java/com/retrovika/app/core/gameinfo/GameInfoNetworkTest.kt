@@ -74,6 +74,10 @@ class GameInfoNetworkTest {
         assertNotNull("Crash Bandicoot de PS1 não encontrado", psx)
         println("  ${psx!!.slug} · ${psx.rating} · ${psx.platforms}")
 
+        // Nenhum "Sonic the Hedgehog 2" saiu no PS1 (o CDRomance o lista lá): fica o original.
+        val sonic = timed("Backloggd · Sonic the Hedgehog 2 (fora do console)") { client.find("Sonic The Hedgehog 2", "psx") }
+        assertEquals("sonic-the-hedgehog-2", sonic?.slug)
+
         val none = timed("Backloggd · título inexistente") { client.find("Jogo Que Nao Existe Xyzzy", "gba") }
         assertEquals(null, none)
     }

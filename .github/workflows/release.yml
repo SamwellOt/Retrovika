@@ -3,7 +3,8 @@
 #
 # Assinatura: com os secrets RETROVIKA_KEYSTORE_BASE64, RETROVIKA_KEYSTORE_PASSWORD,
 # RETROVIKA_KEY_ALIAS e RETROVIKA_KEY_PASSWORD, o APK sai com a chave do projeto e atualiza
-# instalações anteriores. Sem eles, sai com uma chave de debug gerada no runner.
+# instalações anteriores. Sem eles a release falha: uma chave de debug gerada no runner muda a cada
+# execução, e o APK não atualizaria nenhuma instalação (nem pelo atualizador do app).
 name: Release
 
 on:
@@ -42,7 +43,8 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "RETROVIKA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           else
-            echo "::warning::Sem RETROVIKA_KEYSTORE_BASE64: o APK sai com chave de debug e não atualiza instalações assinadas com outra chave."
+            echo "::error::Sem RETROVIKA_KEYSTORE_BASE64: o APK sairia com uma chave de debug e não atualizaria nenhuma instalação."
+            exit 1
           fi
 
       - name: Testes de unidade

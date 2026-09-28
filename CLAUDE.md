@@ -100,10 +100,12 @@ To add a console, you mostly just add an entry here, plus folder aliases in `Rom
 
 **Navigation.** `ui/navigation/RetrovikaNavHost.kt` uses string routes. The tabs are `home`, `library`, `explore`, `downloads` and `settings`; pushed screens are `system/{id}`, `game/{id}`, `catalog/{key}`, `browser`, `settings/cores` and `settings/bios`. Tapping the open tab again emits its route on `LocalTabReselect`, and each tab screen calls `ScrollToTopOnReselect(route, state)` with its list state. `AppSettings.reduceMotion` turns the screen transitions off. The NavHost also owns the SAF folder-picker launcher and runs a rescan on startup.
 
+**App updates.** `core/update/AppUpdater` reads `api.github.com/repos/SamwellOt/Retrovika/releases/latest` once per process (`checkOnStartup`, off with `AppSettings.checkUpdates`) or from Ajustes › Atualizações, compares the tag with `versionName` (`Versions.newer`), downloads the attached `.apk` into `cacheDir/updates/` and checks that its package and signing certificate match the installed app before handing it to `PackageInstaller`; `UpdateInstallReceiver` opens the system confirmation (`STATUS_PENDING_USER_ACTION`) and reports failures. `UpdateCard` shows it on Home ("Depois" stores `dismissedUpdate`) and in Ajustes. The release notes come from `.github/release-notes/<tag>.md`, so keep them readable as plain text.
+
 **Diagnostics.** Ajustes › "Enviar relatório de erros" (`core/diagnostics/ErrorReport`) shares device/GLES info, `ApplicationExitInfo` and the app's own recent logcat, which still holds the native backtrace and core messages of a crashed game on the next launch. Ask users for it when a core crashes on a device you can't reach.
 
 ## Constraints
 
 - Library versions are pinned in `gradle/libs.versions.toml` (AGP 8.13, Kotlin 2.2, compileSdk 36). AGP 9.x is not in use.
-- Release signing reads `keystore.properties` (template: `keystore.properties.example`) or `RETROVIKA_*` env vars, and falls back to the debug key with a warning. Never commit the keystore or its properties.
+- Release signing reads `keystore.properties` (template: `keystore.properties.example`) or `RETROVIKA_*` env vars, and falls back to the debug key with a warning locally. The `release.yml` workflow fails without the `RETROVIKA_KEYSTORE_BASE64` secret: every release must be signed with the same project key (from 0.3.4 on), or the in-app updater can't install it over the previous one. Never commit the keystore or its properties.
 - With targetSdk 36, Android 16 delivers Back only through `OnBackPressedDispatcher`, not as `KEYCODE_BACK`. `GameActivity` handles both paths.

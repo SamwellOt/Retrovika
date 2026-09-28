@@ -117,6 +117,11 @@ import com.retrovika.app.ui.components.Wordmark
 import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.core.diagnostics.ErrorReport
+import com.retrovika.app.core.update.UpdateState
+import com.retrovika.app.ui.components.UpdateCard
+import com.retrovika.app.ui.components.cardRelease
+import androidx.compose.material.icons.rounded.Autorenew
+import androidx.compose.material.icons.rounded.SystemUpdate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,6 +155,7 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("settings", listState)
     val activeDownloads by app.downloads.activeCount.collectAsStateWithLifecycle()
+    val update by app.updater.state.collectAsStateWithLifecycle()
 
     LazyColumn(
         Modifier.fillMaxSize().ambientGlow(secondary = Palette.Cyan),
@@ -159,6 +165,26 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
         item { ScreenHeader(stringResource(R.string.settings_title), subtitle = stringResource(R.string.settings_subtitle)) }
 
         item { AboutCard(version, counts.sumOf { it.count }, counts.size) }
+
+        group(R.string.settings_group_updates) {
+            NavRow(
+                Icons.Rounded.SystemUpdate, Palette.Neon, stringResource(R.string.settings_check_updates),
+                when (val u = update) {
+                    UpdateState.Checking -> stringResource(R.string.settings_check_updates_checking)
+                    UpdateState.UpToDate -> stringResource(R.string.settings_check_updates_latest, app.updater.currentVersion)
+                    is UpdateState.Failed -> if (u.release == null) stringResource(R.string.settings_check_updates_failed, u.message)
+                        else stringResource(R.string.settings_check_updates_available, u.release.version)
+                    else -> update.cardRelease()?.let { stringResource(R.string.settings_check_updates_available, it.version) }
+                        ?: stringResource(R.string.settings_check_updates_idle)
+                },
+                trailing = if (update == UpdateState.Checking) {
+                    { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Neon) }
+                } else null,
+            ) { app.updater.check(manual = true) }
+            UpdateCard(update, Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            RowDivider()
+            SwitchRow(Icons.Rounded.Autorenew, Palette.Cyan, stringResource(R.string.settings_auto_update), stringResource(R.string.settings_auto_update_subtitle), s.checkUpdates) { scope.launch { repo.setCheckUpdates(it) } }
+        }
 
         group(R.string.settings_group_language) { LanguagePicker() }
 

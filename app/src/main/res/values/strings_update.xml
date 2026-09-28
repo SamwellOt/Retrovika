@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Atualização do app pelas releases do GitHub (AppUpdater). -->
+<resources>
+    <string name="update_kicker">Update</string>
+    <string name="update_available_title">Retrovika %1$s is out</string>
+    <string name="update_current">You have version %1$s</string>
+    <string name="update_action">Update · %1$s</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading version %1$s…</string>
+    <string name="update_downloaded">Ready to install</string>
+    <string name="update_install">Install</string>
+    <string name="update_installing">Opening the installer…</string>
+    <string name="update_install_hint">Android asks you to confirm. Your games, saves and settings stay as they are. If it asks, allow Retrovika to install apps and tap Install again.</string>
+    <string name="update_failed">The update failed</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_open_page">Open on GitHub</string>
+    <string name="update_error_signature">This version is signed with a different key, so Android won\'t install it over the one you have. Back up the Retrovika folder (saves and states), uninstall the app and install the new APK from GitHub.</string>
+    <string name="update_error_invalid">The downloaded file is not a Retrovika APK.</string>
+    <string name="update_error_install">Android didn\'t install the update: %1$s</string>
+
+    <string name="settings_group_updates">Updates</string>
+    <string name="settings_check_updates">Check for updates</string>
+    <string name="settings_check_updates_idle">Looks for a new version on GitHub</string>
+    <string name="settings_check_updates_checking">Checking…</string>
+    <string name="settings_check_updates_latest">You have the latest version (%1$s)</string>
+    <string name="settings_check_updates_available">Version %1$s is available</string>
+    <string name="settings_check_updates_failed">Couldn\'t check: %1$s</string>
+    <string name="settings_auto_update">Check when opening</string>
+    <string name="settings_auto_update_subtitle">Shows a notice on the home screen when a new version is out</string>
+</resources>

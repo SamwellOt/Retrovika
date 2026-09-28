@@ -58,8 +58,9 @@ class BackloggdClient(
     /**
      * Acha o jogo de [title] no console [systemId]. [igdbSlug] (do Wikidata) resolve direto quando
      * existe. Sem ele, entre os resultados com o mesmo título (há vários "Chrono Trigger": SNES, DS,
-     * PS1…), fica o primeiro lançado que saiu no console; se o console não é conhecido, só um título
-     * idêntico e único serve, para não mostrar a nota de outro jogo.
+     * PS1…), fica o primeiro lançado que saiu no console. Se nenhum saiu nele (o site de ROM errou o
+     * console, ou é um port/hack que o Backloggd não lista, como o "Sonic the Hedgehog 2" de PS1),
+     * fica o primeiro lançado com o título idêntico: é o original, melhor que não mostrar nada.
      */
     suspend fun find(title: String, systemId: String, igdbSlug: String? = null): BackloggdInfo? {
         igdbSlug?.let { slug -> runCatching { game(slug) }.getOrNull()?.let { return it } }
@@ -67,13 +68,13 @@ class BackloggdClient(
         val candidates = suggestions(clean).filter { GameTitles.same(it.title, clean) }
             .sortedWith(compareBy(nullsLast<Int>()) { it.year })
         if (candidates.isEmpty()) return null
-        if (!Platforms.knows(systemId)) return if (candidates.size == 1) game(candidates.first().slug) else null
         // Poucos candidatos, na ordem de lançamento (o original costuma ser o do console retrô), todos
         // pedidos ao mesmo tempo: esperar um por um somava quase meio segundo a cada título repetido.
         val top = candidates.take(MAX_CANDIDATES)
         val results = coroutineScope { top.map { c -> async { runCatching { page(c.slug) } } }.awaitAll() }
         val pages = results.map { it.getOrNull() }
         val index = pages.indexOfFirst { page -> page != null && Platforms.matches(systemId, platformSlugs(page), platformNames(page)) }
+            .takeIf { it >= 0 } ?: pages.indexOfFirst { it != null }
         // Todas as páginas falharam (rede, verificação da CDN): é erro, não "o jogo não está lá". Senão o
         // "não encontrado" ficaria no cache por 15 minutos.
         if (index < 0) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.takeIf { pages.all { p -> p == null } }?.let { throw it }

@@ -105,6 +105,4 @@ object Platforms {
         val m = bySystem[systemId] ?: return false
         return slugs.any { it.lowercase() in m.slugs } || names.any { GameTitles.key(it) in m.names }
     }
-
-    fun knows(systemId: String): Boolean = systemId in bySystem
 }

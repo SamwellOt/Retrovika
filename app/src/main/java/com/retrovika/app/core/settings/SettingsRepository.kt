@@ -63,6 +63,10 @@ data class AppSettings(
     val reduceMotion: Boolean = false,
     val coverSize: CoverSize = CoverSize.NORMAL,
     val gameSort: GameSort = GameSort.TITLE,
+    /** Procura uma versão nova do app ao abrir. */
+    val checkUpdates: Boolean = true,
+    /** Versão cujo aviso o usuário fechou na tela inicial: só volta a aparecer para uma mais nova. */
+    val dismissedUpdate: String? = null,
 )
 
 class SettingsRepository(private val context: Context, scope: CoroutineScope) {
@@ -84,6 +88,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val reduceMotion = booleanPreferencesKey("reduce_motion")
         val coverSize = stringPreferencesKey("cover_size")
         val gameSort = stringPreferencesKey("game_sort")
+        val checkUpdates = booleanPreferencesKey("check_updates")
+        val dismissedUpdate = stringPreferencesKey("dismissed_update")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
@@ -113,6 +119,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             reduceMotion = p[Keys.reduceMotion] ?: false,
             coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
+            checkUpdates = p[Keys.checkUpdates] ?: true,
+            dismissedUpdate = p[Keys.dismissedUpdate],
         )
     }
 
@@ -145,12 +153,14 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setReduceMotion(v: Boolean) = set(Keys.reduceMotion, v)
     suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
+    suspend fun setCheckUpdates(v: Boolean) = set(Keys.checkUpdates, v)
+    suspend fun setDismissedUpdate(version: String) = set(Keys.dismissedUpdate, version)
 
     /** Volta controle, vídeo, emulação, interface e downloads aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
     suspend fun resetPreferences() = context.dataStore.edit { p ->
         listOf(
             Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
-            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort,
+            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.checkUpdates,
         ).forEach { p.remove(it) }
     }
 
