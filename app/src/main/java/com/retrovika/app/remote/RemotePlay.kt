@@ -85,6 +85,8 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     @Volatile private var streamGeneration = 0
     /** Desde quando a imagem já deveria estar chegando (encoder ligado com o jogo rodando). */
     @Volatile private var videoExpectedSince = 0L
+    /** [VideoEncoder.mode] em uso: sobe quando o encoder morre ou não entrega nada, e fica no que funcionou. */
+    @Volatile private var encoderMode = 0
     private var audioPump: Thread? = null
     @Volatile private var lastKeyRequest = 0L
 
@@ -436,17 +438,27 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         // Os retornos do encoder chegam na thread dele, às vezes depois de ele ser trocado: cada um só vale
         // para a geração em que foi criado.
         val generation = ++streamGeneration
-        val enc = try {
-            VideoEncoder(
-                VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_BITRATE,
-                onConfig = { sps, pps -> if (streamGeneration == generation) onVideoConfig(sps, pps) },
-                onFrame = { frame -> if (streamGeneration == generation) onVideoFrame(frame) },
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Encoder failed", e)
-            _state.update { it.copy(errorRes = R.string.remote_encoder_failed) }
-            return
+        var enc: VideoEncoder? = null
+        while (enc == null) {
+            enc = try {
+                VideoEncoder(
+                    VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_BITRATE, encoderMode,
+                    onConfig = { sps, pps -> if (streamGeneration == generation) onVideoConfig(sps, pps) },
+                    onFrame = { frame -> if (streamGeneration == generation) onVideoFrame(frame) },
+                    // Fora da thread do encoder: trocá-lo espera essa thread terminar.
+                    onError = { Thread { encoderFailed(generation) }.start() },
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Encoder failed (mode $encoderMode)", e)
+                if (encoderMode + 1 >= VideoEncoder.MODES) {
+                    _state.update { it.copy(errorRes = R.string.remote_encoder_failed) }
+                    return
+                }
+                encoderMode++
+                null
+            }
         }
+        Log.i(TAG, "Encoder ${enc.name} (mode ${enc.mode})")
         encoder = enc
         videoExpectedSince = System.currentTimeMillis()
         v.setCaptureSurface(enc.surface, enc.width, enc.height)
@@ -478,14 +490,40 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     }
 
     /**
-     * Encoder ligado, jogo rodando e nenhum quadro depois de alguns segundos: o driver recusou a superfície
-     * do encoder (o nativo só registra no log). Avisa no menu e na tela em vez de deixá-la preta sem motivo.
+     * O encoder da geração [generation] morreu ou não entregou nada: troca pelo próximo modo, mais compatível.
+     * Sem outro modo, avisa. Parar a captura também evita que cada quadro vire um erro no log.
+     */
+    private fun encoderFailed(generation: Int): Unit = synchronized(streamLock) {
+        if (generation != streamGeneration || encoder == null) return
+        stopStreaming(view)
+        if (encoderMode + 1 < VideoEncoder.MODES) {
+            encoderMode++
+            Log.w(TAG, "Retrying the encoder in mode $encoderMode")
+            updateStreaming()
+        } else {
+            showStreamFailed()
+        }
+    }
+
+    /**
+     * Encoder ligado, jogo rodando e nenhum quadro depois de alguns segundos: o encoder não funciona ou o
+     * driver recusou a superfície dele (o nativo só registra no log). Tenta o próximo modo; no último, avisa
+     * no menu e na tela em vez de deixá-la preta sem motivo.
      */
     private fun checkVideoArrived() {
         if (fmp4 != null || paused || encoder == null) return
         if (System.currentTimeMillis() - videoExpectedSince < VIDEO_TIMEOUT_MS) return
         if (_state.value.errorRes == R.string.remote_stream_failed) return
-        Log.e(TAG, "No video from the capture surface")
+        Log.e(TAG, "No video from the capture surface (mode $encoderMode)")
+        if (encoderMode + 1 < VideoEncoder.MODES) {
+            val generation = streamGeneration
+            Thread { encoderFailed(generation) }.start()
+        } else {
+            showStreamFailed()
+        }
+    }
+
+    private fun showStreamFailed() {
         _state.update { it.copy(errorRes = R.string.remote_stream_failed) }
         val screens = synchronized(lock) { sessions.filter { it.kind == Kind.SCREEN } }
         screens.forEach { it.connection.sendText(json("t" to "videoFailed")) }

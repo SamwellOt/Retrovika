@@ -2,6 +2,7 @@ package com.retrovika.app.remote
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import android.os.Bundle
@@ -11,16 +12,27 @@ import android.view.Surface
 /**
  * Encoder H.264 do aparelho com entrada por [surface]: o LibretroDroid copia cada quadro para ela na
  * thread de emulação. A saída é lida numa thread própria e entregue em [onConfig] (SPS e PPS, que mudam
- * se o encoder for recriado) e [onFrame].
+ * se o encoder for recriado) e [onFrame]. Se o codec morrer depois de iniciar, [onError] avisa (na thread
+ * de saída): quem usa tenta o próximo [mode].
+ *
+ * [mode] vai do mais rápido ao mais compatível: 0 é o encoder de hardware com ajustes de latência, 1 o
+ * mesmo sem eles e 2 o encoder de software.
  */
 class VideoEncoder(
     val width: Int,
     val height: Int,
     bitrate: Int,
+    val mode: Int,
     private val onConfig: (sps: ByteArray, pps: ByteArray) -> Unit,
     private val onFrame: (EncodedFrame) -> Unit,
+    private val onError: (Exception) -> Unit,
 ) {
-    private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+    private val codec = if (mode >= MODE_SOFTWARE) {
+        MediaCodec.createByCodecName(softwareEncoder() ?: throw IllegalStateException("No software AVC encoder"))
+    } else {
+        MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+    }
+    val name: String = codec.name
     val surface: Surface
 
     @Volatile private var running = true
@@ -36,9 +48,12 @@ class VideoEncoder(
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
             // Jogo parado (menu aberto) não gera quadros: o encoder repete o último para quem chega ver algo.
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
-            setInteger(MediaFormat.KEY_PRIORITY, 0)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LATENCY, 1)
+            if (mode == MODE_TUNED) {
+                // Tempo real e baixa latência: alguns encoders (Qualcomm da Xiaomi) aceitam e morrem logo depois.
+                setInteger(MediaFormat.KEY_PRIORITY, 0)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LATENCY, 1)
+            }
         }
         // Baseline não tem quadros B (que atrasariam a imagem); se o encoder recusar, fica o perfil padrão.
         // Vários encoders só aceitam o perfil acompanhado do nível (4.1 cobre 720p a 60 quadros).
@@ -85,6 +100,12 @@ class VideoEncoder(
             val index = try {
                 codec.dequeueOutputBuffer(info, 20_000)
             } catch (e: IllegalStateException) {
+                // Parado por release() é normal; com running ainda ligado, o codec morreu sozinho.
+                if (running) {
+                    val detail = (e as? MediaCodec.CodecException)?.diagnosticInfo.orEmpty()
+                    Log.e(TAG, "Encoder $name (mode $mode) died $detail", e)
+                    onError(e)
+                }
                 break
             }
             if (index < 0) continue
@@ -121,8 +142,18 @@ class VideoEncoder(
         onFrame(EncodedFrame(Avc.toLengthPrefixed(picture), key, info.presentationTimeUs))
     }
 
-    private companion object {
-        const val TAG = "VideoEncoder"
-        val CONFIG_TYPES = setOf(Avc.NAL_SPS, Avc.NAL_PPS, Avc.NAL_AUD)
+    companion object {
+        private const val TAG = "VideoEncoder"
+        private const val MODE_TUNED = 0
+        private const val MODE_SOFTWARE = 2
+        const val MODES = 3
+        private val CONFIG_TYPES = setOf(Avc.NAL_SPS, Avc.NAL_PPS, Avc.NAL_AUD)
+
+        private fun softwareEncoder(): String? =
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+                info.isEncoder && MediaFormat.MIMETYPE_VIDEO_AVC in info.supportedTypes.map { it.lowercase() } &&
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isSoftwareOnly
+                    else info.name.startsWith("OMX.google.") || info.name.startsWith("c2.android.")
+            }?.name
     }
 }
