@@ -36,6 +36,50 @@ object GameTitles {
     }
 
     fun same(a: String, b: String): Boolean = key(a) == key(b)
+
+    private fun words(title: String): List<String> = key(title).split(' ').filter { it.isNotEmpty() }
+
+    /** Numeral romano de sequência ("ii", "iv"...): palavra a mais com ele é outro jogo da série. */
+    private val roman = Regex("""^(i{1,3}|iv|vi{0,3}|ix|x{1,3})$""")
+
+    /**
+     * Quantas palavras o título da base ([candidate]) tem a mais que o do site de ROM ([title]), quando tem
+     * todas as dele na mesma ordem: o site de ROM encurta o nome ("Hajime no Ippo Portable - Victorious
+     * Spirits" é "Hajime no Ippo: The Fighting! Portable - Victorious Spirits"). 0 é o título idêntico. Nulo
+     * quando não é o mesmo jogo: falta alguma palavra, sobram palavras demais ou a sobra é um número de
+     * sequência ("Tekken" não vira "Tekken 2").
+     */
+    fun extraWords(title: String, candidate: String): Int? {
+        val want = words(title)
+        val have = words(candidate)
+        if (want.isEmpty()) return null
+        var matched = 0
+        val extra = ArrayList<String>()
+        for (w in have) if (matched < want.size && w == want[matched]) matched++ else extra += w
+        return when {
+            matched < want.size -> null
+            extra.isEmpty() -> 0
+            // Com uma palavra só ("Tetris"), qualquer sobra já é outro jogo ("Tetris Plus").
+            want.size < 2 || extra.size > MAX_EXTRA_WORDS -> null
+            extra.any { w -> w.any(Char::isDigit) || roman.matches(w) } -> null
+            else -> extra.size
+        }
+    }
+
+    /**
+     * Buscas a tentar, em ordem, num autocompletar que só acha trechos seguidos do título: o nome inteiro, o
+     * subtítulo (depois do último " - " ou ":") e as três primeiras palavras. Quando a base tem palavras que o
+     * site de ROM omitiu no meio, só os pedaços encontram o jogo.
+     */
+    fun searchQueries(title: String): List<String> {
+        val parts = title.split(Regex("""\s+[-–]\s+|:\s+""")).map { it.trim() }.filter { it.isNotEmpty() }
+        val subtitle = parts.lastOrNull()?.takeIf { parts.size > 1 && words(it).size >= 2 }
+        val head = parts.firstOrNull()?.split(' ')?.filter { it.isNotBlank() }
+        val prefix = head?.takeIf { it.size > 3 || parts.size > 1 }?.take(3)?.joinToString(" ")?.takeIf { words(it).size >= 2 }
+        return listOfNotNull(title, subtitle, prefix).distinctBy(::key)
+    }
+
+    private const val MAX_EXTRA_WORDS = 3
 }
 
 /**

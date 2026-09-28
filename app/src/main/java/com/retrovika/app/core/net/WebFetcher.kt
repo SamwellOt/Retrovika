@@ -108,18 +108,18 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
      * deixando a liberação no [CookieManager] para um download feito fora do WebView.
      */
     suspend fun solve(url: String) {
-        try {
-            lock.withLock { withContext(Dispatchers.Main) { ready(url) } }
-        } finally {
-            main.launch { scheduleRelease() }
+        // WebView próprio, descartado no fim: trocar a página do compartilhado derrubaria os pedidos que
+        // outros downloads e a busca ainda esperam dele. A liberação fica no CookieManager, que é global.
+        withContext(Dispatchers.Main) {
+            val web = open(url)
+            web.stopLoading()
+            web.destroy()
         }
     }
 
     private suspend fun runFetch(origin: String, url: String, method: String, body: String?, contentType: String?, referrer: String?): Response {
-        val page = lock.withLock { withContext(Dispatchers.Main) { ready(origin) } }
         val id = ids.incrementAndGet()
         val answer = CompletableDeferred<Pair<Int, String>>()
-        pending[id] = answer
         val options = buildList {
             add("credentials: 'include'")
             if (method != "GET") add("method: ${JsonPrimitive(method)}")
@@ -131,7 +131,15 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             ".then(r => r.text().then(t => RetrovikaBridge.done($id, r.status, t)))" +
             ".catch(e => RetrovikaBridge.done($id, -1, String(e)))"
         val result = try {
-            withContext(Dispatchers.Main) { page.evaluateJavascript(script, null) }
+            // Registrado e disparado sem soltar a trava: um release() no meio destruiria a página antes do
+            // fetch e o pedido só acabaria no prazo, sem resposta.
+            lock.withLock {
+                withContext(Dispatchers.Main) {
+                    val page = ready(origin)
+                    pending[id] = answer
+                    page.evaluateJavascript(script, null)
+                }
+            }
             // withTimeoutOrNull, não withTimeout: o TimeoutCancellationException passaria por cancelamento
             // e a parte da página que pediu ficaria carregando para sempre, sem mostrar a falha.
             withTimeoutOrNull(REQUEST_TIMEOUT_MS) { answer.await() }
@@ -150,15 +158,22 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         idle?.cancel()
         view?.takeIf { this.origin == origin }?.let { return it }
         release()
+        val web = open(origin)
+        view = web
+        this.origin = origin
+        return web
+    }
+
+    /** Um WebView novo em [url], já depois da verificação; destruído aqui se ela não passar. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun open(url: String): WebView {
         val web = WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             webViewClient = WebViewClient()
             addJavascriptInterface(Bridge(), "RetrovikaBridge")
-            loadUrl(origin)
+            loadUrl(url)
         }
-        view = web
-        this.origin = origin
         // A verificação roda e recarrega a página sozinha; pronto quando o título deixa de ser o dela.
         val passed = try {
             withTimeoutOrNull(CHALLENGE_TIMEOUT_MS) {
@@ -170,12 +185,12 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             }
         } catch (t: Throwable) {
             // Cancelado no meio da verificação: um WebView ainda na página de desafio não pode ser reaproveitado.
-            release()
+            web.destroy()
             throw t
         }
         if (passed == null) {
-            release()
-            throw HttpStatusException(403, origin)
+            web.destroy()
+            throw HttpStatusException(403, url)
         }
         return web
     }

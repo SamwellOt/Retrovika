@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
 /** Resposta HTTP fora da faixa 2xx; [code] permite tratar casos como 404 sem depender da mensagem. */
-class HttpStatusException(val code: Int, url: String) : IOException("HTTP $code: $url")
+class HttpStatusException(val code: Int, val url: String) : IOException("HTTP $code: $url")
 
 object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
@@ -123,6 +123,7 @@ object Http {
                     headers.forEach { (k, v) -> header(k, v) }
                     if (read > 0) header("Range", "bytes=$read-")
                 }.build()
+                val readBefore = read
                 val finished = try {
                     http.newCall(request).executeCancellable { res ->
                         // Só downloads do navegador interno levam cookies: aí o 403 costuma ser a sessão do site.
@@ -133,6 +134,9 @@ object Http {
                             if (busyWaited + busyWait > BUSY_BUDGET_MS) throw LocalizedException(R.string.download_server_busy)
                             return@executeCancellable false
                         }
+                        // Queda logo depois do último byte de um arquivo sem tamanho anunciado: o pedido de
+                        // continuação volta 416 porque não falta nada.
+                        if (res.code == 416 && read > 0 && total <= 0) return@executeCancellable true
                         if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
                         // 206 continua de onde parou; 200 manda o arquivo inteiro de novo.
                         val resumed = read > 0 && res.code == 206
@@ -166,6 +170,9 @@ object Http {
                 } catch (e: IOException) {
                     // Queda no meio do arquivo: tenta continuar. Antes do primeiro byte (sem internet,
                     // endereço errado) o erro sobe como sempre.
+                    // Conta só quedas seguidas sem progresso: um arquivo grande numa rede instável pode cair
+                    // muitas vezes e ainda assim terminar.
+                    if (read > readBefore) dropTries = 0
                     if (e is LocalizedException || read == 0L || dropTries >= MAX_RESUMES) throw e
                     dropTries++
                     delay(RESUME_WAIT_MS)
@@ -222,7 +229,7 @@ object Http {
      * Executa a chamada de forma que cancelar a corrotina corte a conexão: numa rede parada, a leitura
      * bloqueada só voltaria no timeout, e o download cancelado seguia ocupando a vaga da fila.
      */
-    private suspend fun <T> Call.executeCancellable(block: (Response) -> T): T = coroutineScope {
+    internal suspend fun <T> Call.executeCancellable(block: (Response) -> T): T = coroutineScope {
         val call = this@executeCancellable
         // UNDISPATCHED: o vigia já está esperando antes do execute(); despachado, um cancelamento que chegasse
         // antes de ele rodar nunca cortaria a conexão.

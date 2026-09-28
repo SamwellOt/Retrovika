@@ -48,6 +48,7 @@ import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.input.MotionSources
 import com.retrovika.app.emulation.input.PadProfile
 import com.retrovika.app.emulation.input.PadListener
+import com.retrovika.app.remote.RemoteGame
 import com.retrovika.app.ui.theme.RetrovikaTheme
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
@@ -130,6 +131,8 @@ class GameActivity : ComponentActivity() {
     private lateinit var states: SaveStates
     private var settings = AppSettings()
     private var retroView: GLRetroView? = null
+    /** O GLRetroView ligado ao jogo pela rede; continua aqui depois do "Sair" zerar o [retroView]. */
+    private var remoteView: GLRetroView? = null
     private var sessionStart = 0L
     private var activityResumed = false
 
@@ -138,6 +141,11 @@ class GameActivity : ComponentActivity() {
      * sair do jogo gravaria a tela de boot por cima do salvamento automático e o progresso se perderia.
      */
     private var autoSaveReady = false
+    /**
+     * Primeiro quadro desenhado: o núcleo terminou de carregar o jogo. Antes disso a thread de emulação está
+     * presa no carregamento, e pedir a SRAM por ela travaria a thread principal até ele acabar.
+     */
+    private var gameLoaded = false
 
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(id: Int) = Unit
@@ -325,7 +333,11 @@ class GameActivity : ComponentActivity() {
 
         // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
         // próximo jogo quando esta Activity fosse destruída (o LibretroDroid é global).
-        if (isFinishing) return
+        if (isFinishing) {
+            // Os descritores do SAF já abertos não chegam ao núcleo: fecha aqui, senão ficam até o GC.
+            data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
+            return
+        }
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -334,6 +346,8 @@ class GameActivity : ComponentActivity() {
         emulationOwner.registry.addObserver(view)
         observe(view)
         ui = EmulationUi.Running(view)
+        remoteView = view
+        app.remote.attach(view, RemoteGame(game.title, system.name, system.accent, system.layout), ::physicalControllerPorts)
         updateEmulationState()
         view.requestFocus()
     }
@@ -358,8 +372,12 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
+            if (retroView === view) gameLoaded = true
             if (settings.autoLoad) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
+                // Menu aberto ou app em segundo plano durante a leitura: a thread de emulação está parada (sem
+                // contexto GL) e o estado só é aplicado quando o jogo voltar a rodar.
+                while (saved != null && retroView === view && !emulationRunning()) delay(100)
                 // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
                 if (retroView !== view) return@launch
                 saved?.let { data ->
@@ -378,11 +396,15 @@ class GameActivity : ComponentActivity() {
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
-            val vibrator = rumbleVibrator ?: return@launch
+            val vibrator = rumbleVibrator
             // O núcleo só avisa quando a força muda: a vibração dura até chegar força zero (ou o jogo pausar),
             // não um pulso curto por aviso, que fazia o Rumble Pak parar em 60 ms.
             view.getRumbleEvents().collect { e ->
                 val strength = maxOf(e.strengthStrong, e.strengthWeak)
+                // Jogador de um controle pela rede: vibra o celular dele, não este.
+                if (app.remote.rumble(e.port, strength)) return@collect
+                // Os outros jogadores (controle físico, teclado da TV) não fazem vibrar o celular do jogador 1.
+                if (vibrator == null || e.port != 0) return@collect
                 if (strength > 0f) vibrator.vibrate(VibrationEffect.createOneShot(RUMBLE_MAX_MS, (strength * 255).toInt().coerceIn(1, 255)))
                 else vibrator.cancel()
             }
@@ -452,6 +474,10 @@ class GameActivity : ComponentActivity() {
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
         retroView = null
+        remoteView?.let { app.remote.detach(it) }
+        remoteView = null
+        // Trocar de jogo recria a Activity e o servidor segue (os controles reconectam); sair do jogo o desliga.
+        if (isFinishing) app.remote.stop()
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
         super.onDestroy()
@@ -469,6 +495,7 @@ class GameActivity : ComponentActivity() {
             rumbleVibrator?.cancel()
         }
         emulationOwner.registry.currentState = target
+        if (ui is EmulationUi.Running) app.remote.setPaused(!running)
     }
 
     private fun flushPlayTime() {
@@ -483,7 +510,7 @@ class GameActivity : ComponentActivity() {
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
     private fun persist(auto: Boolean) {
         val view = retroView ?: return
-        if (ui !is EmulationUi.Running) return
+        if (ui !is EmulationUi.Running || !gameLoaded) return
         runCatching {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
@@ -641,9 +668,10 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun openMenu() {
-        if (menuOpen || menuOpening) return
+        // Falha e tela de erro primeiro: um menuOpening preso não pode impedir o Voltar de sair.
         val view = retroView
         if (view == null || ui !is EmulationUi.Running) { finish(); return }
+        if (menuOpen || menuOpening) return
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)
@@ -651,6 +679,9 @@ class GameActivity : ComponentActivity() {
         // Captura a tela antes de pausar: vira a miniatura dos save states.
         captureFrame(view) { bmp, full ->
             lifecycleScope.launch {
+                // O app foi para segundo plano durante a captura: a thread de emulação já parou, e serializar
+                // nela sem contexto GL derruba os núcleos de GPU. O onPause já guardou o que precisava.
+                if (!emulationRunning()) { menuOpening = false; return@launch }
                 // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
                 // é ele que o menu grava nos slots e no salvamento automático.
                 val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
@@ -740,6 +771,11 @@ class GameActivity : ComponentActivity() {
             (src and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
             ((src and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD && event.device?.isVirtual == false)
     }
+
+    /** Portas dos controles físicos além do primeiro: os controles pela rede não podem cair nelas. */
+    private fun physicalControllerPorts(): Set<Int> = InputDevice.getDeviceIds().toList().mapNotNull { id ->
+        InputDevice.getDevice(id)?.takeIf { isPhysicalController(it) }?.controllerNumber?.takeIf { it > 1 }?.minus(1)
+    }.toSet()
 
     private fun detectController(): Boolean = InputDevice.getDeviceIds().any { id -> isPhysicalController(InputDevice.getDevice(id)) }
 

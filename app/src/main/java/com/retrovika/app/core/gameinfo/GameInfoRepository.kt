@@ -1,5 +1,8 @@
 package com.retrovika.app.core.gameinfo
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+
 /**
  * Busca e guarda por alguns minutos as informações externas de um jogo (Backloggd, Wikipedia e HowLongToBeat):
  * voltar para uma página já aberta mostra tudo na hora, sem repetir os pedidos.
@@ -30,6 +33,9 @@ class GameInfoRepository(
         val now = System.currentTimeMillis()
         synchronized(cache) { cache[key] }?.takeIf { now - it.at < TTL_MS }?.let { return it.value }
         val value = load()
+        // Cancelado no meio (a tela fechou), os clientes devolvem um resultado incompleto (sem resenhas, sem
+        // resumo): esse não pode ficar no cache por 15 minutos.
+        currentCoroutineContext().ensureActive()
         synchronized(cache) { cache[key] = Cached(value, now) }
         return value
     }

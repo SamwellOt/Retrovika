@@ -56,6 +56,27 @@ class ArchivesTest {
     }
 
     @Test
+    fun `substitui arquivo que ja existia sem deixar temporario`() {
+        val dest = tmp.newFolder("roms")
+        File(dest, "Jogo.bin").writeText("antigo")
+        val out = Archives.extract(zip("jogo.zip", mapOf("Jogo.bin" to "novo")), dest, setOf("Jogo.bin"))
+        assertEquals(File(dest, "Jogo.bin"), out.getValue("Jogo.bin"))
+        assertEquals("novo", File(dest, "Jogo.bin").readText())
+        assertEquals(listOf("Jogo.bin"), dest.list()!!.toList())
+    }
+
+    @Test
+    fun `falha no meio nao estraga arquivo que ja existia`() {
+        val dest = tmp.newFolder("roms")
+        File(dest, "Jogo.bin").writeText("antigo")
+        // A segunda entrada escaparia da pasta ("zip slip"): a extração falha depois de gravar a primeira.
+        val archive = zip("jogo.zip", mapOf("Jogo.bin" to "novo", "../fora.bin" to "x"))
+        assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("Jogo.bin", "../fora.bin")) }
+        assertEquals("antigo", File(dest, "Jogo.bin").readText())
+        assertEquals(listOf("Jogo.bin"), dest.list()!!.toList())
+    }
+
+    @Test
     fun `mantem subpastas de discos citadas pelo m3u`() {
         val archive = zip(
             "multi.zip",

@@ -114,4 +114,11 @@ class CdRomanceSourceTest {
         assertEquals(2, d.screenshots.size)
         assertEquals("A curated patch list.\n\nFlawe's Mod v2.0\nEnables fast travel.", d.description)
     }
+
+    @Test
+    fun `so ordena dentro da secao de um console`() {
+        val src = CdRomanceSource()
+        assertEquals(emptySet<SortOrder>(), src.sorts(null))
+        assertEquals(setOf(SortOrder.POPULAR, SortOrder.RATED, SortOrder.RECENT, SortOrder.TITLE), src.sorts("gba"))
+    }
 }

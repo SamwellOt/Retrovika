@@ -5,6 +5,7 @@ import com.retrovika.app.core.gameinfo.HtmlText
 import com.retrovika.app.core.gameinfo.SiteRating
 import com.retrovika.app.core.gameinfo.SourceDetails
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.HttpStatusException
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.WebFetcher
@@ -48,10 +49,12 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
 
     override val systems: Set<String> = CONSOLES.map { it.systemId }.toSet()
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
+    override fun sorts(systemId: String?): Set<SortOrder> = SORTS.keys
+
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
         val consoles = if (systemId != null) CONSOLES.filter { it.systemId == systemId } else CONSOLES
         if (consoles.isEmpty()) return CatalogPage(emptyList(), page, 1, 0)
-        val res = web.request(BASE, searchUrl(query, consoles.map { it.termId }, genre, page))
+        val res = web.request(BASE, searchUrl(query, consoles.map { it.termId }, genre, page, sort))
         // Página além da última.
         if (res.status == 404 && page > 1) return CatalogPage(emptyList(), page, page, 0)
         if (res.status !in 200..299) throw LocalizedException(R.string.download_http_error, res.status, BASE)
@@ -63,14 +66,15 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
 
     /**
      * `/browse-all-roms/` com os filtros. Sem console escolhido vão todos os que o app roda: assim nenhuma
-     * página chega cheia de jogos de PS3 ou Xbox que seriam descartados. Sem termo, os mais populares.
+     * página chega cheia de jogos de PS3 ou Xbox que seriam descartados. Sem termo nem [sort], os mais
+     * populares; com termo, a relevância do site.
      */
-    internal fun searchUrl(query: String, consoleIds: List<Int>, genre: Genre?, page: Int): String {
+    internal fun searchUrl(query: String, consoleIds: List<Int>, genre: Genre?, page: Int, sort: SortOrder = SortOrder.DEFAULT): String {
         val params = buildList {
             query.trim().takeIf { it.isNotBlank() }?.let { add("q" to it) }
             consoleIds.distinct().forEach { add("consoles[]" to it.toString()) }
             genre?.let { g -> GENRE_TERMS[g].orEmpty().forEach { add("genres[]" to it.toString()) } }
-            if (query.isBlank()) add("sort" to "popular")
+            (SORTS[sort] ?: "popular".takeIf { query.isBlank() })?.let { add("sort" to it) }
         }
         return Urls.withQuery("$BASE/browse-all-roms/" + (if (page > 1) "page/$page/" else ""), params)
     }
@@ -194,7 +198,16 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
         }.distinctBy { it.downloadUrl }
     }
 
-    override suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink {
+    override suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink = try {
+        resolveLink(entry, variant)
+    } catch (e: HttpStatusException) {
+        // Verificação que não passou (do site ou do servidor de arquivos): mensagem legível, não "HTTP 403: url".
+        throw LocalizedException(R.string.web_check_blocked, URI(e.url).host.orEmpty())
+    } catch (e: java.net.SocketTimeoutException) {
+        throw LocalizedException(R.string.romsfun_link_failed, e.message.orEmpty())
+    }
+
+    private suspend fun resolveLink(entry: CatalogEntry, variant: RomVariant): DirectLink {
         val pageUrl = variant.downloadUrl.takeIf { DOWNLOAD_FILE.matches(it) }
             ?: throw LocalizedException(R.string.catalog_no_downloadable_file, entry.id)
         // O AJAX descobre o arquivo pelo Referer; abrir a página antes é o que o navegador faz.
@@ -262,14 +275,14 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
             .apply { link.headers.forEach { (k, v) -> header(k, v) } }
             .header("Range", "bytes=0-0")
             .build()
-        Http.clientFor(link.ipv6).newCall(request).execute().use { res ->
+        with(Http) { Http.clientFor(link.ipv6).newCall(request).executeCancellable { res ->
             when {
                 res.isSuccessful -> Probe.OK
                 res.header("cf-mitigated") == "challenge" -> Probe.CHALLENGE
                 res.code == 503 || res.code == 429 -> Probe.BUSY
                 else -> Probe.INVALID
             }
-        }
+        } }
     }
 
     /** O link é assinado com o IP de quem pediu: o do WebView. O `/cdn-cgi/trace` do Cloudflare diz qual foi. */
@@ -332,6 +345,13 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
     private data class Console(val systemId: String, val termId: Int, val slugs: List<String>)
 
     companion object {
+        /** Valores de `sort` da `/browse-all-roms/` (o site não ordena por nota). "newest" é a data em que o jogo entrou. */
+        internal val SORTS = mapOf(
+            SortOrder.POPULAR to "popular",
+            SortOrder.RECENT to "newest",
+            SortOrder.TITLE to "alphabetical",
+        )
+
         private const val BASE = "https://romsfun.com"
         private const val PAGE_TTL_MS = 10 * 60 * 1000L
         private val GAME_URL = Regex("""^https://romsfun\.com/roms/([a-z0-9-]+)/[^/]+\.html$""")

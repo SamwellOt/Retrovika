@@ -123,6 +123,7 @@ dependencies {
     // .zip com senha (ZipCrypto/AES), que o commons-compress não descriptografa.
     implementation(libs.zip4j)
     implementation(libs.xz)
+    implementation(libs.zxing.core)
 
     implementation(project(":libretrodroid"))
 

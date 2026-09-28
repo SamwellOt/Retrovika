@@ -17,6 +17,7 @@
 
 #include <GLES3/gl3.h>
 #include <EGL/egl.h>
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <cmath>
@@ -235,6 +236,7 @@ private:
 void Video::renderFrame() {
     if (skipDuplicateFrames && !isDirty) return;
     isDirty = false;
+    frameRendered = true;
 
     if (hardwareAccelerated) {
         CoreGLState coreState;
@@ -318,6 +320,78 @@ void Video::drawFrame() {
 
         glUseProgram(0);
     }
+}
+
+bool Video::takeFrameRendered() {
+    bool rendered = frameRendered;
+    frameRendered = false;
+    return rendered;
+}
+
+bool Video::copyForeground() {
+    // Só a área do jogo: em retrato ela ocupa o topo da janela, e o resto é o fundo do controle.
+    auto& vertices = videoLayout.getForegroundVertices();
+    float minX = 1.0F, maxX = -1.0F, minY = 1.0F, maxY = -1.0F;
+    for (size_t i = 0; i < vertices.size(); i += 2) {
+        minX = std::min(minX, vertices[i]);
+        maxX = std::max(maxX, vertices[i]);
+        minY = std::min(minY, vertices[i + 1]);
+        maxY = std::max(maxY, vertices[i + 1]);
+    }
+    int screenWidth = videoLayout.getScreenWidth();
+    int screenHeight = videoLayout.getScreenHeight();
+    auto toPixels = [](float ndc, int size) {
+        return std::clamp((int) std::lround((ndc + 1.0F) * 0.5F * size), 0, size);
+    };
+    int srcX0 = toPixels(minX, screenWidth), srcX1 = toPixels(maxX, screenWidth);
+    int srcY0 = toPixels(minY, screenHeight), srcY1 = toPixels(maxY, screenHeight);
+    int width = srcX1 - srcX0;
+    int height = srcY1 - srcY0;
+    if (width <= 0 || height <= 0) return false;
+
+    CoreGLState coreState;
+    if (captureFramebuffer == 0) {
+        glGenFramebuffers(1, &captureFramebuffer);
+        glGenTextures(1, &captureTexture);
+    }
+    if (width != captureWidth || height != captureHeight) {
+        glBindTexture(GL_TEXTURE_2D, captureTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, captureFramebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, captureTexture, 0);
+        captureWidth = width;
+        captureHeight = height;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, captureFramebuffer);
+    glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    return true;
+}
+
+void Video::drawCapture(int targetWidth, int targetHeight) {
+    CoreGLState coreState;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glViewport(0, 0, targetWidth, targetHeight);
+    glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (captureFramebuffer == 0 || captureWidth <= 0 || captureHeight <= 0) return;
+
+    // Cabe inteiro no quadro do encoder, com faixas pretas onde a proporção não bate.
+    float scale = std::min((float) targetWidth / captureWidth, (float) targetHeight / captureHeight);
+    int dstWidth = (int) std::lround(captureWidth * scale);
+    int dstHeight = (int) std::lround(captureHeight * scale);
+    int dstX = (targetWidth - dstWidth) / 2;
+    int dstY = (targetHeight - dstHeight) / 2;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, captureFramebuffer);
+    glBlitFramebuffer(
+        0, 0, captureWidth, captureHeight,
+        dstX, dstY, dstX + dstWidth, dstY + dstHeight,
+        GL_COLOR_BUFFER_BIT,
+        GL_LINEAR
+    );
 }
 
 float Video::getScreenDensity() {

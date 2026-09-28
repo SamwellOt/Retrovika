@@ -125,6 +125,10 @@ class RomsFunSourceTest {
         assertEquals("https://romsfun.com/browse-all-roms/page/2/?q=mario%20kart&consoles%5B%5D=91&genres%5B%5D=2357", url)
         // Sem termo: os mais populares.
         assertEquals("https://romsfun.com/browse-all-roms/?consoles%5B%5D=10&sort=popular", source.searchUrl(" ", listOf(10), null, 1))
+        // Ordem escolhida vale com e sem termo; a que o site não tem (nota) cai no padrão.
+        assertEquals("https://romsfun.com/browse-all-roms/?q=mario&consoles%5B%5D=10&sort=alphabetical", source.searchUrl("mario", listOf(10), null, 1, SortOrder.TITLE))
+        assertEquals("https://romsfun.com/browse-all-roms/?consoles%5B%5D=10&sort=newest", source.searchUrl("", listOf(10), null, 1, SortOrder.RECENT))
+        assertEquals("https://romsfun.com/browse-all-roms/?consoles%5B%5D=10&sort=popular", source.searchUrl("", listOf(10), null, 1, SortOrder.RATED))
     }
 
     @Test

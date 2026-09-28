@@ -65,4 +65,31 @@ class CatalogMergeTest {
         assertEquals(listOf("gow-cd", "gow", "gow2"), incremental.first().members.map { it.id })
         assertEquals(page1.first().downloadKey, incremental.first().downloadKey)
     }
+
+    @Test
+    fun `ordem alfabetica ignora acentos caixa e pontuacao`() {
+        val titles = listOf("¡Mucha Lucha!", "Ábaco", "zelda", "-8", "Mario")
+        assertEquals(listOf("-8", "Ábaco", "Mario", "¡Mucha Lucha!", "zelda"), titles.sortedBy(::titleKey))
+    }
+
+    @Test
+    fun `ordem que a fonte nao aplica vira a padrao`() = kotlinx.coroutines.runBlocking {
+        val asked = mutableListOf<SortOrder>()
+        val fake = object : CatalogSource {
+            override val id = "fake"
+            override val name = "Fake"
+            override val description = 0
+            override val systems = setOf("gba")
+            override fun sorts(systemId: String?) = setOf(SortOrder.TITLE)
+            override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
+                asked += sort
+                return CatalogPage(emptyList(), page, 1, 0)
+            }
+        }
+        repo.search(fake, "", "gba", 1, null, null, SortOrder.RATED)
+        repo.search(fake, "", "gba", 1, null, null, SortOrder.TITLE)
+        // A 3ª é a mesma página da 1ª (padrão), já em cache.
+        repo.search(fake, "", "gba", 1, null, null, SortOrder.DEFAULT)
+        assertEquals(listOf(SortOrder.DEFAULT, SortOrder.TITLE), asked)
+    }
 }

@@ -79,6 +79,10 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
                     ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, tmp) }
                     ?: return@mapNotNull null
                 val dest = File(paths.system, match.fileName)
+                // Casou só pelo nome, com MD5 diferente: não substitui uma cópia que já confere.
+                if (match.md5 != null && !match.md5.equals(hash, true) && dest.exists() && md5(dest).equals(match.md5, true)) {
+                    return@mapNotNull null
+                }
                 dest.parentFile?.mkdirs()
                 tmp.copyTo(dest, overwrite = true)
                 match.fileName

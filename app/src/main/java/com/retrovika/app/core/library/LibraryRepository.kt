@@ -148,16 +148,20 @@ class LibraryRepository(
         val found = mutableListOf<Game>()
         try {
             filesLock.withLock { scanInternal(found) }
-            val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
             // jogos na biblioteca; senão, favoritos e tempo de jogo seriam apagados por engano.
             val unreadable = mutableListOf<String>()
             settings.current().linkedFolders.forEach { tree ->
                 runCatching { scanTree(Uri.parse(tree), found) }.onFailure { unreadable += tree }
             }
+            // Lido depois da varredura das pastas (que pode ser demorada): um jogo removido durante ela já
+            // está oculto aqui e não volta.
+            val hidden = settings.current().hiddenGames
             val existing = dao.allUris().toSet()
             val foundUris = found.map { it.uri }.toSet()
             dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden })
+            // Removido enquanto outra varredura já o reinseria: sai agora.
+            existing.filter { it in hidden }.chunked(500).forEach { dao.deleteByUris(it) }
             // Remove apenas entradas locais cujo arquivo realmente sumiu.
             val missing = existing.filter { uri ->
                 uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
@@ -176,10 +180,12 @@ class LibraryRepository(
             if (!dir.exists()) return@forEach
             val folders = dir.walkTopDown().maxDepth(3).filter { it.isDirectory }.toList()
             // Primeiro lê todos os índices (.cue/.gdi/.m3u/.ccd): um .m3u pode citar discos em subpastas.
+            // Só os que o console abre: os cores de PS1 não leem .ccd, e o .img citado por ele é o jogo.
+            val sheetExtensions = GameFiles.SHEET_EXTENSIONS intersect system.extensions
             val referenced = HashSet<String>()
             val unreadable = HashSet<File>()
             folders.forEach { folder ->
-                folder.listFiles()?.filter { it.isFile && it.extension.lowercase() in GameFiles.SHEET_EXTENSIONS }?.forEach { sheet ->
+                folder.listFiles()?.filter { it.isFile && it.extension.lowercase() in sheetExtensions }?.forEach { sheet ->
                     runCatching { sheet.readText() }
                         .onSuccess { text ->
                             GameFiles.referencedPaths(sheet.extension.lowercase(), text, sheet.name)
@@ -297,7 +303,9 @@ class LibraryRepository(
         val unknown = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
-        uris.forEach { uri ->
+        // Tudo dentro da trava das ROMs: uma varredura no meio da cópia veria as faixas .bin antes do .cue
+        // e as registraria como jogos soltos.
+        writingRoms { uris.forEach { uri ->
             val name = FileNames.safe(runCatching { displayName(uri) }.getOrNull() ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
@@ -312,7 +320,7 @@ class LibraryRepository(
                 input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
                 if (!part.renameTo(dest)) throw IOException("rename ${part.name}")
                 val file = if (Archives.isArchive(dest) && !system.keepArchives) {
-                    writingRoms { RomExtractor.extract(dest, dest.parentFile!!, system) }
+                    RomExtractor.extract(dest, dest.parentFile!!, system)
                 } else dest
                 copied += system to file
             } catch (c: CancellationException) {
@@ -322,10 +330,10 @@ class LibraryRepository(
                 part.delete()
                 failed += name to t.userMessage(context)
             }
-        }
+        } }
         // Os arquivos escolhidos juntos são irmãos: um .cue com seus .bin vira um jogo só.
         val siblings = copied.map { it.second.name.lowercase() }.toSet()
-        val referenced = copied.map { it.second }.filter { it.extension.lowercase() in GameFiles.SHEET_EXTENSIONS }
+        val referenced = copied.filter { (system, file) -> file.extension.lowercase().let { it in GameFiles.SHEET_EXTENSIONS && it in system.extensions } }.map { it.second }
             .flatMap { sheet -> GameFiles.referencedFiles(sheet.extension.lowercase(), runCatching { sheet.readText() }.getOrDefault(""), sheet.name) }
             .map { it.lowercase() }.toSet()
         copied.forEach { (system, file) ->

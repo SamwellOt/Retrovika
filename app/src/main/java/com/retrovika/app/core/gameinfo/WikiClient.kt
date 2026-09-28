@@ -163,7 +163,7 @@ class WikiClient {
             precision == 10 -> "${date[1]}-${date[2]}"
             else -> date[1]
         }
-    }.minOrNull()
+    }.minByOrNull { it.padEnd(10, '~') }  // Só o ano ("1994") não pode vencer uma data completa do mesmo ano.
 
     private fun value(claim: JsonElement): JsonElement? =
         claim.jsonObject["mainsnak"]?.jsonObject?.get("datavalue")?.jsonObject?.get("value")

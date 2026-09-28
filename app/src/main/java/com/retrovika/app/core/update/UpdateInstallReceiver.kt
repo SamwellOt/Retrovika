@@ -14,8 +14,10 @@ class UpdateInstallReceiver : BroadcastReceiver() {
         when (status) {
             // O Android pede a confirmação do usuário: abre a tela dele.
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                context.container.updater.onConfirmRequested()
                 val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java) ?: return
-                context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                // Com o app em segundo plano o Android 10+ bloqueia a abertura; o botão "Instalar" continua lá.
+                runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
             // Deu certo: o sistema encerra o processo para trocar o APK, não há o que fazer aqui.
             PackageInstaller.STATUS_SUCCESS -> {}

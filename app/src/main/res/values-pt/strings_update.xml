@@ -16,6 +16,7 @@
     <string name="update_open_page">Abrir no GitHub</string>
     <string name="update_error_signature">Esta versão foi assinada com outra chave, e o Android não a instala por cima da que você tem. Faça backup da pasta do Retrovika (saves e estados), desinstale o app e instale o APK novo pelo GitHub.</string>
     <string name="update_error_invalid">O arquivo baixado não é um APK do Retrovika.</string>
+    <string name="update_error_version">Esta versão tem o número de build (versionCode) igual ou menor que o do app instalado, e o Android não a instala. Aguarde a próxima versão.</string>
     <string name="update_error_install">O Android não instalou a atualização: %1$s</string>
 
     <string name="settings_group_updates">Atualizações</string>

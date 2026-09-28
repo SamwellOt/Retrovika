@@ -53,7 +53,10 @@ class HomebrewHubSource : CatalogSource {
     @Serializable
     private data class FileEntry(val filename: String, val default: Boolean = false, val playable: Boolean = false)
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
+    /** A API só ordena por data de entrada (o padrão) e por título; não há contagem de downloads nem notas. */
+    override fun sorts(systemId: String?): Set<SortOrder> = setOf(SortOrder.RECENT, SortOrder.TITLE)
+
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
         val url = Urls.withQuery("$base/api/search", buildList {
             add("page" to page.toString())
             add("results" to "30")
@@ -63,8 +66,13 @@ class HomebrewHubSource : CatalogSource {
             if (query.isNotBlank()) add("q" to query.trim())
             systemId?.let { platformBySystem[it] }?.let { add("platform" to it) }
             kind?.let { add("typetag" to it) }
-            add("sort" to "firstadded_date")
-            add("order" to "desc")
+            if (sort == SortOrder.TITLE) {
+                add("sort" to "title")
+                add("order" to "asc")
+            } else {
+                add("sort" to "firstadded_date")
+                add("order" to "desc")
+            }
         })
 
         val response = Http.json.decodeFromString(Response.serializer(), Http.getString(url))

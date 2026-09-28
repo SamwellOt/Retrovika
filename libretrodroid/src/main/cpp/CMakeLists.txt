@@ -47,6 +47,8 @@ add_library(libretrodroid SHARED
         renderers/es3/imagerendereres3.cpp
         audio.h
         audio.cpp
+        capture.h
+        capture.cpp
         resamplers/resampler.h
         resamplers/linearresampler.h
         resamplers/linearresampler.cpp

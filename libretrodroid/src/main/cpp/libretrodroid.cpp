@@ -232,6 +232,7 @@ void LibretroDroid::onMotionEvent(
     float yAxis
 ) {
     LOGD("Received motion event: %d %.2f, %.2f", source, xAxis, yAxis);
+    std::lock_guard<std::mutex> lock(inputLock);
     if (input) {
         input->onMotionEvent(port, source, xAxis, yAxis);
     }
@@ -239,6 +240,7 @@ void LibretroDroid::onMotionEvent(
 
 void LibretroDroid::onTouchEvent(float xAxis, float yAxis) {
     LOGD("Received touch event: %.2f, %.2f", xAxis, yAxis);
+    std::lock_guard<std::mutex> lock(inputLock);
     if (input && video) {
         auto [x, y] = video->getLayout().getRelativePosition(xAxis, yAxis);
         input->onMotionEvent(0, Input::MOTION_SOURCE_POINTER, x, y);
@@ -247,6 +249,7 @@ void LibretroDroid::onTouchEvent(float xAxis, float yAxis) {
 
 void LibretroDroid::onKeyEvent(unsigned int port, int action, int keyCode) {
     LOGD("Received key event with action (%d) and keycode (%d)", action, keyCode);
+    std::lock_guard<std::mutex> lock(inputLock);
     if (input) {
         input->onKeyEvent(port, action, keyCode);
     }
@@ -440,6 +443,9 @@ void LibretroDroid::destroy() {
     core->retro_unload_game();
     core->retro_deinit();
 
+    capture.release();
+    capture.setAudioEnabled(false);
+
     video = nullptr;
     core = nullptr;
     rumble = nullptr;
@@ -453,7 +459,12 @@ void LibretroDroid::destroy() {
 void LibretroDroid::resume() {
     LOGD("Performing libretrodroid resume");
 
-    input = std::make_unique<Input>();
+    {
+        // Eventos da fila da thread GL (controles pela rede) rodam mesmo com ela pausada, enquanto
+        // pause/resume trocam o Input na thread principal.
+        std::lock_guard<std::mutex> lock(inputLock);
+        input = std::make_unique<Input>();
+    }
 
     fpsSync->reset();
     audio->start();
@@ -464,6 +475,7 @@ void LibretroDroid::pause() {
     LOGD("Performing libretrodroid pause");
     audio->stop();
 
+    std::lock_guard<std::mutex> lock(inputLock);
     input = nullptr;
 }
 
@@ -492,6 +504,10 @@ void LibretroDroid::step() {
 
     if (video && !video->rendersInVideoCallback()) {
         video->renderFrame();
+    }
+
+    if (video && video->takeFrameRendered()) {
+        capture.onFrameRendered(*video);
     }
 
     if (fpsSync) {
@@ -570,6 +586,8 @@ void LibretroDroid::handleVideoRefresh(
 }
 
 size_t LibretroDroid::handleAudioCallback(const int16_t *data, size_t frames) {
+    // Antes do "som ligado": transmitindo, o celular pode ficar mudo e a outra tela continuar com som.
+    capture.writeAudio(data, frames);
     if (audio && audioEnabled) {
         audio->write(data, frames);
     }
@@ -639,6 +657,7 @@ void LibretroDroid::afterGameLoad() {
     fpsSync = std::make_unique<FPSSync>(system_av_info.timing.fps, screenRefreshRate);
 
     double inputSampleRate = system_av_info.timing.sample_rate * fpsSync->getTimeStretchFactor();
+    audioSampleRate = (int) std::lround(inputSampleRate);
 
     audio = std::make_unique<Audio>(
         (int32_t) std::lround(inputSampleRate),

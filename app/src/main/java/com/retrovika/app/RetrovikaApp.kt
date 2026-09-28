@@ -24,6 +24,7 @@ import com.retrovika.app.core.net.WebFetcher
 import com.retrovika.app.core.settings.SettingsRepository
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.update.AppUpdater
+import com.retrovika.app.remote.RemotePlay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,6 +44,7 @@ class AppContainer(app: Application) {
     val gameInfo = GameInfoRepository(BackloggdClient { url -> web.get("https://backloggd.com/", url) })
     val dat = DatRepository(app, database.dats())
     val updater = AppUpdater(app, scope)
+    val remote = RemotePlay(app)
     val downloads = DownloadManager(
         app, scope, paths, library, settings.cached,
         resolve = { catalog.resolve(it) },

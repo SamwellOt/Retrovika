@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_tab_remote">Tela e controles</string>
+    <string name="remote_enable">Jogar pela rede</string>
+    <string name="remote_enable_subtitle">Outros celulares viram controles e um computador ou TV mostra o jogo. Todos na mesma rede, sem instalar nada.</string>
+    <string name="remote_pad_title">Controle extra</string>
+    <string name="remote_pad_hint">Aponte a câmera de outro celular para o código. Abre um controle no navegador: jogadores 2 a 4.</string>
+    <string name="remote_screen_title">Computador ou TV</string>
+    <string name="remote_screen_hint">Abra este endereço no navegador e digite o código. Teclado ou controle ligado nele também joga.</string>
+    <string name="remote_code">Código</string>
+    <string name="remote_connected">Conectados</string>
+    <string name="remote_this_phone">Este celular</string>
+    <string name="remote_screen">Tela</string>
+    <string name="remote_pad">Controle</string>
+    <string name="remote_remove">Remover</string>
+    <string name="remote_nobody">Ninguém conectado ainda.</string>
+    <string name="remote_mute_host">Som só na outra tela</string>
+    <string name="remote_mute_host_subtitle">Silencia este celular enquanto um computador ou TV mostra o jogo.</string>
+    <string name="remote_paused_hint">O jogo fica pausado enquanto este menu está aberto.</string>
+    <string name="remote_no_stream">Este celular não consegue enviar a imagem (precisa de OpenGL ES 3). Os controles funcionam.</string>
+    <string name="remote_no_network">Conecte-se a uma rede Wi-Fi (ou ligue o roteador do celular) para jogar pela rede.</string>
+    <string name="remote_server_failed">Não deu para abrir a conexão neste celular.</string>
+    <string name="remote_encoder_failed">O codificador de vídeo deste celular não iniciou, então a imagem não chega à outra tela.</string>
+    <string name="remote_stream_failed">A imagem do jogo não está chegando ao codificador de vídeo deste celular, então a outra tela fica sem imagem. Som e controles continuam funcionando.</string>
+</resources>

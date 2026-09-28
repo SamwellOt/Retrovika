@@ -134,7 +134,7 @@ class DownloadManager(
             } catch (e: LocalizedException) {
                 // Depois de minutos esperando o servidor ocupado, a liberação da verificação (cf_clearance) do servidor
                 // de arquivos já venceu e ele recusa com 403: gera o link de novo (o que refaz a verificação) e continua.
-                if (!waited || refreshes++ >= MAX_LINK_REFRESHES || e.messageRes !in REFUSED) throw e
+                if (!waited || refreshes++ >= MAX_LINK_REFRESHES || !isRefusal(e)) throw e
                 update(taskId) { it.copy(retryAt = 0, bytesDone = 0, bytesTotal = -1, progress = 0f) }
             }
         }
@@ -339,6 +339,10 @@ class DownloadManager(
         val RETRYABLE = setOf(DownloadStatus.FAILED, DownloadStatus.CANCELED)
         private const val MAX_LINK_REFRESHES = 2
         /** Recusas que um link novo resolve: sessão/verificação vencida (403) ou link expirado. */
-        private val REFUSED = setOf(R.string.download_forbidden, R.string.download_http_error)
+        /** Link vencido ou recusado (403/410), o que um link novo resolve; 404, 500 etc. não valem outra rodada. */
+        private fun isRefusal(e: LocalizedException): Boolean = e.messageRes == R.string.download_forbidden ||
+            (e.messageRes == R.string.download_http_error && e.args.firstOrNull() in REFUSED_CODES)
+
+        private val REFUSED_CODES = setOf(403, 410)
     }
 }

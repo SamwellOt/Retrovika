@@ -25,6 +25,13 @@
     <string name="explore_filter_genre">Gênero</string>
     <string name="explore_filter_type">Tipo</string>
     <string name="explore_genre_note">Os gêneros vêm das etiquetas e descrições de cada site, então alguns resultados podem não corresponder exatamente.</string>
+    <string name="explore_filter_sort">Ordenar</string>
+    <string name="explore_sort_note">Cada site ordena do seu jeito, e os que não têm essa opção mantêm a ordem de sempre; numa lista com vários sites, a ordem é aproximada.</string>
+    <string name="catalog_sort_default">Padrão</string>
+    <string name="catalog_sort_popular">Populares</string>
+    <string name="catalog_sort_rated">Mais avaliados</string>
+    <string name="catalog_sort_recent">Recentes</string>
+    <string name="catalog_sort_title">A–Z</string>
     <string name="explore_empty_filtered">Nenhum título com esses filtros. Tente outro console ou gênero.</string>
     <string name="explore_clear_filters">Limpar filtros</string>
 
@@ -45,6 +52,8 @@
     <!-- Fontes do catálogo -->
     <string name="catalog_all_sources">Todas as fontes</string>
     <string name="catalog_all_sources_description">Busca o mesmo título em todos os sites de uma vez e mostra de onde dá para baixar.</string>
+    <string name="catalog_roms">Roms</string>
+    <string name="catalog_roms_description">ROMs e ISOs de jogos comerciais de vários sites ao mesmo tempo (CDRomance e RomsFun). O site de cada arquivo aparece na hora de baixar.</string>
     <string name="catalog_homebrewhub_description">Milhares de jogos independentes e gratuitos de GB, GBC, GBA e NES.</string>
     <string name="catalog_archive_description">Software hospedado no archive.org.</string>
     <string name="catalog_cdromance_description">Acervo amplo de ROMs e ISOs de vários consoles, com download direto.</string>

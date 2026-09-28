@@ -10,6 +10,7 @@ import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.pm.PackageInfoCompat
 import com.retrovika.app.R
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.LocalizedException
@@ -119,7 +120,7 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
                 install(release)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                val final = e is LocalizedException && e.messageRes in setOf(R.string.update_error_signature, R.string.update_error_invalid)
+                val final = e is LocalizedException && e.messageRes in setOf(R.string.update_error_signature, R.string.update_error_invalid, R.string.update_error_version)
                 _state.value = UpdateState.Failed(release, e.userMessage(context), retry = !final)
             }
         }
@@ -150,6 +151,15 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
         }
     }
 
+    /**
+     * O instalador pediu a confirmação do usuário. O botão "Instalar" volta já: se a tela de confirmação
+     * não abrir (app em segundo plano) ou for deixada pelo Home, nenhum resultado chega e o estado
+     * "Instalando" ficaria preso sem saída.
+     */
+    internal fun onConfirmRequested() {
+        (_state.value as? UpdateState.Installing)?.let { _state.value = UpdateState.Downloaded(it.release) }
+    }
+
     /** Resposta do instalador (ver [UpdateInstallReceiver]). */
     internal fun onInstallResult(status: Int, message: String?) {
         val release = when (val s = _state.value) {
@@ -177,8 +187,14 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
         if (archive.packageName != context.packageName) throw LocalizedException(R.string.update_error_invalid)
         val installed = packageInfo { flags -> pm.getPackageInfo(context.packageName, flags) }
         val theirs = signers(archive)
-        if (installed != null && theirs.isNotEmpty() && signers(installed).intersect(theirs).isEmpty()) {
+        // Sem assinatura legível o instalador recusaria de qualquer jeito, com uma mensagem genérica.
+        if (theirs.isEmpty()) throw LocalizedException(R.string.update_error_invalid)
+        if (installed != null && signers(installed).intersect(theirs).isEmpty()) {
             throw LocalizedException(R.string.update_error_signature)
+        }
+        // O Android recusa um versionCode que não seja maior (seria um downgrade), com o mesmo status de chave errada.
+        if (installed != null && PackageInfoCompat.getLongVersionCode(archive) <= PackageInfoCompat.getLongVersionCode(installed)) {
+            throw LocalizedException(R.string.update_error_version)
         }
     }
 

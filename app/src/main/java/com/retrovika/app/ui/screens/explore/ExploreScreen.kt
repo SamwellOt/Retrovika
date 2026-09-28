@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
@@ -59,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +83,7 @@ import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.DownloadStatus
 import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.catalog.Genre
+import com.retrovika.app.core.catalog.SortOrder
 import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.storage.formatBytes
@@ -148,6 +152,10 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
     // A página e o fim do carregamento também são chaves: depois de páginas vazias (filtro sem
     // resultado nelas) a lista não cresce, e sem isso a rolagem nunca pedia a próxima.
     LaunchedEffect(nearEnd, state.entries.size, state.page, state.loading) { if (nearEnd && !state.loading) vm.loadMore() }
+    // Os cartões já vistos não mudam de lugar quando um site mais lento responde (ver ExploreViewModel.stable).
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }.collect(vm::onSeen)
+    }
 
     Box(Modifier.fillMaxSize()) {
     LazyVerticalGrid(
@@ -175,7 +183,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                 if (vm.sources.size > 1) {
                     FilterSection(stringResource(R.string.explore_filter_source)) {
                         vm.sources.forEach { src ->
-                            SelectChip(src.nameRes?.let { stringResource(it) } ?: src.name, state.sourceId == src.id, onClick = { vm.setSource(src.id) })
+                            SelectChip(src.label(), state.sourceId == src.id, onClick = { vm.setSource(src.id) })
                         }
                     }
                 }
@@ -191,6 +199,14 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                 FilterSection(stringResource(R.string.explore_filter_genre)) {
                     Genre.entries.forEach { g ->
                         AccentChip(stringResource(g.label), state.genre == g, g.accent, onClick = { vm.toggleGenre(g) }, icon = g.icon)
+                    }
+                }
+
+                // Só as ordens que algum site do filtro aplica com este console; só a padrão, a linha some.
+                val sorts = vm.sorts(state)
+                if (sorts.size > 1) {
+                    FilterSection(stringResource(R.string.explore_filter_sort)) {
+                        sorts.forEach { o -> SelectChip(stringResource(o.label), state.sort == o, onClick = { vm.setSort(o) }) }
                     }
                 }
 
@@ -225,6 +241,8 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                         Text(stringResource(current.description), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                         // O gênero sai das etiquetas e descrições de cada site: é bom avisar que é aproximado.
                         if (state.genre != null) Text(stringResource(R.string.explore_genre_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
+                        // Vários sites, cada um com a própria régua de "popular" ou "recente": a lista só intercala.
+                        if (current.aggregated && state.sort != SortOrder.DEFAULT) Text(stringResource(R.string.explore_sort_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                     }
                 }
             }
@@ -262,11 +280,13 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
             }
         }
 
-        items(state.entries, key = { it.sourceId + it.id }, contentType = { "entry" }) { entry ->
+        // downloadKey: o mesmo cartão continua com a mesma chave quando uma fonte preferida chega depois e
+        // vira a entrada principal (sourceId + id mudaria, e a grade trataria como outro cartão).
+        items(state.entries, key = { it.downloadKey }, contentType = { "entry" }) { entry ->
             val task = downloadsByEntry[entry.downloadKey]
             CatalogCard(
                 entry, task,
-                sourceLabels = if (state.aggregated) vm.sourceNames(entry) else emptyList(),
+                sourceLabels = if (state.sourceId == ALL_SOURCES) vm.sourceLabels(entry).map { it.label() } else emptyList(),
                 onOpen = { onOpenGame(context.container.catalog.open(entry)) },
                 onDownload = { vm.requestDownload(entry) },
                 onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } },
@@ -469,23 +489,29 @@ internal fun VariantPickerSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(), containerColor = Palette.Surface) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Text(prompt.entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(stringResource(R.string.explore_pick_rom), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
-            Spacer(Modifier.height(12.dp))
-            when (prompt) {
-                is VariantPrompt.Loading -> Column(Modifier.fillMaxWidth()) {
-                    repeat(3) {
-                        Box(Modifier.fillMaxWidth().height(52.dp).padding(vertical = 6.dp).shimmer(RoundedCornerShape(12.dp)))
-                    }
+        // Lista preguiçosa, não Column: jogos com dezenas de versões passavam da altura da tela, as de baixo
+        // ficavam inalcançáveis e o arrasto só puxava a folha. A LazyColumn rola e cede o gesto à folha no topo.
+        LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+            item(contentType = "header") {
+                Column {
+                    Text(prompt.entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.explore_pick_rom), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
+                    Spacer(Modifier.height(12.dp))
                 }
-                is VariantPrompt.Failed -> Text(
-                    stringResource(R.string.explore_variants_failed),
-                    color = Palette.TextSecondary, modifier = Modifier.padding(vertical = 12.dp),
-                )
+            }
+            when (prompt) {
+                is VariantPrompt.Loading -> items(3, contentType = { "skeleton" }) {
+                    Box(Modifier.fillMaxWidth().height(52.dp).padding(vertical = 6.dp).shimmer(RoundedCornerShape(12.dp)))
+                }
+                is VariantPrompt.Failed -> item(contentType = "message") {
+                    Text(
+                        stringResource(R.string.explore_variants_failed),
+                        color = Palette.TextSecondary, modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
                 is VariantPrompt.Ready -> {
                 val sources = prompt.variants.variantSources()
-                prompt.variants.forEachIndexed { index, variant ->
+                itemsIndexed(prompt.variants, contentType = { _, _ -> "variant" }) { index, variant ->
                     if (index > 0) HorizontalDivider(color = Palette.Outline)
                     Row(
                         Modifier
@@ -516,6 +542,9 @@ internal fun VariantPickerSheet(
 }
 
 /** Fontes dos arquivos de uma lista: com mais de uma, cada arquivo diz de onde vem. */
+@Composable
+private fun SourceInfo.label(): String = nameRes?.let { stringResource(it) } ?: name
+
 internal fun List<RomVariant>.variantSources(): Set<String> = mapNotNullTo(LinkedHashSet()) { it.origin?.sourceId }
 
 /** "via RomsFun", só quando a lista mistura fontes. */

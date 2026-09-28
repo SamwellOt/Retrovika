@@ -50,7 +50,10 @@ class InternetArchiveSource : CatalogSource {
         val creator: JsonElement? = null,
     )
 
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
+    /** A nota média (`avg_rating`) enche o topo de pacotes de ROMs, então fica de fora. */
+    override fun sorts(systemId: String?): Set<SortOrder> = setOf(SortOrder.POPULAR, SortOrder.RECENT, SortOrder.TITLE)
+
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
         // Sem console escolhido não há como classificar/baixar: não retorna nada.
         val system = systemId?.let { systemTerms[it] } ?: return CatalogPage(emptyList(), page, 1, 0)
 
@@ -68,7 +71,11 @@ class InternetArchiveSource : CatalogSource {
             "fl[]" to "creator",
             "rows" to perPage.toString(),
             "page" to page.toString(),
-            "sort[]" to "downloads desc",
+            "sort[]" to when (sort) {
+                SortOrder.RECENT -> "publicdate desc"
+                SortOrder.TITLE -> "titleSorter asc"
+                else -> "downloads desc"
+            },
             "output" to "json",
         ))
 

@@ -58,29 +58,58 @@ class BackloggdClient(
     /**
      * Acha o jogo de [title] no console [systemId]. [igdbSlug] (do Wikidata) resolve direto quando
      * existe. Sem ele, entre os resultados com o mesmo título (há vários "Chrono Trigger": SNES, DS,
-     * PS1…), fica o primeiro lançado que saiu no console. Se nenhum saiu nele (o site de ROM errou o
-     * console, ou é um port/hack que o Backloggd não lista, como o "Sonic the Hedgehog 2" de PS1),
-     * fica o primeiro lançado com o título idêntico: é o original, melhor que não mostrar nada.
+     * PS1…), fica o primeiro lançado que saiu no console. Depois vêm os títulos com poucas palavras a
+     * mais ([GameTitles.extraWords]), só se saíram no console. Por último, o primeiro lançado com o
+     * título idêntico em outro console (o site de ROM errou o console, ou é um port/hack que o Backloggd
+     * não lista, como o "Sonic the Hedgehog 2" de PS1): é o original, melhor que não mostrar nada.
      */
     suspend fun find(title: String, systemId: String, igdbSlug: String? = null): BackloggdInfo? {
         igdbSlug?.let { slug -> runCatching { game(slug) }.getOrNull()?.let { return it } }
         val clean = GameTitles.clean(title).ifBlank { return null }
-        val candidates = suggestions(clean).filter { GameTitles.same(it.title, clean) }
-            .sortedWith(compareBy(nullsLast<Int>()) { it.year })
-        if (candidates.isEmpty()) return null
-        // Poucos candidatos, na ordem de lançamento (o original costuma ser o do console retrô), todos
-        // pedidos ao mesmo tempo: esperar um por um somava quase meio segundo a cada título repetido.
-        val top = candidates.take(MAX_CANDIDATES)
-        val results = coroutineScope { top.map { c -> async { runCatching { page(c.slug) } } }.awaitAll() }
-        val pages = results.map { it.getOrNull() }
-        val index = pages.indexOfFirst { page -> page != null && Platforms.matches(systemId, platformSlugs(page), platformNames(page)) }
-            .takeIf { it >= 0 } ?: pages.indexOfFirst { it != null }
-        // Todas as páginas falharam (rede, verificação da CDN): é erro, não "o jogo não está lá". Senão o
+        var ranked = emptyList<Ranked>()
+        for (query in GameTitles.searchQueries(clean)) {
+            ranked = rank(clean, suggestions(query))
+            if (ranked.isNotEmpty()) break
+        }
+        if (ranked.isEmpty()) return null
+
+        val errors = ArrayList<Throwable>()
+        val exact = load(ranked.filter { it.extra == 0 }.take(MAX_CANDIDATES), errors)
+        exact.onPlatform(systemId)?.let { return it.open() }
+        val close = load(ranked.filter { it.extra > 0 }.take(MAX_CANDIDATES), errors)
+        close.onPlatform(systemId)?.let { return it.open() }
+        exact.firstOrNull { it.second != null }?.let { return it.open() }
+        // Página que falhou (rede, verificação da CDN) é erro, não "o jogo não está lá": senão o
         // "não encontrado" ficaria no cache por 15 minutos.
-        if (index < 0) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.takeIf { pages.all { p -> p == null } }?.let { throw it }
-        if (index < 0) return null
-        return parseGame(pages[index]!!, top[index].slug).withReviews()
+        errors.firstOrNull()?.let { throw it }
+        return null
     }
+
+    internal data class Ranked(val suggestion: Suggestion, val extra: Int)
+
+    /**
+     * Sugestões que são o jogo de [title]: primeiro as de título idêntico, depois as com menos palavras a
+     * mais; em cada grupo, a lançada antes primeiro (o original costuma ser o do console retrô).
+     */
+    internal fun rank(title: String, suggestions: List<Suggestion>): List<Ranked> =
+        suggestions.distinctBy { it.slug }
+            .mapNotNull { s -> GameTitles.extraWords(title, s.title)?.let { Ranked(s, it) } }
+            .sortedWith(compareBy<Ranked> { it.extra }.thenBy(nullsLast<Int>()) { it.suggestion.year })
+
+    /**
+     * Poucos candidatos, todos pedidos ao mesmo tempo: esperar um por um somava quase meio segundo a cada
+     * título repetido. Página que falha fica nula e o erro vai para [errors].
+     */
+    private suspend fun load(candidates: List<Ranked>, errors: MutableList<Throwable>): List<Pair<String, Document?>> {
+        val results = coroutineScope { candidates.map { c -> async { runCatching { page(c.suggestion.slug) } } }.awaitAll() }
+        results.forEach { r -> r.exceptionOrNull()?.let(errors::add) }
+        return candidates.zip(results) { c, r -> c.suggestion.slug to r.getOrNull() }
+    }
+
+    private fun List<Pair<String, Document?>>.onPlatform(systemId: String) =
+        firstOrNull { (_, page) -> page != null && Platforms.matches(systemId, platformSlugs(page), platformNames(page)) }
+
+    private suspend fun Pair<String, Document?>.open(): BackloggdInfo = parseGame(second!!, first).withReviews()
 
     suspend fun suggestions(query: String): List<Suggestion> {
         val json = Http.json.parseToJsonElement(
@@ -130,6 +159,8 @@ class BackloggdClient(
             ?: doc.selectFirst("h1")?.text()?.trim() ?: slug
         val description = doc.selectFirst("#collapseSummary p")?.let { HtmlText.of(it, keepNewlines = true) }?.ifBlank { null }
             ?: doc.selectFirst("meta[property=og:description]")?.attr("content")?.ifBlank { null }
+                // Jogo sem resumo: a meta traz o slogan do site, não uma descrição do jogo.
+                ?.takeUnless { it.startsWith("Keep a virtual backlog", ignoreCase = true) }
 
         return BackloggdInfo(
             slug = slug,

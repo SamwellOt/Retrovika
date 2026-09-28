@@ -25,7 +25,7 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
 
     fun source(id: String) = sources.first { it.id == id }
 
-    private data class PageKey(val source: String, val query: String, val system: String?, val page: Int, val kind: String?, val genre: Genre?)
+    private data class PageKey(val source: String, val query: String, val system: String?, val page: Int, val kind: String?, val genre: Genre?, val sort: SortOrder)
     private class CachedPage(val page: CatalogPage, val at: Long)
 
     /**
@@ -37,11 +37,16 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
     }
 
     /** [CatalogSource.search] com cache das páginas recentes. */
-    suspend fun search(source: CatalogSource, query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
-        val key = PageKey(source.id, query.trim(), systemId, page, kind, genre)
+    suspend fun search(
+        source: CatalogSource, query: String, systemId: String?, page: Int, kind: String?, genre: Genre?,
+        sort: SortOrder = SortOrder.DEFAULT,
+    ): CatalogPage {
+        // Uma ordem que a fonte não aplica cai na dela: mesma página em cache que a do padrão.
+        val applied = sort.takeIf { it in source.sorts(systemId) } ?: SortOrder.DEFAULT
+        val key = PageKey(source.id, query.trim(), systemId, page, kind, genre, applied)
         val now = System.currentTimeMillis()
         synchronized(pageCache) { pageCache[key] }?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return it.page }
-        val result = source.search(query, systemId, page, kind, genre)
+        val result = source.search(query, systemId, page, kind, genre, applied)
         synchronized(pageCache) { pageCache[key] = CachedPage(result, now) }
         return result
     }
@@ -113,11 +118,15 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         systemId: String?,
         page: Int,
         genre: Genre? = null,
+        sort: SortOrder = SortOrder.DEFAULT,
+        /** Limita a busca a estas fontes (o grupo "Roms" do Explorar); `null` busca em todas. */
+        only: Collection<String>? = null,
         /** Resultado parcial a cada fonte que responde: a tela não espera o site mais lento. */
         onPartial: (CatalogPage) -> Unit = {},
     ): CatalogPage = coroutineScope {
         val applicable = sources.filter { src ->
             when {
+                only != null && src.id !in only -> false
                 src.requiresSystem && systemId == null -> false
                 systemId != null -> systemId in src.systems
                 else -> true
@@ -127,11 +136,11 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         val results = applicable
             .mapIndexed { i, src ->
                 async {
-                    runCatching { search(src, query, systemId, page, null, genre) }.also { r ->
+                    runCatching { search(src, query, systemId, page, null, genre, sort) }.also { r ->
                         r.getOrNull()?.let { p ->
                             // Mesma ordem de fontes do resultado final: o parcial só ganha cartões, nunca troca a lista.
                             // Entregue dentro da trava: um parcial mais antigo (com menos fontes) nunca chega depois de um mais novo.
-                            synchronized(arrived) { arrived[i] = p; onPartial(merge(arrived.filterNotNull(), page)) }
+                            synchronized(arrived) { arrived[i] = p; onPartial(merge(arrived.filterNotNull(), page, sort)) }
                         }
                     }
                 }
@@ -142,7 +151,7 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         // Uma fonte fora do ar não esconde as outras; mas se todas falharam (sem internet, por
         // exemplo), o motivo precisa chegar à tela em vez de uma lista vazia.
         if (pages.isEmpty()) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
-        merge(pages, page)
+        merge(pages, page, sort)
     }
 
     /**
@@ -177,8 +186,14 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         }
     }
 
-    private fun merge(pages: List<CatalogPage>, page: Int) = CatalogPage(
-        entries = mergeDuplicates(interleave(pages.map { it.entries })),
+    /**
+     * Junta as páginas de várias fontes. Em ordem alfabética os cartões seguem o título; nas outras ordens
+     * as fontes são intercaladas, cada uma na ordem dela (não há um critério comum entre os sites).
+     */
+    private fun merge(pages: List<CatalogPage>, page: Int, sort: SortOrder) = CatalogPage(
+        entries = mergeDuplicates(
+            interleave(pages.map { it.entries }).let { list -> if (sort == SortOrder.TITLE) list.sortedBy { titleKey(it.title) } else list },
+        ),
         page = page,
         totalPages = pages.maxOfOrNull { it.totalPages } ?: 1,
         totalResults = pages.sumOf { it.totalResults },
@@ -250,6 +265,10 @@ internal fun dedupKey(e: CatalogEntry): String? {
         .replace(NON_ALNUM, "")
     return if (base.isEmpty()) null else e.systemId + "|" + base
 }
+
+/** Chave da ordem alfabética: sem acentos, caixa e pontuação ("¡Mucha Lucha!" fica no M, como nos sites). */
+internal fun titleKey(title: String): String =
+    java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD).replace(DIACRITICS, "").lowercase().replace(NON_ALNUM, " ").trim()
 
 // Compiladas uma vez: a chave é calculada para cada cartão a cada página que chega.
 private val DIACRITICS = Regex("\\p{M}+")
