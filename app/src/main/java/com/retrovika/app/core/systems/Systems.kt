@@ -134,7 +134,12 @@ object Systems {
             manufacturer = "Nintendo", year = 2011,
             extensions = setOf("3ds", "3dsx", "cci", "cxi", "app"),
             cores = listOf(
-                CoreInfo("citra", "Citra", R.string.core_citra, experimental = true),
+                CoreInfo(
+                    "citra", "Citra", R.string.core_citra, experimental = true,
+                    // O toque na tela só aperta com citra_touch_touchscreen, que vem desligado. O modo "mouse" (ligado
+                    // por padrão) move o cursor com o dedo mas só aperta com o botão do mouse, que o Android não manda.
+                    defaults = mapOf("citra_touch_touchscreen" to "enabled", "citra_mouse_touchscreen" to "disabled"),
+                ),
                 CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true, needsRealPath = true),
             ),
             layout = PadLayouts.NDS, accent = 0xFFD32F2F, orientation = Orientation.PORTRAIT,

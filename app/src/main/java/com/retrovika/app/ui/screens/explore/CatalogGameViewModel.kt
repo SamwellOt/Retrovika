@@ -7,6 +7,7 @@ import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.basicDetails
 import com.retrovika.app.core.gameinfo.BackloggdInfo
+import com.retrovika.app.core.gameinfo.HltbInfo
 import com.retrovika.app.core.gameinfo.SourceDetails
 import com.retrovika.app.core.gameinfo.WikiInfo
 import com.retrovika.app.core.net.Http
@@ -49,6 +50,8 @@ data class CatalogGameState(
     val variants: Part<List<RomVariant>> = Part.Loading,
     val backloggd: Part<BackloggdInfo?> = Part.Loading,
     val wiki: Part<WikiInfo?> = Part.Loading,
+    /** Tempos do HowLongToBeat; null quando o Wikidata não liga o jogo a uma página de lá. */
+    val hltb: Part<HltbInfo?> = Part.Loading,
 ) {
     /** A ficha da fonte, ou o que a busca já trouxe enquanto ela carrega (ou se falhou). */
     val source: SourceDetails get() = details.value ?: entry.basicDetails()
@@ -59,7 +62,7 @@ data class CatalogGameState(
 
 /**
  * Página de um jogo do catálogo: a ficha da fonte, as ROMs para baixar e, em paralelo, o Backloggd
- * (nota, estatísticas, reviews) e a Wikipedia/Wikidata (resumo, ficha técnica, crítica). Cada parte
+ * (nota, reviews), a Wikipedia/Wikidata (resumo, ficha técnica, crítica) e o HowLongToBeat (tempos de jogo). Cada parte
  * aparece quando chega; a falha de uma não esconde as outras.
  */
 class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, private val lang: String) : ViewModel() {
@@ -101,6 +104,9 @@ class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, p
             // títulos repetidos. Sem ele, a busca vai pelo nome.
             val wiki = attempt { app.gameInfo.wiki(entry.title, lang, backloggd.value?.slug) }
             _state.update { it.copy(wiki = wiki) }
+            // O ID do HowLongToBeat vem do Wikidata.
+            val hltb = wiki.value?.hltbId?.let { id -> attempt { app.gameInfo.howLongToBeat(id) } } ?: Part.Ready(null)
+            _state.update { it.copy(hltb = hltb) }
         }
     }
 

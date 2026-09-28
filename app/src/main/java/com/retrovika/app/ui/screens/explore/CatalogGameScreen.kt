@@ -33,11 +33,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.automirrored.rounded.ViewList
-import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.Business
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
@@ -56,7 +56,6 @@ import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Numbers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Star
@@ -66,7 +65,6 @@ import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Today
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VideogameAsset
-import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -117,6 +116,8 @@ import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.catalog.regionOf
 import com.retrovika.app.core.gameinfo.BackloggdInfo
+import com.retrovika.app.core.gameinfo.HltbInfo
+import com.retrovika.app.core.gameinfo.HltbTime
 import com.retrovika.app.core.gameinfo.BackloggdReview
 import com.retrovika.app.core.gameinfo.ExternalLink
 import com.retrovika.app.core.gameinfo.ReviewScore
@@ -208,6 +209,9 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
             item(key = "facts", contentType = "facts") { Facts(state, system, sourceName, locale) }
             item(key = "community", contentType = "community") {
                 Community(state.backloggd, entry.title, locale, onOpen = { CatalogGameFormat.openUrl(context, it) })
+            }
+            item(key = "playtime", contentType = "playtime") {
+                PlayTime(state.hltb, locale, onOpen = { CatalogGameFormat.openUrl(context, it) })
             }
             item(key = "files", contentType = "files") { Files(state, nameOf, onDownload = vm::download) }
             item(key = "links", contentType = "links") { Links(state, sourceName, nameOf, onOpen = { CatalogGameFormat.openUrl(context, it) }) }
@@ -817,42 +821,6 @@ private fun CommunityContent(info: BackloggdInfo, locale: Locale, onOpen: (Strin
             }
         }
 
-        // Atividade
-        val stats = listOfNotNull(
-            info.plays?.let { Triple(it, R.string.cgame_stat_plays, Icons.Rounded.SportsEsports) },
-            info.playing?.let { Triple(it, R.string.cgame_stat_playing, Icons.Rounded.PlayArrow) },
-            info.backlogs?.let { Triple(it, R.string.cgame_stat_backlogs, Icons.AutoMirrored.Rounded.ViewList) },
-            info.wishlists?.let { Triple(it, R.string.cgame_stat_wishlists, Icons.Rounded.Whatshot) },
-            info.lists?.let { Triple(it, R.string.cgame_stat_lists, Icons.Rounded.Collections) },
-            info.reviewCount?.let { Triple(it, R.string.cgame_stat_reviews, Icons.Rounded.Star) },
-            info.likes?.let { Triple(it, R.string.cgame_stat_likes, Icons.Rounded.Favorite) },
-        )
-        if (stats.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 4) {
-                stats.forEach { (value, label, icon) -> StatTile(value, stringResource(label), icon, Modifier.weight(1f)) }
-            }
-        }
-
-        // Tempo de jogo
-        val times = listOfNotNull(
-            info.timeAverage?.let { Triple(it, R.string.cgame_time_average, Icons.Rounded.Timer) },
-            info.timeToFinish?.let { Triple(it, R.string.cgame_time_finish, Icons.Rounded.Flag) },
-            info.timeToMaster?.let { Triple(it, R.string.cgame_time_master, Icons.Rounded.EmojiEvents) },
-        )
-        if (times.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Schedule, null, tint = Palette.Sun, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.cgame_time), style = MaterialTheme.typography.titleSmall)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                times.forEach { (value, label, icon) -> TimeTile(value, stringResource(label), icon, Modifier.weight(1f)) }
-            }
-        }
-
         // Reviews
         if (info.reviews.isNotEmpty()) {
             var showAll by rememberSaveable { mutableStateOf(false) }
@@ -874,21 +842,7 @@ private fun CommunityContent(info: BackloggdInfo, locale: Locale, onOpen: (Strin
 }
 
 @Composable
-private fun StatTile(value: String, label: String, icon: ImageVector, modifier: Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(Palette.SurfaceHigh).border(1.dp, Palette.Outline.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 10.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(icon, null, tint = Palette.Cyan, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun TimeTile(value: String, label: String, icon: ImageVector, modifier: Modifier) {
+private fun TimeTile(value: String, label: String, players: String, icon: ImageVector, modifier: Modifier) {
     Column(
         modifier.clip(RoundedCornerShape(16.dp))
             .background(Brush.verticalGradient(listOf(Palette.Sun.copy(alpha = 0.14f), Palette.SurfaceHigh)))
@@ -897,9 +851,54 @@ private fun TimeTile(value: String, label: String, icon: ImageVector, modifier: 
     ) {
         Icon(icon, null, tint = Palette.Sun, modifier = Modifier.size(16.dp))
         Spacer(Modifier.height(6.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(players, style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/**
+ * Tempos do HowLongToBeat: história principal, com extras, 100%, todos os estilos e speedrun, cada um com
+ * quantos jogadores registraram. Só aparece quando o Wikidata liga o jogo a uma página de lá.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlayTime(part: Part<HltbInfo?>, locale: Locale, onOpen: (String) -> Unit) {
+    val info = part.value ?: return
+    Column(Modifier.padding(top = 30.dp)) {
+        SectionHeader(stringResource(R.string.cgame_time))
+        Text(
+            stringResource(R.string.cgame_time_subtitle), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+            modifier = Modifier.padding(horizontal = Gutter, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Column(Modifier.padding(horizontal = Gutter)) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 2) {
+                info.times.forEach { time ->
+                    val (label, icon) = when (time.kind) {
+                        HltbTime.Kind.MAIN -> R.string.cgame_hltb_main to Icons.Rounded.Flag
+                        HltbTime.Kind.EXTRAS -> R.string.cgame_hltb_extras to Icons.Rounded.Explore
+                        HltbTime.Kind.COMPLETIONIST -> R.string.cgame_hltb_completionist to Icons.Rounded.EmojiEvents
+                        HltbTime.Kind.ALL_STYLES -> R.string.cgame_hltb_all to Icons.Rounded.Timer
+                        HltbTime.Kind.SPEEDRUN -> R.string.cgame_hltb_speedrun to Icons.Rounded.Bolt
+                    }
+                    val players = pluralStringResource(R.plurals.cgame_hltb_players, time.count.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), CatalogGameFormat.compact(time.count, locale))
+                    TimeTile(hltbDuration(time.seconds, locale), stringResource(label), players, icon, Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            GhostButton(stringResource(R.string.cgame_open_hltb), { onOpen(info.url) }, Modifier.fillMaxWidth(), icon = Icons.AutoMirrored.Rounded.OpenInNew, tint = Palette.Sun)
+        }
+    }
+}
+
+/** Como o HowLongToBeat mostra: minutos abaixo de 1 h, depois horas arredondadas para a meia hora ("10½ h"). */
+@Composable
+private fun hltbDuration(seconds: Long, locale: Locale): String {
+    if (seconds < 3600) return stringResource(R.string.cgame_hltb_minutes, ((seconds + 30) / 60).toInt().coerceAtLeast(1))
+    val halves = (seconds + 900) / 1800
+    val whole = CatalogGameFormat.integer(halves / 2, locale)
+    return stringResource(R.string.cgame_hltb_hours, if (halves % 2 == 1L) "$whole½" else whole)
 }
 
 @Composable

@@ -125,15 +125,6 @@ class BackloggdClient(
             it.attr("data-tippy-content").substringBefore('|').trim().replace(",", "").toIntOrNull()
         }.orEmpty().takeIf { it.size == 10 }.orEmpty()
 
-        fun counter(label: String): String? = doc.select(".log-counter-label").firstOrNull { it.text().trim().equals(label, true) }
-            ?.closest("a")?.selectFirst(".log-counter-stat")?.text()?.trim()?.ifBlank { null }
-
-        fun stat(label: String): String? = doc.select(".time-section a p").firstOrNull { it.text().trim().equals(label, true) }
-            ?.closest("a")?.selectFirst("h3")?.text()?.trim()?.ifBlank { null }
-
-        fun time(label: String): String? = doc.select(".time-played").firstOrNull { it.selectFirst(".label")?.text()?.trim().equals(label, true) }
-            ?.selectFirst(".stat-value.element-revealed")?.text()?.replace(" ", "")?.ifBlank { null }
-
         val title = doc.selectFirst("#game-profile h1")?.text()?.trim()
             ?: doc.selectFirst("h1")?.text()?.trim() ?: slug
         val description = doc.selectFirst("#collapseSummary p")?.let { HtmlText.of(it, keepNewlines = true) }?.ifBlank { null }
@@ -154,16 +145,6 @@ class BackloggdClient(
             rating = rating,
             ratingCount = ratingCount,
             histogram = histogram,
-            plays = counter("Plays"),
-            playing = counter("Playing"),
-            backlogs = counter("Backlogs"),
-            wishlists = counter("Wishlists"),
-            lists = stat("Lists"),
-            reviewCount = stat("Reviews"),
-            likes = stat("Likes"),
-            timeAverage = time("average"),
-            timeToFinish = time("to finish"),
-            timeToMaster = time("to master"),
             igdbUrl = doc.selectFirst("a[href^=https://www.igdb.com/games/]")?.attr("href"),
         )
     }

@@ -79,8 +79,9 @@ class WikiClient {
         fun names(prop: String) = itemIds(claims, prop).mapNotNull { labels[it] }.distinct()
 
         val igdb = claims[IGDB]?.jsonArray?.firstNotNullOfOrNull { value(it)?.jsonPrimitive?.contentOrNull }
+        val hltb = string(claims, HLTB)
         val links = buildList {
-            string(claims, HLTB)?.let { add(ExternalLink("HowLongToBeat", "https://howlongtobeat.com/game/$it")) }
+            hltb?.let { add(ExternalLink("HowLongToBeat", "https://howlongtobeat.com/game/$it")) }
             (string(claims, MOBYGAMES)?.let { "https://www.mobygames.com/game/$it" }
                 ?: string(claims, MOBYGAMES_OLD)?.let { "https://www.mobygames.com/game/$it" })
                 ?.let { add(ExternalLink("MobyGames", it)) }
@@ -114,6 +115,7 @@ class WikiClient {
             scores = scores.mapNotNull { (score, reviewer) -> labels[reviewer]?.let { ReviewScore(score, it) } }.distinctBy { it.reviewer },
             links = links,
             igdbSlug = igdb,
+            hltbId = hltb,
         )
     }
 
