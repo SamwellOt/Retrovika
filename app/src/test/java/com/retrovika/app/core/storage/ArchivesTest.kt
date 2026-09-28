@@ -85,4 +85,20 @@ class ArchivesTest {
         val archive = zip("rom.zip", mapOf("pasta/" to "", "rom.gba" to "12345"))
         assertEquals(listOf(Archives.Entry("rom.gba", 5)), Archives.entries(archive))
     }
+
+    @Test
+    fun `zip com senha e detectado e extraido com a senha`() {
+        val file = File(tmp.root, "protegido.zip")
+        val rom = tmp.newFile("Jogo (USA).nds").apply { writeText("conteudo da rom") }
+        val params = net.lingala.zip4j.model.ZipParameters().apply {
+            isEncryptFiles = true
+            encryptionMethod = net.lingala.zip4j.model.enums.EncryptionMethod.ZIP_STANDARD
+        }
+        net.lingala.zip4j.ZipFile(file, "romsfun-romspure".toCharArray()).use { it.addFile(rom, params) }
+
+        assertTrue(Archives.needsPassword(file))
+        assertFalse(Archives.needsPassword(zip("aberto.zip", mapOf("a.nds" to "x"))))
+        val out = Archives.extract(file, tmp.newFolder("saida"), setOf("Jogo (USA).nds"), "romsfun-romspure")
+        assertEquals("conteudo da rom", out.getValue("Jogo (USA).nds").readText())
+    }
 }

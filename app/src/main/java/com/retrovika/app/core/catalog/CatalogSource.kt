@@ -99,6 +99,13 @@ interface CatalogSource {
         val variant = variants(entry).firstOrNull() ?: return entry
         return entry.copy(downloadUrl = variant.downloadUrl, fileName = variant.fileName)
     }
+
+    /**
+     * O pedido final do arquivo de uma variante, feito já dentro do download (e de novo a cada "tentar de
+     * novo"). O padrão é o próprio link da variante; fontes com links assinados que expiram (RomsFun) geram
+     * o link aqui, com os cabeçalhos e o protocolo que o servidor exige.
+     */
+    suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink = DirectLink(variant.downloadUrl)
 }
 
 /** O que a própria entrada da busca já diz sobre o jogo. */
@@ -109,4 +116,15 @@ fun CatalogEntry.basicDetails(): SourceDetails = SourceDetails(
     developers = listOfNotNull(developer),
     tags = tags,
     website = website,
+)
+
+/**
+ * Como baixar um arquivo: [fileName] substitui o nome da variante quando só o servidor sabe a extensão
+ * real; [ipv6] fixa o protocolo (null = o que o sistema escolher). Veja [com.retrovika.app.core.net.Http.clientFor].
+ */
+data class DirectLink(
+    val url: String,
+    val fileName: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    val ipv6: Boolean? = null,
 )

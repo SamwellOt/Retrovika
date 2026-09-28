@@ -3,7 +3,9 @@ package com.retrovika.app.core.storage
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.systems.GameSystem
+import net.lingala.zip4j.exception.ZipException
 import org.apache.commons.compress.MemoryLimitException
+import org.apache.commons.compress.PasswordRequiredException
 import java.io.File
 
 /**
@@ -22,6 +24,12 @@ object RomExtractor {
     private val SHEET_PRIORITY = listOf("m3u", "cue", "gdi", "ccd")
     private const val SPACE_MARGIN = 64L * 1024 * 1024
 
+    /**
+     * Senhas que sites de ROM publicam para os próprios arquivos (o RomsFun avisa na página de download).
+     * Só são usadas quando o arquivo pede senha.
+     */
+    private val KNOWN_PASSWORDS = listOf("romsfun-romspure")
+
     private val lock = Any()
 
     fun extract(archive: File, dir: File, system: GameSystem): File = synchronized(lock) { extractLocked(archive, dir, system) }
@@ -30,7 +38,8 @@ object RomExtractor {
         // Com extensão de compactado mas conteúdo de outro tipo: fica como veio.
         if (Archives.formatOf(archive) == null) return archive
         try {
-            val entries = Archives.entries(archive)
+            val password = if (Archives.needsPassword(archive)) KNOWN_PASSWORDS.first() else null
+            val entries = Archives.entries(archive, password)
             val names = entries.map { it.name }
             val candidates = names.filter { it.substringAfterLast('.').lowercase().let { ext -> ext in system.extensions && ext !in ARCHIVE_EXTS } }
             val main = candidates.minByOrNull { SHEET_PRIORITY.indexOf(it.substringAfterLast('.').lowercase()).let { i -> if (i < 0) SHEET_PRIORITY.size else i } }
@@ -42,7 +51,7 @@ object RomExtractor {
             if (needed > 0 && dir.usableSpace < needed + SPACE_MARGIN) {
                 throw LocalizedException(R.string.download_no_space, needed.formatBytes())
             }
-            val extracted = Archives.extract(archive, dir, wanted)
+            val extracted = Archives.extract(archive, dir, wanted, password)
             archive.delete()
             return extracted[main]
                 ?: throw LocalizedException(R.string.download_extract_failed, main.substringAfterLast('/'))
@@ -51,6 +60,9 @@ object RomExtractor {
             throw when (t) {
                 is LocalizedException -> t
                 is OutOfMemoryError, is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
+                is PasswordRequiredException -> LocalizedException(R.string.download_archive_password, archive.name)
+                is ZipException -> if (t.type == ZipException.Type.WRONG_PASSWORD) LocalizedException(R.string.download_archive_password, archive.name)
+                    else LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
                 else -> LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
             }
         }

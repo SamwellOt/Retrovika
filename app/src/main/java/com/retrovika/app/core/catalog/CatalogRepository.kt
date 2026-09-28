@@ -7,10 +7,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-class CatalogRepository {
-    // A ordem aqui é a dos filtros no Explorar e a do rodízio em "Todas as fontes".
-    val sources: List<CatalogSource> = listOf(
+/**
+ * [romsFun] é opcional porque depende de um WebView: os testes da JVM montam o repositório sem ele.
+ */
+class CatalogRepository(romsFun: RomsFunSource? = null) {
+    // A ordem aqui é a dos filtros no Explorar, a do rodízio em "Todas as fontes" e a de preferência
+    // quando o mesmo jogo aparece em duas fontes (veja [withoutDuplicates]).
+    val sources: List<CatalogSource> = listOfNotNull(
         CdRomanceSource(),
+        romsFun,
         HomebrewHubSource(),
         InternetArchiveSource(),
     )
@@ -63,6 +68,9 @@ class CatalogRepository {
 
     /** Arquivos baixáveis de uma entrada (para escolher qual ROM baixar). */
     suspend fun variants(entry: CatalogEntry): List<RomVariant> = source(entry.sourceId).variants(entry)
+
+    /** Pedido final do arquivo da variante, gerado na hora do download. */
+    suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink = source(entry.sourceId).directLink(entry, variant)
 
     /**
      * Busca o mesmo título em todas as fontes aplicáveis ao mesmo tempo e mescla os
@@ -139,12 +147,27 @@ class CatalogRepository {
     }
 
     private fun merge(pages: List<CatalogPage>, page: Int) = CatalogPage(
-        entries = interleave(pages.map { it.entries }),
+        entries = withoutDuplicates(interleave(pages.map { it.entries })),
         page = page,
         totalPages = pages.maxOfOrNull { it.totalPages } ?: 1,
         totalResults = pages.sumOf { it.totalResults },
         approximate = pages.any { it.approximate },
     )
+
+    /**
+     * Tira os jogos que uma fonte anterior na lista já trouxe (mesmo console e mesmo título): o RomsFun
+     * depende de um WebView e tem limite de downloads, então ele entra com o que o CDRomance não tem.
+     */
+    private fun withoutDuplicates(entries: List<CatalogEntry>): List<CatalogEntry> {
+        val rank = sources.withIndex().associate { (i, s) -> s.id to i }
+        val best = HashMap<String, Int>()
+        entries.forEach { e ->
+            val key = dedupKey(e) ?: return@forEach
+            val r = rank[e.sourceId] ?: Int.MAX_VALUE
+            if (r < (best[key] ?: Int.MAX_VALUE)) best[key] = r
+        }
+        return entries.filter { e -> dedupKey(e)?.let { (rank[e.sourceId] ?: Int.MAX_VALUE) == best[it] } ?: true }
+    }
 
     /** Intercala listas em rodízio: 1ª de cada fonte, depois 2ª de cada, e assim por diante. */
     private fun interleave(lists: List<List<CatalogEntry>>): List<CatalogEntry> {
@@ -168,4 +191,17 @@ class CatalogRepository {
         const val MAX_FILL_ROUNDS = 3
         const val CACHE_TTL_MS = 5 * 60 * 1000L
     }
+}
+
+/**
+ * Título sem região, pontuação e caixa: "Pokémon: X (USA)" e "pokemon x" viram a mesma chave.
+ * Letras de outros alfabetos (japonês, cirílico) ficam; um título sem nenhuma letra ou número dá null
+ * e não é comparado, senão todos eles virariam o mesmo jogo.
+ */
+internal fun dedupKey(e: CatalogEntry): String? {
+    val base = java.text.Normalizer.normalize(e.title.substringBefore(" (").substringBefore(" ["), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), "")
+    return if (base.isEmpty()) null else e.systemId + "|" + base
 }

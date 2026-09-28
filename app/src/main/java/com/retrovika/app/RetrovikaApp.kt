@@ -10,6 +10,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.retrovika.app.core.bios.BiosManager
 import com.retrovika.app.core.catalog.CatalogRepository
+import com.retrovika.app.core.catalog.RomsFunSource
 import com.retrovika.app.core.catalog.DownloadManager
 import com.retrovika.app.core.cores.CoreManager
 import com.retrovika.app.core.dat.DatRepository
@@ -35,11 +36,16 @@ class AppContainer(app: Application) {
     val library = LibraryRepository(app, database.games(), paths, settings, scope)
     val cores = CoreManager(app, paths)
     val bios = BiosManager(paths, app.contentResolver)
-    val catalog = CatalogRepository()
+    // O RomsFun tem o próprio WebView: dividir o do Backloggd faria os dois reabrirem o site a cada troca.
+    val catalog = CatalogRepository(RomsFunSource(WebFetcher(app, minGapMs = 400)))
     private val web = WebFetcher(app)
     val gameInfo = GameInfoRepository(BackloggdClient { url -> web.get("https://backloggd.com/", url) })
     val dat = DatRepository(app, database.dats())
-    val downloads = DownloadManager(app, scope, paths, library, settings.cached) { catalog.resolve(it) }
+    val downloads = DownloadManager(
+        app, scope, paths, library, settings.cached,
+        resolve = { catalog.resolve(it) },
+        link = { entry, variant -> catalog.directLink(entry, variant) },
+    )
 }
 
 class RetrovikaApp : Application(), SingletonImageLoader.Factory {

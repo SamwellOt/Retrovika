@@ -73,6 +73,8 @@ class DownloadManager(
     private val settings: StateFlow<AppSettings>,
     /** Converte a entrada no link final de download (ex.: Internet Archive resolve o arquivo). */
     private val resolve: suspend (CatalogEntry) -> CatalogEntry = { it },
+    /** Pedido final do arquivo da variante, gerado dentro do download (links assinados que expiram, como no RomsFun). */
+    private val link: suspend (CatalogEntry, RomVariant) -> DirectLink = { _, v -> DirectLink(v.downloadUrl) },
 ) {
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -99,7 +101,7 @@ class DownloadManager(
         val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) { id ->
             val resolved = resolve(entry)
-            runDownload(id, resolved.downloadUrl, resolved.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
+            runCatalogDownload(id, entry, RomVariant(fileName = resolved.fileName, downloadUrl = resolved.downloadUrl), system)
         }
     }
 
@@ -108,9 +110,15 @@ class DownloadManager(
         val system = Systems.byId(entry.systemId) ?: return
         if (isActive(entry)) return
         val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
-        launchTask(task) { id ->
-            runDownload(id, variant.downloadUrl, variant.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
-        }
+        launchTask(task) { id -> runCatalogDownload(id, entry, variant, system) }
+    }
+
+    private suspend fun runCatalogDownload(taskId: String, entry: CatalogEntry, variant: RomVariant, system: GameSystem) {
+        val direct = link(entry, variant)
+        runDownload(
+            taskId, direct.url, direct.fileName ?: variant.fileName, system, entry.title, entry.coverUrl, entry.developer,
+            entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry) + direct.headers, direct.ipv6,
+        )
     }
 
     private fun isActive(entry: CatalogEntry) = _tasks.value.any { it.entryKey == entry.downloadKey && it.status in ACTIVE }
@@ -215,6 +223,7 @@ class DownloadManager(
     private suspend fun runDownload(
         taskId: String, url: String, fileName: String, system: GameSystem, title: String,
         cover: String?, developer: String?, description: String?, headers: Map<String, String> = emptyMap(),
+        ipv6: Boolean? = null,
     ) {
         val dir = paths.romsFor(system.id)
         val target = File(dir, FileNames.safe(fileName))
@@ -223,7 +232,7 @@ class DownloadManager(
         var lastTime = System.nanoTime()
         var saved: File? = null
         val file = try {
-            Http.download(url, target, headers, onSaved = { saved = it }, onBytes = { read, total ->
+            Http.download(url, target, headers, http = Http.clientFor(ipv6), onSaved = { saved = it }, onBytes = { read, total ->
                 val now = System.nanoTime()
                 val elapsed = (now - lastTime) / 1e9
                 val instant = if (elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L

@@ -7,7 +7,8 @@ import com.retrovika.app.R
  * Gêneros dos filtros especiais do Explorar. Nenhuma fonte tem uma taxonomia de gênero
  * padronizada, então cada uma filtra do jeito que consegue:
  * - com etiquetas (Homebrew Hub), comparando-as com [keywords] via [matches];
- * - com busca textual (CDRomance, Internet Archive), usando [searchTerm] e [keywords].
+ * - com busca textual (CDRomance, Internet Archive), usando [searchTerm] e [keywords];
+ * - com a taxonomia de gênero do próprio site (RomsFun, `RomsFunSource.GENRE_TERMS`).
  *
  * [searchTerm] é o termo em inglês que os sites usam nas descrições; [keywords] inclui
  * sinônimos e subgêneros (em minúsculas) que contam como o mesmo gênero.

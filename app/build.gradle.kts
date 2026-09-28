@@ -120,6 +120,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines)
     implementation(libs.jsoup)
     implementation(libs.commons.compress)
+    // .zip com senha (ZipCrypto/AES), que o commons-compress não descriptografa.
+    implementation(libs.zip4j)
     implementation(libs.xz)
 
     implementation(project(":libretrodroid"))

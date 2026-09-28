@@ -18,6 +18,7 @@ documentfile = "1.1.0"
 ndk = "27.3.13750724"
 jsoup = "1.18.3"
 commonsCompress = "1.27.1"
+zip4j = "2.11.5"
 xz = "1.10"
 junit = "4.13.2"
 
@@ -48,6 +49,7 @@ kotlinx-serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
+zip4j = { module = "net.lingala.zip4j:zip4j", version.ref = "zip4j" }
 xz = { module = "org.tukaani:xz", version.ref = "xz" }
 junit = { module = "junit:junit", version.ref = "junit" }
 
