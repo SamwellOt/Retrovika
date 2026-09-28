@@ -49,12 +49,10 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
 
     override val systems: Set<String> = CONSOLES.map { it.systemId }.toSet()
 
-    override fun sorts(systemId: String?): Set<SortOrder> = SORTS.keys
-
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         val consoles = if (systemId != null) CONSOLES.filter { it.systemId == systemId } else CONSOLES
         if (consoles.isEmpty()) return CatalogPage(emptyList(), page, 1, 0)
-        val res = web.request(BASE, searchUrl(query, consoles.map { it.termId }, genre, page, sort))
+        val res = web.request(BASE, searchUrl(query, consoles.map { it.termId }, genre, page))
         // Página além da última.
         if (res.status == 404 && page > 1) return CatalogPage(emptyList(), page, page, 0)
         if (res.status !in 200..299) throw LocalizedException(R.string.download_http_error, res.status, BASE)
@@ -66,15 +64,14 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
 
     /**
      * `/browse-all-roms/` com os filtros. Sem console escolhido vão todos os que o app roda: assim nenhuma
-     * página chega cheia de jogos de PS3 ou Xbox que seriam descartados. Sem termo nem [sort], os mais
-     * populares; com termo, a relevância do site.
+     * página chega cheia de jogos de PS3 ou Xbox que seriam descartados. Sem termo, os mais populares.
      */
-    internal fun searchUrl(query: String, consoleIds: List<Int>, genre: Genre?, page: Int, sort: SortOrder = SortOrder.DEFAULT): String {
+    internal fun searchUrl(query: String, consoleIds: List<Int>, genre: Genre?, page: Int): String {
         val params = buildList {
             query.trim().takeIf { it.isNotBlank() }?.let { add("q" to it) }
             consoleIds.distinct().forEach { add("consoles[]" to it.toString()) }
             genre?.let { g -> GENRE_TERMS[g].orEmpty().forEach { add("genres[]" to it.toString()) } }
-            (SORTS[sort] ?: "popular".takeIf { query.isBlank() })?.let { add("sort" to it) }
+            if (query.isBlank()) add("sort" to "popular")
         }
         return Urls.withQuery("$BASE/browse-all-roms/" + (if (page > 1) "page/$page/" else ""), params)
     }
@@ -345,12 +342,6 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
     private data class Console(val systemId: String, val termId: Int, val slugs: List<String>)
 
     companion object {
-        /** Valores de `sort` da `/browse-all-roms/` (o site não ordena por nota). "newest" é a data em que o jogo entrou. */
-        internal val SORTS = mapOf(
-            SortOrder.POPULAR to "popular",
-            SortOrder.RECENT to "newest",
-            SortOrder.TITLE to "alphabetical",
-        )
 
         private const val BASE = "https://romsfun.com"
         private const val PAGE_TTL_MS = 10 * 60 * 1000L

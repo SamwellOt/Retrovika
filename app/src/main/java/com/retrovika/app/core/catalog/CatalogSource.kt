@@ -86,13 +86,9 @@ interface CatalogSource {
 
     /**
      * Uma página de resultados. [genre] é o filtro especial de gênero: cada fonte o aplica como
-     * pode (etiquetas ou busca textual, ver [Genre]), então o resultado é aproximado. [sort] fora de
-     * [sorts] é ignorado (a fonte usa a própria ordem).
+     * pode (etiquetas ou busca textual, ver [Genre]), então o resultado é aproximado.
      */
-    suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre? = null, sort: SortOrder = SortOrder.DEFAULT): CatalogPage
-
-    /** Ordens que o site aplica nesta busca, além da própria ([SortOrder.DEFAULT]). */
-    fun sorts(systemId: String?): Set<SortOrder> = emptySet()
+    suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre? = null): CatalogPage
 
     /**
      * Lista os arquivos baixáveis de uma entrada, para o usuário escolher qual ROM baixar.

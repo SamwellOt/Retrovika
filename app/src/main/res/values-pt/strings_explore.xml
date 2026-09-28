@@ -25,13 +25,6 @@
     <string name="explore_filter_genre">Gênero</string>
     <string name="explore_filter_type">Tipo</string>
     <string name="explore_genre_note">Os gêneros vêm das etiquetas e descrições de cada site, então alguns resultados podem não corresponder exatamente.</string>
-    <string name="explore_filter_sort">Ordenar</string>
-    <string name="explore_sort_note">Cada site ordena do seu jeito, e os que não têm essa opção mantêm a ordem de sempre; numa lista com vários sites, a ordem é aproximada.</string>
-    <string name="catalog_sort_default">Padrão</string>
-    <string name="catalog_sort_popular">Populares</string>
-    <string name="catalog_sort_rated">Mais avaliados</string>
-    <string name="catalog_sort_recent">Recentes</string>
-    <string name="catalog_sort_title">A–Z</string>
     <string name="explore_empty_filtered">Nenhum título com esses filtros. Tente outro console ou gênero.</string>
     <string name="explore_clear_filters">Limpar filtros</string>
 

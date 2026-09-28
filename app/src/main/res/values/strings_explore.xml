@@ -25,13 +25,6 @@
     <string name="explore_filter_genre">Genre</string>
     <string name="explore_filter_type">Type</string>
     <string name="explore_genre_note">Genres come from each site\'s tags and descriptions, so some results may not match exactly.</string>
-    <string name="explore_filter_sort">Sort</string>
-    <string name="explore_sort_note">Each site sorts in its own way and sites without this option keep their usual order, so in a mixed list the order is approximate.</string>
-    <string name="catalog_sort_default">Default</string>
-    <string name="catalog_sort_popular">Popular</string>
-    <string name="catalog_sort_rated">Top rated</string>
-    <string name="catalog_sort_recent">Recent</string>
-    <string name="catalog_sort_title">A–Z</string>
     <string name="explore_empty_filtered">No titles match these filters. Try another console or genre.</string>
     <string name="explore_clear_filters">Clear filters</string>
 

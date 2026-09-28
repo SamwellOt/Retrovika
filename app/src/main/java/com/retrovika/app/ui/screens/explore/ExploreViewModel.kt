@@ -8,7 +8,6 @@ import com.retrovika.app.AppContainer
 import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.Genre
 import com.retrovika.app.core.catalog.RomVariant
-import com.retrovika.app.core.catalog.SortOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -51,7 +50,6 @@ data class ExploreState(
     val systemId: String? = null,
     val kind: String? = "game",
     val genre: Genre? = null,
-    val sort: SortOrder = SortOrder.DEFAULT,
     val entries: List<CatalogEntry> = emptyList(),
     val page: Int = 0,
     val totalPages: Int = 1,
@@ -103,18 +101,6 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
 
     private fun filter(id: String) = sources.first { it.id == id }
 
-    /**
-     * Ordens que ao menos uma fonte do filtro aplica com o console escolhido, na ordem do enum ([SortOrder.DEFAULT]
-     * primeiro). Só o padrão: a tela esconde a linha de ordenação.
-     */
-    fun sorts(s: ExploreState): List<SortOrder> {
-        val available = filter(s.sourceId).members.flatMapTo(HashSet()) { app.catalog.source(it).sorts(s.systemId) }
-        return SortOrder.entries.filter { it == SortOrder.DEFAULT || it in available }
-    }
-
-    /** Trocar de fonte ou de console pode tirar a ordem escolhida das disponíveis: volta à padrão. */
-    private fun ExploreState.validSort() = if (sort in sorts(this)) this else copy(sort = SortOrder.DEFAULT)
-
     /** Consoles oferecidos pelo filtro selecionado (num filtro de várias fontes, a união delas). */
     val systems: List<String>
         get() = filter(_state.value.sourceId).members.flatMapTo(LinkedHashSet()) { app.catalog.source(it).systems }.toList()
@@ -162,18 +148,13 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             it.copy(
                 sourceId = id,
                 systemId = if (requiresSystem) app.catalog.source(id).systems.firstOrNull() else null,
-            ).validSort()
+            )
         }
         reload(debounce = false)
     }
 
     fun setQuery(q: String) { _state.update { it.copy(query = q) }; reload(debounce = true) }
-    fun setSystem(id: String?) { _state.update { it.copy(systemId = id).validSort() }; reload(debounce = false) }
-    fun setSort(sort: SortOrder) {
-        if (sort == _state.value.sort) return
-        _state.update { it.copy(sort = sort) }
-        reload(debounce = false)
-    }
+    fun setSystem(id: String?) { _state.update { it.copy(systemId = id) }; reload(debounce = false) }
     fun setKind(kind: String?) { _state.update { it.copy(kind = kind) }; reload(debounce = false) }
 
     /** Tocar no gênero já ativo o desmarca. */
@@ -189,7 +170,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             it.copy(
                 query = "", genre = null, kind = "game",
                 systemId = if (requiresSystem) app.catalog.source(it.sourceId).systems.firstOrNull() else null,
-            ).validSort()
+            )
         }
         reload(debounce = false)
     }
@@ -219,8 +200,8 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     private suspend fun fetchPage(s: ExploreState, page: Int, onPartial: ((CatalogPage) -> Unit)? = null): CatalogPage =
         withContext(Dispatchers.Default) {
             val f = filter(s.sourceId)
-            if (f.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre, s.sort, only = f.members) { onPartial?.invoke(it) }
-            else app.catalog.search(app.catalog.source(s.sourceId), s.query, s.systemId, page, s.kind, s.genre, s.sort)
+            if (f.aggregated) app.catalog.searchAll(s.query, s.systemId, page, s.genre, only = f.members) { onPartial?.invoke(it) }
+            else app.catalog.search(app.catalog.source(s.sourceId), s.query, s.systemId, page, s.kind, s.genre)
         }
 
     /**

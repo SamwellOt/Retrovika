@@ -76,22 +76,17 @@ class CdRomanceSource : CatalogSource {
     override val systems: Set<String> = sectionBySystem.keys +
         setOf("genesis", "segacd", "32x", "sms", "saturn", "atari2600", "lynx")
 
-    /** Só a seção de um console ordena (com ou sem termo); na busca do site todo, `sorted` desliga a busca. */
-    override fun sorts(systemId: String?): Set<SortOrder> =
-        if (systemId in sectionBySystem) SORTED.keys else emptySet()
-
-    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?, sort: SortOrder): CatalogPage {
+    override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         // O site não tem filtro de gênero: o termo entra na busca do WordPress, que procura no
         // título e no texto de cada jogo (onde o gênero aparece na descrição).
         val q = listOfNotNull(query.trim().takeIf { it.isNotBlank() }, genre?.searchTerm).joinToString(" ")
         val section = systemId?.let { sectionBySystem[it] }
-        val sorted = SORTED[sort]?.takeIf { section != null }
         val url = when {
             // Busca dentro da seção do console (/gba-roms/?s=action): o site já filtra. Buscar no site
             // todo e descartar os outros consoles deixava as páginas quase vazias e a lista lenta.
-            q.isNotBlank() && section != null -> Urls.withQuery("$base/$section/${pagePath(page)}", listOfNotNull("s" to q, sorted?.let { "sorted" to it }))
+            q.isNotBlank() && section != null -> "$base/$section/${pagePath(page)}?s=${Urls.encode(q)}"
             q.isNotBlank() -> "$base/${pagePath(page)}?s=${Urls.encode(q)}"
-            systemId != null -> section?.let { Urls.withQuery("$base/$it/${pagePath(page)}", listOfNotNull(sorted?.let { s -> "sorted" to s })) }
+            systemId != null -> section?.let { "$base/$it/${pagePath(page)}" }
                 ?: return CatalogPage(emptyList(), page, 1, 0) // console sem categoria navegável: peça um termo
             else -> "$base/${pagePath(page)}" // home: lançamentos recentes
         }
@@ -320,12 +315,5 @@ class CdRomanceSource : CatalogSource {
         const val PAGE_TTL_MS = 10 * 60 * 1000L
         /** Jogos por página nas listagens e na busca do site (conferido no HTML). */
         const val PAGE_SIZE = 30
-        /** Valores de `sorted` do formulário "Sort Games" do site ("latest" é o padrão das seções). */
-        val SORTED = mapOf(
-            SortOrder.POPULAR to "downloads",
-            SortOrder.RATED to "voted",
-            SortOrder.RECENT to "latest",
-            SortOrder.TITLE to "alpha",
-        )
     }
 }

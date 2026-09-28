@@ -83,7 +83,6 @@ import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.DownloadStatus
 import com.retrovika.app.core.catalog.DownloadTask
 import com.retrovika.app.core.catalog.Genre
-import com.retrovika.app.core.catalog.SortOrder
 import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.storage.formatBytes
@@ -202,14 +201,6 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                     }
                 }
 
-                // Só as ordens que algum site do filtro aplica com este console; só a padrão, a linha some.
-                val sorts = vm.sorts(state)
-                if (sorts.size > 1) {
-                    FilterSection(stringResource(R.string.explore_filter_sort)) {
-                        sorts.forEach { o -> SelectChip(stringResource(o.label), state.sort == o, onClick = { vm.setSort(o) }) }
-                    }
-                }
-
                 if (isHomebrew) {
                     FilterSection(stringResource(R.string.explore_filter_type)) {
                         SelectChip(stringResource(R.string.explore_kind_games), state.kind == "game", onClick = { vm.setKind("game") })
@@ -241,8 +232,6 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                         Text(stringResource(current.description), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                         // O gênero sai das etiquetas e descrições de cada site: é bom avisar que é aproximado.
                         if (state.genre != null) Text(stringResource(R.string.explore_genre_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
-                        // Vários sites, cada um com a própria régua de "popular" ou "recente": a lista só intercala.
-                        if (current.aggregated && state.sort != SortOrder.DEFAULT) Text(stringResource(R.string.explore_sort_note), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                     }
                 }
             }
