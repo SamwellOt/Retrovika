@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.screens.explore
 
+import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.pressScale
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
@@ -265,7 +266,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
             val task = downloadsByEntry[entry.downloadKey]
             CatalogCard(
                 entry, task,
-                sourceLabel = if (state.aggregated) vm.sourceName(entry.sourceId) else null,
+                sourceLabels = if (state.aggregated) vm.sourceNames(entry) else emptyList(),
                 onOpen = { onOpenGame(context.container.catalog.open(entry)) },
                 onDownload = { vm.requestDownload(entry) },
                 onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } },
@@ -281,7 +282,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
         }
     }
 
-    prompt?.let { VariantPickerSheet(it, onPick = vm::confirmVariant, onDismiss = vm::dismissPrompt) }
+    prompt?.let { VariantPickerSheet(it, sourceName = vm::sourceName, onPick = vm::confirmVariant, onDismiss = vm::dismissPrompt) }
     }
 }
 
@@ -346,7 +347,7 @@ internal val Genre.accent: Color
 private val CardShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: String?, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
+private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: List<String>, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
     val system = Systems.byId(entry.systemId)
     val genre = remember(entry.tags) { Genre.of(entry.tags).firstOrNull() }
     val source = remember { MutableInteractionSource() }
@@ -364,7 +365,12 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                 entry.title, system, entry.coverUrl,
                 Modifier.fillMaxWidth().aspectRatio(10f / 9f), corner = 0.dp,
             )
-            sourceLabel?.let { CoverTag(it, Palette.TextPrimary, Modifier.align(Alignment.TopStart)) }
+            // Um jogo mesclado de várias fontes mostra uma etiqueta por fonte, empilhadas.
+            if (sourceLabels.isNotEmpty()) {
+                Column(Modifier.align(Alignment.TopStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    sourceLabels.forEach { CoverTag(it, Palette.TextPrimary) }
+                }
+            }
             genre?.let { g ->
                 Icon(
                     g.icon, stringResource(g.label), tint = g.accent,
@@ -393,8 +399,9 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                             DownloadStatus.QUEUED -> R.string.downloads_queued
                             else -> R.string.explore_downloading
                         }
-                        Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
+                        val busy = busyWaitText(task, short = true)
+                        Text(busy ?: stringResource(label), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (busy == null && task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
                     }
                     Spacer(Modifier.height(6.dp))
                     DownloadProgressBar(task)
@@ -424,7 +431,6 @@ private fun CoverTag(text: String, color: Color, modifier: Modifier = Modifier) 
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         modifier = modifier
-            .padding(8.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Palette.Ink.copy(alpha = 0.75f))
             .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -458,6 +464,7 @@ private fun SkeletonCard() {
 @Composable
 internal fun VariantPickerSheet(
     prompt: VariantPrompt,
+    sourceName: (String) -> String?,
     onPick: (CatalogEntry, RomVariant) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -476,7 +483,9 @@ internal fun VariantPickerSheet(
                     stringResource(R.string.explore_variants_failed),
                     color = Palette.TextSecondary, modifier = Modifier.padding(vertical = 12.dp),
                 )
-                is VariantPrompt.Ready -> prompt.variants.forEachIndexed { index, variant ->
+                is VariantPrompt.Ready -> {
+                val sources = prompt.variants.variantSources()
+                prompt.variants.forEachIndexed { index, variant ->
                     if (index > 0) HorizontalDivider(color = Palette.Outline)
                     Row(
                         Modifier
@@ -488,7 +497,10 @@ internal fun VariantPickerSheet(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(variant.label, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(variant.region?.let { regionLabel(it) }, variant.sizeBytes?.takeIf { it > 0 }?.formatBytes(), variant.note)
+                            val meta = listOfNotNull(
+                                variant.region?.let { regionLabel(it) }, variant.sizeBytes?.takeIf { it > 0 }?.formatBytes(), variant.note,
+                                variant.sourceLabel(sources, sourceName),
+                            )
                             if (meta.isNotEmpty()) {
                                 Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
                             }
@@ -497,7 +509,16 @@ internal fun VariantPickerSheet(
                         Icon(Icons.Rounded.Download, stringResource(R.string.common_download), Modifier.size(20.dp), tint = Palette.Cyan)
                     }
                 }
+                }
             }
         }
     }
 }
+
+/** Fontes dos arquivos de uma lista: com mais de uma, cada arquivo diz de onde vem. */
+internal fun List<RomVariant>.variantSources(): Set<String> = mapNotNullTo(LinkedHashSet()) { it.origin?.sourceId }
+
+/** "via RomsFun", só quando a lista mistura fontes. */
+@Composable
+internal fun RomVariant.sourceLabel(sources: Set<String>, sourceName: (String) -> String?): String? =
+    origin?.sourceId?.takeIf { sources.size > 1 }?.let(sourceName)?.let { stringResource(R.string.cgame_via, it) }

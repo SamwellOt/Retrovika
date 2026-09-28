@@ -59,4 +59,14 @@ class HttpDownloadTest {
         assertEquals(content.toList(), file.readBytes().toList())
         assertEquals(listOf(null, null, "bytes=50000-"), ranges.toList())
     }
+
+    @Test
+    fun `retry-after em segundos ou data e limitado a cinco minutos`() {
+        assertEquals(300_000L, Http.retryAfterMs("300"))
+        assertEquals(1_000L, Http.retryAfterMs("0"))
+        assertEquals(300_000L, Http.retryAfterMs("86400"))
+        assertEquals(120_000L, Http.retryAfterMs("Mon, 28 Sep 2026 03:02:00 GMT", now = java.time.Instant.parse("2026-09-28T03:00:00Z").toEpochMilli()))
+        assertEquals(null, Http.retryAfterMs(null))
+        assertEquals(null, Http.retryAfterMs("logo"))
+    }
 }

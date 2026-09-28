@@ -88,8 +88,10 @@ object Http {
      * [onBytes] recebe os bytes lidos e o total (-1 se desconhecido), no mesmo ritmo do progresso.
      * Escreve primeiro em um arquivo .part para nunca deixar arquivos corrompidos.
      *
-     * Servidor ocupado (503/429) é tentado de novo algumas vezes, com espera crescente; conexão que cai
-     * no meio continua de onde parou (Range), quando o servidor aceita. Servidores de ROM vivem assim.
+     * Servidor ocupado (503/429) é tentado de novo com espera crescente, ou a que ele pedir no Retry-After,
+     * por até [BUSY_BUDGET_MS] no total; [onWait] recebe a hora (epoch ms) da próxima tentativa, e 0 quando
+     * ela começa. Conexão que cai no meio continua de onde parou (Range), quando o servidor aceita.
+     * Servidores de ROM vivem assim.
      */
     suspend fun download(
         url: String,
@@ -98,6 +100,7 @@ object Http {
         http: OkHttpClient = client,
         onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
         onSaved: (File) -> Unit = {},
+        onWait: (until: Long) -> Unit = {},
         // Por último: quem chama passa o progresso como lambda final.
         onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
@@ -111,6 +114,8 @@ object Http {
             var read = 0L
             var total = -1L
             var busyTries = 0
+            var busyWaited = 0L
+            var busyWait = 0L
             var dropTries = 0
             var lastReport = 0L
             while (true) {
@@ -124,7 +129,8 @@ object Http {
                         if (res.code == 403 && "Cookie" in headers) throw LocalizedException(R.string.download_forbidden)
                         // Servidor de arquivos sobrecarregado ou limitando o IP: vale esperar e tentar de novo.
                         if (res.code == 503 || res.code == 429) {
-                            if (busyTries >= BUSY_WAITS_MS.size) throw LocalizedException(R.string.download_server_busy)
+                            busyWait = retryAfterMs(res.header("Retry-After")) ?: BUSY_WAITS_MS[minOf(busyTries, BUSY_WAITS_MS.size - 1)]
+                            if (busyWaited + busyWait > BUSY_BUDGET_MS) throw LocalizedException(R.string.download_server_busy)
                             return@executeCancellable false
                         }
                         if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
@@ -166,7 +172,11 @@ object Http {
                     continue
                 }
                 if (finished) break
-                delay(BUSY_WAITS_MS[busyTries++])
+                busyTries++
+                busyWaited += busyWait
+                onWait(System.currentTimeMillis() + busyWait)
+                delay(busyWait)
+                onWait(0)
             }
             onBytes(read, if (total > 0) total else read)
         } catch (t: Throwable) {
@@ -186,8 +196,25 @@ object Http {
 
     private const val PROGRESS_INTERVAL_NS = 150_000_000L
 
-    /** Esperas entre as tentativas com o servidor ocupado (503/429): pouco mais de um minuto no total. */
-    private val BUSY_WAITS_MS = longArrayOf(5_000, 10_000, 20_000, 40_000)
+    /** Esperas entre as tentativas com o servidor ocupado (503/429) quando ele não diz quanto esperar. */
+    private val BUSY_WAITS_MS = longArrayOf(5_000, 10_000, 20_000, 40_000, 60_000)
+
+    /**
+     * Espera total com o servidor ocupado antes de desistir. Os servidores do RomsFun respondem 503 com
+     * Retry-After de 5 minutos a arquivos grandes: desistir em um minuto (como antes) nunca chegava a
+     * tentar de novo depois do prazo que o próprio servidor pediu.
+     */
+    private const val BUSY_BUDGET_MS = 16 * 60_000L
+    private const val MAX_RETRY_AFTER_MS = 5 * 60_000L
+
+    /** Retry-After em segundos ou como data HTTP, entre 1 s e [MAX_RETRY_AFTER_MS]; null quando ausente ou ilegível. */
+    internal fun retryAfterMs(header: String?, now: Long = System.currentTimeMillis()): Long? {
+        val value = header?.trim()?.ifEmpty { null } ?: return null
+        val ms = value.toLongOrNull()?.times(1000)
+            ?: runCatching { java.time.ZonedDateTime.parse(value, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() - now }.getOrNull()
+            ?: return null
+        return ms.coerceIn(1_000, MAX_RETRY_AFTER_MS)
+    }
     private const val MAX_RESUMES = 5
     private const val RESUME_WAIT_MS = 2_000L
 

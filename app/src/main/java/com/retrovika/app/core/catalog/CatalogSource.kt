@@ -16,7 +16,19 @@ data class CatalogEntry(
     val downloadUrl: String,
     val fileName: String,
     val kind: String,
-)
+    /**
+     * Outras páginas do mesmo jogo (mesmo console e título): de outras fontes ou repetidas na mesma (o
+     * RomsFun tem várias páginas para alguns jogos). A entrada vira um cartão só, com os arquivos de todas.
+     * Veja [CatalogRepository.mergeDuplicates].
+     */
+    val alternates: List<CatalogEntry> = emptyList(),
+) {
+    /** Esta entrada e as [alternates], na ordem de preferência das fontes. */
+    val members: List<CatalogEntry> get() = listOf(this) + alternates
+
+    /** Fontes da entrada, sem repetir (duas páginas do RomsFun contam uma vez). */
+    val sourceIds: List<String> get() = members.map { it.sourceId }.distinct()
+}
 
 /**
  * Uma página de resultados. [totalResults] é o total da busca inteira (não só desta página);
@@ -42,6 +54,8 @@ data class RomVariant(
     val region: String? = null,
     val sizeBytes: Long? = null,
     val note: String? = null,
+    /** A página que oferece este arquivo (numa entrada mesclada, pode ser uma das [CatalogEntry.alternates]). */
+    val origin: CatalogEntry? = null,
 )
 
 /** Detecta a região a partir do nome de arquivo no padrão No-Intro/TOSEC, quando presente. */

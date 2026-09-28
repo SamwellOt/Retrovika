@@ -97,6 +97,9 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
 
     fun sourceName(id: String): String? = realSources.firstOrNull { it.id == id }?.name
 
+    /** As fontes de uma entrada mesclada (CDRomance e RomsFun, por exemplo). */
+    fun sourceNames(entry: CatalogEntry): List<String> = entry.sourceIds.mapNotNull { sourceName(it) }
+
     fun setSource(id: String) {
         if (id == _state.value.sourceId) return
         val requiresSystem = sources.first { it.id == id }.requiresSystem
@@ -158,10 +161,13 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             else app.catalog.search(app.catalog.source(s.sourceId), s.query, s.systemId, page, s.kind, s.genre)
         }
 
-    /** Acrescenta uma página ao estado; o total vem da 1ª e as seguintes só o corrigem para cima. */
+    /**
+     * Acrescenta uma página ao estado; o total vem da 1ª e as seguintes só o corrigem para cima. Um jogo que
+     * já estava na tela (de outra fonte ou noutra página da mesma) se junta ao cartão existente.
+     */
     private fun appendPage(result: CatalogPage) = _state.update {
         it.copy(
-            entries = (it.entries + result.entries).distinctBy { e -> e.sourceId + e.id },
+            entries = app.catalog.mergeDuplicates(it.entries + result.entries),
             page = maxOf(it.page, result.page), totalPages = maxOf(result.totalPages, result.page),
             totalResults = if (result.page == 1) result.totalResults else maxOf(it.totalResults, result.totalResults),
             totalApproximate = if (result.page == 1) result.approximate else it.totalApproximate && result.approximate,
@@ -176,7 +182,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             fetchPage(s, page) { partial ->
                 // Cada site aparece assim que responde; o indicador de carga segue até o último.
                 if (job?.isActive == true) _state.update {
-                    val entries = (before + partial.entries).distinctBy { e -> e.sourceId + e.id }
+                    val entries = app.catalog.mergeDuplicates(before + partial.entries)
                     it.copy(entries = entries, waitingSlowSources = entries.isEmpty())
                 }
             }

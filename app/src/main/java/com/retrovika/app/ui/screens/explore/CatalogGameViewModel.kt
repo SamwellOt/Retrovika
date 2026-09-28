@@ -35,9 +35,17 @@ sealed interface Part<out T> {
 
 val <T> Part<T>.value: T? get() = (this as? Part.Ready)?.value
 
+fun <T, R> Part<T>.map(transform: (T) -> R): Part<R> = when (this) {
+    is Part.Ready -> Part.Ready(transform(value))
+    Part.Loading -> Part.Loading
+    Part.Failed -> Part.Failed
+}
+
 data class CatalogGameState(
     val entry: CatalogEntry,
     val details: Part<SourceDetails> = Part.Loading,
+    /** Fonte que deu a ficha: a principal da entrada ou, se ela falhou, uma das páginas mescladas. */
+    val detailsSourceId: String = entry.sourceId,
     val variants: Part<List<RomVariant>> = Part.Loading,
     val backloggd: Part<BackloggdInfo?> = Part.Loading,
     val wiki: Part<WikiInfo?> = Part.Loading,
@@ -80,7 +88,7 @@ class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, p
     private fun CoroutineScope.loadParts(entry: CatalogEntry) {
         launch {
             val details = attempt { app.catalog.details(entry) }
-            _state.update { it.copy(details = details) }
+            _state.update { it.copy(details = details.map { d -> d.second }, detailsSourceId = details.value?.first?.sourceId ?: entry.sourceId) }
         }
         launch {
             val variants = attempt { withSizes(app.catalog.variants(entry)) }

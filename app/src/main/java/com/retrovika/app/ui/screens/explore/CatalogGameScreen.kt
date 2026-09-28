@@ -129,6 +129,7 @@ import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
+import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
@@ -175,7 +176,10 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     val tasks by app.downloads.tasks.collectAsStateWithLifecycle()
     val task = remember(tasks, entryKey) { tasks.firstOrNull { it.entryKey == entry.downloadKey } }
     val system = Systems.byId(entry.systemId)
-    val sourceName = remember(entry.sourceId) { app.catalog.source(entry.sourceId).name }
+    // A ficha (notas, descrição, downloads) é de uma fonte; os arquivos podem vir de todas as mescladas na entrada.
+    val sourceName = remember(state.detailsSourceId) { app.catalog.source(state.detailsSourceId).name }
+    val sourceNames = remember(entry) { entry.sourceIds.map { app.catalog.source(it).name } }
+    val nameOf = remember { { id: String -> app.catalog.sources.firstOrNull { it.id == id }?.name } }
     var viewer by remember { mutableStateOf<Int?>(null) }
 
     val backloggd = state.backloggd.value
@@ -194,7 +198,7 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
                 ScoresRow(state, sourceName, locale)
             }
             item(key = "download", contentType = "download") {
-                DownloadPanel(state, task, sourceName, onDownload = vm::download, onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } }, onOpenDownloads = onOpenDownloads)
+                DownloadPanel(state, task, sourceNames.joinToString(" & "), onDownload = vm::download, onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } }, onOpenDownloads = onOpenDownloads)
             }
             item(key = "pills", contentType = "pills") { QuickFacts(source, state.sizes, locale) }
             item(key = "about", contentType = "about") { About(state, sourceName) }
@@ -205,8 +209,8 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
             item(key = "community", contentType = "community") {
                 Community(state.backloggd, entry.title, locale, onOpen = { CatalogGameFormat.openUrl(context, it) })
             }
-            item(key = "files", contentType = "files") { Files(state, onDownload = vm::download) }
-            item(key = "links", contentType = "links") { Links(state, sourceName, onOpen = { CatalogGameFormat.openUrl(context, it) }) }
+            item(key = "files", contentType = "files") { Files(state, nameOf, onDownload = vm::download) }
+            item(key = "links", contentType = "links") { Links(state, sourceName, nameOf, onOpen = { CatalogGameFormat.openUrl(context, it) }) }
             item(key = "footer", contentType = "footer") {
                 Text(
                     stringResource(R.string.cgame_attribution),
@@ -232,7 +236,7 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     }
 
     viewer?.let { start -> ScreenshotViewer(screenshots, start, onDismiss = { viewer = null }) }
-    prompt?.let { VariantPickerSheet(it, onPick = { _, v -> vm.download(v) }, onDismiss = vm::dismissPrompt) }
+    prompt?.let { VariantPickerSheet(it, sourceName = nameOf, onPick = { _, v -> vm.download(v) }, onDismiss = vm::dismissPrompt) }
 }
 
 // ---------------------------------------------------------------- cabeçalho
@@ -459,7 +463,9 @@ private fun DownloadPanel(
         when (task?.status) {
             DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.EXTRACTING -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val busy = busyWaitText(task)
                     val label = when {
+                        busy != null -> busy
                         task.status == DownloadStatus.QUEUED -> stringResource(R.string.cgame_queued)
                         task.status == DownloadStatus.EXTRACTING -> stringResource(R.string.cgame_extracting)
                         task.progress >= 0f -> stringResource(R.string.cgame_downloading, (task.progress * 100).toInt())
@@ -939,7 +945,7 @@ private fun ReviewCard(review: BackloggdReview, locale: Locale, onOpen: (String)
 // ---------------------------------------------------------------- arquivos e links
 
 @Composable
-private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
+private fun Files(state: CatalogGameState, sourceName: (String) -> String?, onDownload: (RomVariant) -> Unit) {
     val part = state.variants
     // Um arquivo só já está no botão principal; a lista serve para escolher entre versões.
     if (part is Part.Ready && part.value.size <= 1) return
@@ -957,7 +963,9 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
             when (part) {
                 Part.Loading -> repeat(3) { Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp, vertical = 8.dp).shimmer(RoundedCornerShape(12.dp))) }
                 Part.Failed -> Text(stringResource(R.string.cgame_files_failed), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(14.dp))
-                is Part.Ready -> part.value.forEachIndexed { i, v ->
+                is Part.Ready -> {
+                val sources = part.value.variantSources()
+                part.value.forEachIndexed { i, v ->
                     if (i > 0) HorizontalDivider(color = Palette.Outline.copy(alpha = 0.5f))
                     Row(
                         Modifier.fillMaxWidth().clickable { onDownload(v) }.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -965,12 +973,15 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(v.label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(v.region?.let { regionLabel(it) }, v.sizeBytes?.takeIf { it > 0 }?.formatBytes(), v.note)
+                            val meta = listOfNotNull(
+                                v.region?.let { regionLabel(it) }, v.sizeBytes?.takeIf { it > 0 }?.formatBytes(), v.note, v.sourceLabel(sources, sourceName),
+                            )
                             if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
                         }
                         Spacer(Modifier.width(10.dp))
                         Icon(Icons.Rounded.Download, stringResource(R.string.common_download), tint = Palette.Cyan, modifier = Modifier.size(20.dp))
                     }
+                }
                 }
             }
         }
@@ -979,7 +990,7 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Links(state: CatalogGameState, sourceName: String, onOpen: (String) -> Unit) {
+private fun Links(state: CatalogGameState, sourceName: String, nameOf: (String) -> String?, onOpen: (String) -> Unit) {
     val backloggd = state.backloggd.value
     val wiki = state.wiki.value
     val links = buildList {
@@ -988,6 +999,8 @@ private fun Links(state: CatalogGameState, sourceName: String, onOpen: (String) 
         addAll(wiki?.links.orEmpty())
         if (wiki?.links.orEmpty().none { it.name == "IGDB" }) backloggd?.igdbUrl?.let { add(ExternalLink("IGDB", it)) }
         (state.source.website ?: state.entry.website)?.let { add(ExternalLink(sourceName, it)) }
+        // As outras páginas do mesmo jogo (outra fonte, ou outra página na mesma).
+        state.entry.members.forEach { m -> m.website?.let { url -> nameOf(m.sourceId)?.let { add(ExternalLink(it, url)) } } }
     }.distinctBy { it.url }
     if (links.isEmpty()) return
     Column(Modifier.padding(top = 30.dp)) {
