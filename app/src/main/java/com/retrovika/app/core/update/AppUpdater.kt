@@ -240,11 +240,11 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
 
         /**
          * As notas da release em texto simples: sem a linha de instalação manual do topo, sem os
-         * títulos ("Novidades", que o cartão já diz) e sem a marcação de negrito e código.
+         * títulos ("Novidades", que o cartão já diz) e sem a marcação de citação, negrito e código.
          */
         internal fun notesOf(markdown: String): String = markdown.lines()
             .filterNot { it.startsWith("#") || it.startsWith("**Instala") || it.startsWith("**Install") }
-            .map { it.trim().replace("**", "").replace("`", "") }
+            .map { it.trim().removePrefix(">").trim().replace("**", "").replace("`", "") }
             .joinToString("\n").replace(Regex("""\n{3,}"""), "\n\n").trim()
 
         private fun JsonObject.text(key: String) = get(key)?.jsonPrimitive?.contentOrNull

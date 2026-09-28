@@ -24,7 +24,7 @@ class AppUpdaterTest {
         val json = """
             {"tag_name":"v0.3.4","draft":false,"prerelease":false,
              "html_url":"https://github.com/SamwellOt/Retrovika/releases/tag/v0.3.4",
-             "body":"**Instalação:** baixe o `Retrovika-0.3.4.apk` abaixo.\r\n\r\n## Novidades\r\n\r\n**Atualização pelo app**\r\n- O app se atualiza sozinho.",
+             "body":"**Instalação:** baixe o `Retrovika-0.3.4.apk` abaixo.\r\n\r\n> **Atenção:** só desta vez.\r\n\r\n## Novidades\r\n\r\n**Atualização pelo app**\r\n- O app se atualiza sozinho.",
              "assets":[{"name":"notes.txt","browser_download_url":"https://x/notes.txt","size":10},
                        {"name":"Retrovika-0.3.4.apk","browser_download_url":"https://x/Retrovika-0.3.4.apk","size":25000000}]}
         """.trimIndent()
@@ -32,7 +32,7 @@ class AppUpdaterTest {
         assertEquals("0.3.4", r.version)
         assertEquals("https://x/Retrovika-0.3.4.apk", r.apkUrl)
         assertEquals(25_000_000L, r.apkSize)
-        assertEquals("Atualização pelo app\n- O app se atualiza sozinho.", r.notes)
+        assertEquals("Atenção: só desta vez.\n\nAtualização pelo app\n- O app se atualiza sozinho.", r.notes)
     }
 
     @Test
