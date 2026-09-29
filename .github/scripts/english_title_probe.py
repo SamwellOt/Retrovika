@@ -199,6 +199,62 @@ def phrase_with_context(t):
     return None
 
 
+def nihongo_names(w):
+    out, pos = [], 0
+    pat = re.compile(r"\{\{\s*nihongo[\w ]*\|", re.I)
+    while True:
+        m = pat.search(w, pos)
+        if not m:
+            return out
+        pos = m.end()
+        params, braces, brackets, i = [""], 1, 0, pos
+        while i < len(w) and braces > 0:
+            two = w[i:i + 2]
+            if two == "{{":
+                braces += 1; params[-1] += two; i += 2
+            elif two == "}}":
+                braces -= 1
+                if braces > 0:
+                    params[-1] += two
+                i += 2
+            elif two == "[[":
+                brackets += 1; params[-1] += two; i += 2
+            elif two == "]]":
+                brackets -= 1; params[-1] += two; i += 2
+            elif w[i] == "|" and braces == 1 and brackets == 0:
+                params.append(""); i += 1
+            else:
+                params[-1] += w[i]; i += 1
+        for raw in [p for p in params if not re.match(r"^\s*[\w-]+\s*=", p)][:3]:
+            t = raw
+            for _ in range(3):
+                t = re.sub(r"\{\{[^{}]*}}", "", t)
+            t = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)]]", r"\1", t).replace("'" * 3, "").replace("'" * 2, "").strip()
+            if t:
+                out.append(t)
+
+
+BAD_DESC = ("series", "franchise", "company", "developer", "publisher", "list")
+
+
+def phrase_nihongo(t):
+    """Busca por frase; aceita o artigo de jogo cujo {{Nihongo}} da abertura traz a romanização."""
+    want = romaji(t)
+    for q in dict.fromkeys([key(t), want]):
+        r = wp({"list": "search", "srsearch": f'"{q}"', "srlimit": "5", "srprop": ""})
+        titles = [h["title"] for h in r.get("query", {}).get("search", [])]
+        if not titles:
+            continue
+        desc = {p["title"]: p.get("description", "").lower() for p in wp({"titles": "|".join(titles), "prop": "description"})["query"]["pages"]}
+        games = [x for x in titles if "game" in desc.get(x, "") and not any(b in desc.get(x, "") for b in BAD_DESC)]
+        for g in games[:2]:
+            w = get("https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode({
+                "action": "parse", "page": g, "prop": "wikitext", "section": "0", "format": "json", "formatversion": "2"}))["parse"]["wikitext"]
+            if any(romaji(n) == want for n in nihongo_names(w)):
+                return g
+    return None
+
+
 def proposal(t):
     """Proposta completa: Wikidata estrito -> Wikipedia redirecionamento -> frase com contexto."""
     return wd_strict(t) or w_redirect(t) or phrase_with_context(t)
@@ -206,14 +262,14 @@ def proposal(t):
 
 def kotlin(t):
     """O que o app faz (WikiClient.otherTitle): um resultado de mesmo nome sem slug do IGDB não serve."""
-    for fn in (wd_strict, w_redirect, phrase_with_context):
+    for fn in (wd_strict, w_redirect, phrase_nihongo):
         got = fn(t)
         if got and (key(got.split(" (Q")[0]) != key(t) or "igdb" in got):
             return got
     return None
 
 
-STRATEGIES = [("app", kotlin), ("frase-ctx", phrase_with_context)]
+STRATEGIES = [("app", kotlin), ("frase-nihongo", phrase_nihongo)]
 
 score = {name: [0, 0, 0] for name, _ in STRATEGIES}  # certo, errado, nada
 for title, expected in CASES:
@@ -233,20 +289,6 @@ for title, expected in CASES:
             ok = found is not None and key(name_found) == key(expected)
         score[name][0 if ok else (1 if found else 2)] += 1
         print(f"  {name:13} {ms:5} ms  {'OK ' if ok else '-- '} {got}")
-
-print("\nFLOWER, SUN, AND RAIN — como o artigo mostra o nome japonês:")
-for q in ['"hana to taiyo to ame to"']:
-    r = wp({"list": "search", "srsearch": q, "srlimit": "5", "srprop": "snippet"})
-    for h in r.get("query", {}).get("search", []):
-        print(f"  trecho [{h['title']}]: {h['snippet'][:400]!r}")
-text = get("https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode({
-    "action": "parse", "page": "Flower, Sun, and Rain", "prop": "wikitext", "format": "json", "formatversion": "2"}))["parse"]["wikitext"]
-for line in text.splitlines():
-    if "taiy" in line.lower() or "hana to" in line.lower():
-        print(f"  wikitexto: {line[:400]!r}")
-e = get("https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q3074435&props=labels|aliases&format=json")["entities"]["Q3074435"]
-print("  wikidata rótulos:", {k: v["value"] for k, v in e.get("labels", {}).items() if k in ("en", "ja", "ja-latn", "mul")})
-print("  wikidata apelidos:", {k: [a["value"] for a in v] for k, v in e.get("aliases", {}).items()})
 
 print("\nPLACAR (certo / errado / nada):")
 for name, (a, b, c) in score.items():

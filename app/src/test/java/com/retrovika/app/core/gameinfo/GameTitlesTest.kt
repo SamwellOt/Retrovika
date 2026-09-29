@@ -47,14 +47,15 @@ class GameTitlesTest {
     }
 
     @Test
-    fun `reconhece o nome japones no trecho da busca`() {
-        val m = { s: String -> "<span class=\"searchmatch\">$s</span>" }
-        assertTrue(WikiClient.namesJapaneseTitle("also known by its Japanese title ${m("Seiken")} ${m("Densetsu")} ${m("3")}, is a"))
-        assertTrue(WikiClient.namesJapaneseTitle("(Japanese: 花と太陽と雨と, Hepburn: ${m("Hana")} ${m("to")} ${m("Taiyō")} ${m("to")} ${m("Ame")} ${m("to")}) is"))
-        // O nome continua: é outro jogo.
-        assertFalse(WikiClient.namesJapaneseTitle("known in Japan as ${m("Rockman")} ${m("X")} DiVE, was a 2020 mobile game"))
-        // Sem menção ao Japão por perto.
-        assertFalse(WikiClient.namesJapaneseTitle("It is a spinoff of the ${m("Akumajou")} ${m("Dracula")} series."))
+    fun `le os nomes da predefinicao nihongo com outras dentro`() {
+        val lead = "{{Nihongo foot|'''''Flower, Sun, and Rain'''''|花と太陽と雨と|Hana to Taiyō to Ame to|lead=yes|" +
+            "group=lower-alpha|released on [[Nintendo DS]] as {{nihongo|'''''Flower, Sun, and Rain: Murder and Mystery in Paradise'''''|" +
+            "花と太陽と雨と 終わらない楽園|Hana to Taiyō to Ame to: Owaranai Rakuen|{{lit.}} \"''Neverending Paradise''\"}}}} is an " +
+            "[[adventure game|adventure]] [[video game]]"
+        val names = WikiClient.nihongoNames(lead)
+        assertEquals(listOf("Flower, Sun, and Rain", "花と太陽と雨と", "Hana to Taiyō to Ame to"), names.take(3))
+        assertTrue("Hana to Taiyō to Ame to: Owaranai Rakuen" in names)
+        assertEquals(listOf("トバル No.1", "Tobaru Nanbā Wan"), WikiClient.nihongoNames("'''Tobal No. 1''' ({{nihongo|トバル No.1|Tobaru Nanbā Wan}}) is"))
     }
 
     @Test

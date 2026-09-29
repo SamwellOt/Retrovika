@@ -12,7 +12,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.jsoup.parser.Parser
 
 /**
  * Wikidata + Wikipedia: ficha técnica do jogo (publicadora, série, direção, trilha sonora,
@@ -47,9 +46,9 @@ class WikiClient {
      * 1. Wikidata: os nomes japoneses ficam como apelidos do item do jogo, que também traz o slug do
      *    IGDB. Só vale o apelido ou rótulo inteiro, não o começo ("Rockman X" não é "Rockman X4").
      * 2. Wikipedia: título ou redirecionamento exato ("Seiken Densetsu 3" leva a "Trials of Mana").
-     * 3. Wikipedia, busca pela frase: só quando o trecho mostra o nome inteiro logo depois de "known in
-     *    Japan as", "Japanese title", "Hepburn:"… A busca solta pegava a continuação ou o derivado
-     *    ("Rockman X" virava "Mega Man X DiVE").
+     * 3. Wikipedia, busca pela frase: só o artigo de jogo cuja predefinição `{{Nihongo}}` da abertura
+     *    traz a romanização pedida ("Hana to Taiyō to Ame to"). A busca solta pegava a continuação ou
+     *    o derivado ("Rockman X" virava "Mega Man X DiVE").
      * Nulo quando nada disso acha outro nome nem o slug do IGDB.
      */
     suspend fun otherTitle(title: String): OtherTitle? {
@@ -88,27 +87,42 @@ class WikiClient {
         return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
     }
 
-    /** Busca pela frase e aceita o artigo de jogo cujo trecho apresenta o nome como título japonês. */
+    /**
+     * Busca pela frase e aceita o artigo de jogo que se declara com esse nome japonês: a predefinição
+     * `{{Nihongo|<inglês>|<kanji>|<romaji>}}` da abertura traz a romanização pedida. Achar a frase em
+     * qualquer ponto do texto não basta ("Rockman X" aparece no artigo de "Mega Man X DiVE").
+     */
     private suspend fun byPhrase(clean: String, wanted: String): OtherTitle? {
+        val checked = HashSet<String>()
         // A busca tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda usa a forma sem
         // vogais longas.
         for (query in listOf(GameTitles.key(clean), wanted).distinct()) {
             val url = Urls.withQuery(wikipedia, listOf(
                 "action" to "query", "list" to "search", "srsearch" to "\"$query\"", "srnamespace" to "0",
-                "srlimit" to "5", "srprop" to "snippet", "format" to "json", "formatversion" to "2",
+                "srlimit" to "5", "srprop" to "", "format" to "json", "formatversion" to "2",
             ))
-            val hits = json(url)["query"]?.jsonObject?.get("search")?.jsonArray.orEmpty().map { it.jsonObject }
-                .mapNotNull { h ->
-                    val t = h["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    t to h["snippet"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val titles = json(url)["query"]?.jsonObject?.get("search")?.jsonArray.orEmpty()
+                .mapNotNull { it.jsonObject["title"]?.jsonPrimitive?.contentOrNull }
+            if (titles.isEmpty()) continue
+            val byTitle = pages(listOf("titles" to titles.joinToString("|"))).associateBy { it.title }
+            val games = titles.mapNotNull { byTitle[it]?.takeIf { p -> p.isGame } }.filter { checked.add(it.title) }
+            for (page in games.take(MAX_LEADS)) {
+                val names = runCatching { nihongoNames(leadWikitext(page.title)) }.getOrDefault(emptyList())
+                if (names.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }) {
+                    return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
                 }
-                .filter { (_, snippet) -> namesJapaneseTitle(snippet) }
-            if (hits.isEmpty()) continue
-            val byTitle = pages(listOf("titles" to hits.joinToString("|") { it.first })).associateBy { it.title }
-            val page = hits.firstNotNullOfOrNull { (t, _) -> byTitle[t]?.takeIf { it.isGame } } ?: continue
-            return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
+            }
         }
         return null
+    }
+
+    /** O wikitexto da abertura (seção 0) do artigo. */
+    private suspend fun leadWikitext(title: String): String {
+        val url = Urls.withQuery(wikipedia, listOf(
+            "action" to "parse", "page" to title, "prop" to "wikitext", "section" to "0",
+            "format" to "json", "formatversion" to "2",
+        ))
+        return json(url)["parse"]?.jsonObject?.get("wikitext")?.jsonPrimitive?.contentOrNull.orEmpty()
     }
 
     private class Page(val title: String, val isGame: Boolean, val item: String?)
@@ -292,20 +306,48 @@ class WikiClient {
             return "game" in d && listOf("series", "franchise", "company", "developer", "publisher", "list").none { it in d }
         }
 
-        private val cue = Regex("""japan|japanese|hepburn|known as|titled|released as""", RegexOption.IGNORE_CASE)
-        private val boundary = Regex("""^\s*(?:[,.;:)(\[—–]|$|(?:is|was|in|for)\b)""")
-        private val match = Regex("""(?:<span class="searchmatch">[^<]*</span>[\s\-:–—]*)+""")
-        private val tag = Regex("""<[^>]+>""")
+        /** Quantos artigos de jogo de cada busca têm a abertura lida. */
+        private const val MAX_LEADS = 2
+
+        private val nihongo = Regex("""\{\{\s*nihongo[\w ]*\|""", RegexOption.IGNORE_CASE)
+        private val namedParam = Regex("""^\s*[\w-]+\s*=""")
+        private val innerTemplate = Regex("""\{\{[^{}]*}}""")
+        private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)]]""")
 
         /**
-         * O trecho de resultado da busca (HTML, com o nome achado em `searchmatch`) apresenta o nome
-         * inteiro como título japonês: "known in Japan as <nome>, …", "(…, Hepburn: <nome>)". Um nome
-         * que continua ("Rockman X DiVE") ou sem menção ao Japão por perto não vale.
+         * Os três primeiros parâmetros (inglês, kanji, romaji) de cada `{{Nihongo…}}` do wikitexto,
+         * sem marcação. Conta chaves e colchetes: a predefinição pode trazer outras dentro, como em
+         * `{{Nihongo foot|''Flower, Sun, and Rain''|花と太陽と雨と|Hana to Taiyō to Ame to|…{{nihongo|…}}}}`.
          */
-        fun namesJapaneseTitle(snippet: String): Boolean = match.findAll(snippet).any { m ->
-            val before = Parser.unescapeEntities(snippet.substring(0, m.range.first).replace(tag, ""), false).takeLast(60)
-            val after = Parser.unescapeEntities(snippet.substring(m.range.last + 1).replace(tag, ""), false)
-            cue.containsMatchIn(before) && boundary.containsMatchIn(after)
+        fun nihongoNames(wikitext: String): List<String> {
+            val out = mutableListOf<String>()
+            var from = 0
+            while (true) {
+                val m = nihongo.find(wikitext, from) ?: break
+                from = m.range.last + 1
+                val params = mutableListOf(StringBuilder())
+                var braces = 1
+                var brackets = 0
+                var i = from
+                while (i < wikitext.length && braces > 0) {
+                    val two = wikitext.substring(i, minOf(i + 2, wikitext.length))
+                    when {
+                        two == "{{" -> { braces++; params.last().append(two); i += 2 }
+                        two == "}}" -> { braces--; if (braces > 0) params.last().append(two); i += 2 }
+                        two == "[[" -> { brackets++; params.last().append(two); i += 2 }
+                        two == "]]" -> { brackets--; params.last().append(two); i += 2 }
+                        wikitext[i] == '|' && braces == 1 && brackets == 0 -> { params.add(StringBuilder()); i++ }
+                        else -> { params.last().append(wikitext[i]); i++ }
+                    }
+                }
+                params.map { it.toString() }.filterNot { namedParam.containsMatchIn(it) }.take(3).forEach { raw ->
+                    var t = raw
+                    repeat(3) { t = t.replace(innerTemplate, "") }
+                    t = t.replace(wikiLink, "$1").replace("'''", "").replace("''", "").trim()
+                    if (t.isNotEmpty()) out += t
+                }
+            }
+            return out
         }
 
         const val DEVELOPER = "P178"
