@@ -73,6 +73,17 @@ class GLRetroView(
     private var isEmulationReady = false
     private var isAborted = false
 
+    /** Protege [isDestroyed] e [loadRunning]: depois do onDestroy nenhum carregamento começa. */
+    private val loadLock = Any()
+    @Volatile private var isDestroyed = false
+    @Volatile private var loadRunning = false
+
+    /**
+     * O retro_load_game está rodando na thread GL. Destruir nesse meio-tempo faz o onDestroy esperar o
+     * carregamento terminar (o destroy nativo pega o mesmo lock): quem puder deve esperar isto virar falso.
+     */
+    val isLoading: Boolean get() = loadRunning
+
     private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
     private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
 
@@ -112,9 +123,19 @@ class GLRetroView(
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-    fun onDestroy() = catchExceptions {
-        LibretroDroid.destroy()
-        lifecycle = null
+    fun onDestroy() {
+        // Antes de tudo: a partir daqui a thread GL não começa mais a carregar o jogo.
+        synchronized(loadLock) {
+            isDestroyed = true
+            // O jogo nunca chegou a carregar: os descritores do SAF ainda são nossos e vazariam.
+            if (!loadRunning && !isGameLoaded) {
+                data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
+            }
+        }
+        catchExceptions {
+            LibretroDroid.destroy()
+            lifecycle = null
+        }
     }
 
     private fun getDeviceLanguage() = Locale.getDefault().language
@@ -244,8 +265,9 @@ class GLRetroView(
      */
     fun serializeAndStartNetplay(fd: Int, localPort: Int, delayFrames: Int, epoch: Int): ByteArray? = runOnEmulationThread(true) {
         runCatching {
-            val state = LibretroDroid.serializeState()
-            LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch)
+            // Vazio: o núcleo não gerou estado. A partida não começa e o descritor continua de quem chamou.
+            val state = LibretroDroid.serializeState()?.takeIf { it.isNotEmpty() }
+            if (state != null) LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch)
             state
         }.onFailure { Log.e(TAG_LOG, "serializeAndStartNetplay", it) }.getOrNull()
     }
@@ -391,20 +413,29 @@ class GLRetroView(
     // These functions are called from the GL thread.
     private fun initializeCore() = catchExceptions {
         if (isGameLoaded) return@catchExceptions
-        when {
-            data.gameFilePath != null -> loadGameFromPath(data.gameFilePath!!)
-            data.gameFileBytes != null -> loadGameFromBytes(data.gameFileBytes!!)
-            data.gameVirtualFiles.isNotEmpty() -> loadGameFromVirtualFiles(data.gameVirtualFiles)
+        // Superfície criada depois do onDestroy: carregar agora usaria o núcleo de outra tela (é global).
+        synchronized(loadLock) {
+            if (isDestroyed) return@catchExceptions
+            loadRunning = true
         }
-        data.saveRAMState?.let {
-            LibretroDroid.unserializeSRAM(data.saveRAMState)
-            data.saveRAMState = null
+        try {
+            when {
+                data.gameFilePath != null -> loadGameFromPath(data.gameFilePath!!)
+                data.gameFileBytes != null -> loadGameFromBytes(data.gameFileBytes!!)
+                data.gameVirtualFiles.isNotEmpty() -> loadGameFromVirtualFiles(data.gameVirtualFiles)
+            }
+            data.saveRAMState?.let {
+                LibretroDroid.unserializeSRAM(data.saveRAMState)
+                data.saveRAMState = null
+            }
+            // Como o RetroArch: entre o retro_load_game e o primeiro retro_run. Depois disso o Dolphin já
+            // iniciou a thread de emulação, que recarrega a configuração dos controles e pode desfazer a chamada.
+            data.controllerTypes.forEachIndexed { port, type -> LibretroDroid.setControllerType(port, type) }
+            LibretroDroid.onSurfaceCreated()
+            isGameLoaded = true
+        } finally {
+            loadRunning = false
         }
-        // Como o RetroArch: entre o retro_load_game e o primeiro retro_run. Depois disso o Dolphin já
-        // iniciou a thread de emulação, que recarrega a configuração dos controles e pode desfazer a chamada.
-        data.controllerTypes.forEachIndexed { port, type -> LibretroDroid.setControllerType(port, type) }
-        LibretroDroid.onSurfaceCreated()
-        isGameLoaded = true
 
         KtUtils.runOnUIThread {
             lifecycle?.addObserver(RenderLifecycleObserver())

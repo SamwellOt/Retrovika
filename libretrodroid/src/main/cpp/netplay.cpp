@@ -25,6 +25,26 @@ Netplay::Netplay(int fd, unsigned localPort, unsigned delayFrames, uint8_t epoch
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    // Queda de conexão é detectada pelo próprio TCP, não pela falta de entrada: um lado pausado (menu,
+    // ligação) para de mandar entrada, mas o sistema dele continua respondendo ao TCP. Keep-alive acha o
+    // outro aparelho sumido quando nada está sendo enviado; TCP_USER_TIMEOUT, quando há dados sem resposta.
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+#ifdef TCP_KEEPIDLE
+    int idle = KEEPALIVE_IDLE_S;
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+#endif
+#ifdef TCP_KEEPINTVL
+    int interval = KEEPALIVE_INTERVAL_S;
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+#endif
+#ifdef TCP_KEEPCNT
+    int count = KEEPALIVE_COUNT;
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+#endif
+#ifdef TCP_USER_TIMEOUT
+    unsigned int userTimeout = (unsigned int) DEAD_PEER_MS;
+    setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &userTimeout, sizeof(userTimeout));
+#endif
     // Os primeiros quadros não têm entrada de ninguém ainda: os dois lados começam parados.
     for (uint32_t f = 0; f < delay; f++) {
         localPads[f] = Pad();
@@ -142,13 +162,9 @@ bool Netplay::prepareFrame(Input* input) {
     auto remote = remotePads.find(f);
     auto local = localPads.find(f);
     if (remote == remotePads.end() || local == localPads.end()) {
-        int64_t now = nowMillis();
-        int64_t since = stalledSince.load();
-        if (since == 0) stalledSince = now;
-        else if (now - since > TIMEOUT_MS) {
-            LOGE("Netplay: no input from the other side for %lld ms", (long long) (now - since));
-            broken = true;
-        }
+        // Sem prazo aqui: o outro lado pode estar pausado por quanto tempo quiser. A conexão só cai quando
+        // o soquete falha (recv/send com erro, fim da conexão, keep-alive ou TCP_USER_TIMEOUT).
+        if (stalledSince.load() == 0) stalledSince = nowMillis();
         return false;
     }
     stalledSince = 0;

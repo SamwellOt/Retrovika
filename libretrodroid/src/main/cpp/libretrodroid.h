@@ -69,10 +69,11 @@ public:
     void setCheat(unsigned index, bool enabled, const std::string& code);
     void resetCheat();
 
-    std::pair<int8_t*, size_t> serializeState();
+    // Vazio quando o núcleo não consegue gerar o estado (o Kotlin trata como falha).
+    std::vector<int8_t> serializeState();
     bool unserializeState(int8_t *data, size_t size);
 
-    std::pair<int8_t *, size_t> serializeSRAM();
+    std::vector<int8_t> serializeSRAM();
     jboolean unserializeSRAM(int8_t *data, size_t size);
 
     void onSurfaceCreated();
@@ -167,6 +168,7 @@ protected:
 
     [[noreturn]] void throwLoadGameError();
     void throwIfHwContextMissing();
+    void throwIfCoreMissing();
     static void callback_retro_set_input_poll();
 
 private:
@@ -192,6 +194,8 @@ private:
     std::mutex coreLock;
 
     std::unique_ptr<Core> core;
+    // retro_load_game deu certo: só então o destroy chama retro_unload_game.
+    bool gameLoaded = false;
     std::unique_ptr<Audio> audio;
     std::unique_ptr<Video> video;
     std::unique_ptr<FPSSync> fpsSync;

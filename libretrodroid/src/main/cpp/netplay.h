@@ -55,7 +55,11 @@ public:
 private:
     static constexpr size_t PACKET_SIZE = 21;
     static constexpr uint8_t MAGIC = 'R';
-    static constexpr int64_t TIMEOUT_MS = 20000;
+    // Conexão morta (o outro aparelho sumiu da rede sem fechar o soquete): ~20 s para desistir.
+    static constexpr int KEEPALIVE_IDLE_S = 5;
+    static constexpr int KEEPALIVE_INTERVAL_S = 3;
+    static constexpr int KEEPALIVE_COUNT = 5;
+    static constexpr int64_t DEAD_PEER_MS = 20000;
 
     Pad capture(Input* input) const;
     void send(uint32_t forFrame, const Pad& pad);

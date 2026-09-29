@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -56,10 +57,11 @@ object StatePackage {
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
             while (true) {
                 val e = zip.nextEntry ?: break
+                // Cada entrada lida com teto: o tamanho declarado no zip não vale nada (zip bomb).
                 when (e.name) {
-                    MANIFEST -> manifest = json.decodeFromString(StateManifest.serializer(), zip.readBytes().decodeToString())
-                    STATE -> state = zip.readBytes()
-                    THUMB -> thumb = zip.readBytes()
+                    MANIFEST -> manifest = json.decodeFromString(StateManifest.serializer(), zip.readBounded(MAX_MANIFEST).decodeToString())
+                    STATE -> state = zip.readBounded(MAX_SIZE)
+                    THUMB -> thumb = zip.readBounded(MAX_THUMB)
                 }
             }
         }
@@ -68,6 +70,21 @@ object StatePackage {
         if (m.format > FORMAT) return null
         Contents(m, s, thumb)
     }.getOrNull()
+
+    /** Lê a entrada atual até o fim, desistindo (pacote inválido) se ela passar de [max] bytes descompactada. */
+    private fun ZipInputStream.readBounded(max: Long): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > max) throw IOException("entry too large")
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
+    }
 
     fun manifestFor(game: Game, coreId: String, now: Long) = StateManifest(
         systemId = game.systemId, coreId = coreId, title = game.title, rawName = game.rawName,
@@ -96,4 +113,6 @@ object StatePackage {
     private const val MANIFEST = "manifest.json"
     private const val STATE = "state.bin"
     private const val THUMB = "thumb.png"
+    private const val MAX_MANIFEST = 64L * 1024
+    private const val MAX_THUMB = 16L * 1024 * 1024
 }

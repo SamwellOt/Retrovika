@@ -208,10 +208,13 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
     jclass obj
 ) {
     try {
-        auto [data, size] = LibretroDroid::getInstance().serializeState();
+        std::vector<int8_t> data = LibretroDroid::getInstance().serializeState();
+        auto size = (jsize) data.size();
 
         jbyteArray result = env->NewByteArray(size);
-        env->SetByteArrayRegion(result, 0, size, data);
+        if (result != nullptr && size > 0) {
+            env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(data.data()));
+        }
 
         return result;
 
@@ -279,10 +282,13 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
     jclass obj
 ) {
     try {
-        auto [data, size] = LibretroDroid::getInstance().serializeSRAM();
+        std::vector<int8_t> data = LibretroDroid::getInstance().serializeSRAM();
+        auto size = (jsize) data.size();
 
         jbyteArray result = env->NewByteArray(size);
-        env->SetByteArrayRegion(result, 0, size, (jbyte *) data);
+        if (result != nullptr && size > 0) {
+            env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(data.data()));
+        }
 
         return result;
 

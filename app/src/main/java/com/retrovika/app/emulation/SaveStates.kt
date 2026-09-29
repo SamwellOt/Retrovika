@@ -28,6 +28,8 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
     fun read(slot: Int): ByteArray? = stateFile(slot).takeIf { it.exists() }?.readBytes()
 
     fun write(slot: Int, data: ByteArray, thumbnail: Bitmap?) {
+        // Estado vazio = o núcleo falhou ao serializar: nunca troca um save bom por ele.
+        if (data.isEmpty()) throw IOException("empty state")
         val tmp = File(dir, "slot$slot.tmp")
         try {
             tmp.writeBytes(data)

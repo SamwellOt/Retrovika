@@ -187,6 +187,12 @@ class GameActivity : ComponentActivity() {
      */
     private var autoSaveReady = false
 
+    /**
+     * O núcleo já carregou o jogo (o primeiro quadro foi desenhado). Antes disso a SRAM ainda é a do boot,
+     * ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
+     */
+    private var gameLoaded = false
+
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(id: Int) = Unit
         // Controle desconectado: o controle virtual volta na hora.
@@ -380,7 +386,7 @@ class GameActivity : ComponentActivity() {
 
         // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
         // próximo jogo quando esta Activity fosse destruída (o LibretroDroid é global).
-        if (isFinishing) return
+        if (isFinishing) { closeVirtualFiles(data); return }
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -415,6 +421,12 @@ class GameActivity : ComponentActivity() {
             }
         }
         return GameSource.Ok
+    }
+
+    /** Fecha os descritores do SAF de uma carga que não vai acontecer (a GLRetroView nunca foi criada). */
+    private fun closeVirtualFiles(data: GLRetroViewData) {
+        data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
+        data.gameVirtualFiles = emptyList()
     }
 
     private suspend fun optionsFor(core: CoreInfo): Map<String, String> {
@@ -491,10 +503,16 @@ class GameActivity : ComponentActivity() {
         }
         val data = GLRetroViewData(this).apply { coreFilePath = path }
         if (setGameSource(data, core) != GameSource.Ok) return null
-        configure(data, core, optionsFor(core))
+        try {
+            configure(data, core, optionsFor(core))
+        } catch (t: Throwable) {
+            // Inclui o cancelamento (Activity fechando): os descritores do SAF já abertos não podem vazar.
+            closeVirtualFiles(data)
+            throw t
+        }
         data.rumbleEventsEnabled = false
         runCatching { android.system.Os.setenv("EXTERNAL_STORAGE", app.paths.savesFor(system.id).absolutePath, true) }
-        if (isFinishing || benchSkip) return null
+        if (isFinishing || benchSkip) { closeVirtualFiles(data); return null }
 
         val owner = EmulationOwner()
         val view = GLRetroView(this, data)
@@ -531,6 +549,12 @@ class GameActivity : ComponentActivity() {
             if (benchSkip) return null
             return CoreBenchmark.speed(frames, millis, view.contentFps())
         } finally {
+            // Destruir com o retro_load_game ainda rodando (demorou demais, ou o usuário saiu) faria o
+            // onDestroy esperar o carregamento na thread principal: a espera fica aqui, suspensa e com teto.
+            // NonCancellable: com a Activity fechando o escopo já está cancelado e o delay sairia na hora.
+            withContext(kotlinx.coroutines.NonCancellable) {
+                withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) { while (view.isLoading) delay(BENCH_SAMPLE_MS) }
+            }
             owner.registry.currentState = Lifecycle.State.DESTROYED
             benchOwner = null
             // Tira a view da tela (a thread GL termina) antes de o próximo núcleo criar o dele.
@@ -561,6 +585,7 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
+            if (retroView === view) gameLoaded = true
             val received = pendingStateFile
             val guestOf = netGuest
             if (guestOf != null) {
@@ -590,8 +615,11 @@ class GameActivity : ComponentActivity() {
                 }
             }
             autoSaveReady = true
-            // Trapaças ligadas na última sessão voltam junto com o jogo.
-            if (retroView === view && cheats?.state?.enabled?.isNotEmpty() == true) applyCheats(view)
+            // Trapaças ligadas na última sessão voltam junto com o jogo (menos em rede: o convidado parte do
+            // estado do anfitrião, e só um lado com trapaças desencontraria os dois jogos).
+            if (retroView === view && cheats?.state?.enabled?.isNotEmpty() == true) {
+                if (cheatsBlocked()) cheats?.dirty = true else applyCheats(view)
+            }
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
@@ -710,6 +738,8 @@ class GameActivity : ComponentActivity() {
         if (ui !is EmulationUi.Running) return
         // Partida de outra pessoa: gravar aqui trocaria o progresso de quem joga pelo dela.
         if (guestSession) return
+        // Jogo ainda carregando: nem a SRAM nem o estado são reais.
+        if (!gameLoaded) return
         runCatching {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
@@ -746,8 +776,9 @@ class GameActivity : ComponentActivity() {
             updateEmulationState()
             // O núcleo só aceita trapaças na thread de emulação, que acabou de voltar a rodar.
             val view = retroView
-            // Em rede as trapaças esperam: só um lado com elas desencontraria os dois jogos.
-            if (view != null && cheats?.dirty == true && !netplay.playing) applyCheats(view)
+            // Em rede as trapaças esperam (também com o QR na tela ou conectando): só um lado com elas
+            // desencontraria os dois jogos. Continuam pendentes e voltam depois que a partida acaba.
+            if (view != null && cheats?.dirty == true && !cheatsBlocked()) applyCheats(view)
         }
         override fun slots() = if (::states.isInitialized) states.slots() else emptyList()
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
@@ -832,6 +863,8 @@ class GameActivity : ComponentActivity() {
         }
 
         override fun changeDisk(index: Int) {
+            // Trocar o disco só de um lado desencontraria os dois jogos.
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             retroView?.changeDisk(index, false)
             toast = getString(R.string.game_disk_inserted, index + 1)
         }
@@ -957,6 +990,9 @@ class GameActivity : ComponentActivity() {
             finish()
         }
     }
+
+    /** Partida em rede montada ou em andamento (anfitrião esperando, conectando ou jogando). */
+    private fun cheatsBlocked(): Boolean = netplay.ui != null
 
     /**
      * Refaz a lista de trapaças no núcleo: limpa e liga as marcadas, em índices seguidos. Desligar uma só

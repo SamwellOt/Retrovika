@@ -22,11 +22,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
 import java.net.Socket
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.thread
 
 /** Situação da partida em rede, para a tela. */
 sealed interface NetplayUi {
@@ -59,7 +61,13 @@ class NetplayController(
     private var control: Socket? = null
     private var controlOut: DataOutputStream? = null
     private var job: Job? = null
+    private var resyncJob: Job? = null
     private var monitor: Job? = null
+    /**
+     * Uma escrita por vez no soquete de controle: sem isto o BYE podia cair no meio dos bytes de um STATE.
+     * Lock de thread (não Mutex) porque as escritas são bloqueantes e o BYE sai de uma thread própria.
+     */
+    private val writeLock = ReentrantLock()
     private var epoch = 0
 
     // region Anfitrião
@@ -79,7 +87,7 @@ class NetplayController(
                 control = socket
                 val out = DataOutputStream(socket.getOutputStream()).also { controlOut = it }
                 val input = DataInputStream(socket.getInputStream())
-                withContext(Dispatchers.IO) { out.writeLineAscii("OK ${NetplayProtocol.DELAY_FRAMES}") }
+                withContext(Dispatchers.IO) { writeControl { out.writeLineAscii("OK ${NetplayProtocol.DELAY_FRAMES}") } }
                 ui = NetplayUi.Connecting
                 hostRound(server, out)
                 listen(input)
@@ -98,9 +106,11 @@ class NetplayController(
         val state = withContext(Dispatchers.Default) { v.serializeAndStartNetplay(fd, 0, NetplayProtocol.DELAY_FRAMES, ++epoch) }
         if (state == null || state.isEmpty()) { closeFd(fd); throw IOException("state") }
         withContext(Dispatchers.IO) {
-            out.writeLineAscii("STATE ${state.size}")
-            out.write(state)
-            out.flush()
+            writeControl {
+                out.writeLineAscii("STATE ${state.size}")
+                out.write(state)
+                out.flush()
+            }
         }
         ui = NetplayUi.Playing(1)
         startMonitor()
@@ -111,12 +121,12 @@ class NetplayController(
     fun resync() {
         val server = host ?: return
         val out = controlOut ?: return
-        if (!playing) return
-        scope.launch {
+        if (!playing || resyncJob?.isActive == true) return
+        resyncJob = scope.launch {
             try {
                 view()?.let { v -> withContext(Dispatchers.Default) { v.stopNetplay() } }
                 ui = NetplayUi.Connecting
-                withContext(Dispatchers.IO) { out.writeLineAscii("RESYNC") }
+                withContext(Dispatchers.IO) { writeControl { out.writeLineAscii("RESYNC") } }
                 hostRound(server, out)
             } catch (c: CancellationException) {
                 throw c
@@ -139,7 +149,12 @@ class NetplayController(
                 control = socket
                 controlOut = DataOutputStream(socket.getOutputStream())
                 val input = DataInputStream(socket.getInputStream())
-                val ok = withContext(Dispatchers.IO) { withTimeout(10_000) { input.readLineAscii() } }
+                // Prazo no próprio soquete: um withTimeout não interrompe um read() bloqueante. Estourar o prazo
+                // lança SocketTimeoutException, que cai no catch abaixo como falha ao entrar.
+                val ok = withContext(Dispatchers.IO) {
+                    socket.soTimeout = JOIN_TIMEOUT_MS
+                    try { input.readLineAscii() } finally { socket.soTimeout = 0 }
+                }
                 val delayFrames = ok.removePrefix("OK ").toIntOrNull()
                 if (!ok.startsWith("OK") || delayFrames == null) throw IOException(ok)
                 guestRound(hostAddress, port, token, input, delayFrames)
@@ -228,14 +243,23 @@ class NetplayController(
         val v = view()
         ui = null
         monitor?.cancel()
+        resyncJob?.cancel()
+        resyncJob = null
         job?.cancel()
         host?.close()
         host = null
         control = null
         controlOut = null
-        scope.launch(Dispatchers.IO) {
-            runCatching { out?.writeLineAscii("BYE") }
-            runCatching { socket?.close() }
+        // Thread própria, não o [scope]: no onDestroy da Activity o lifecycleScope já está cancelado e
+        // nem o BYE nem o fechamento do soquete aconteceriam (o outro lado só cairia pelo prazo da rede).
+        if (socket != null) {
+            thread(name = "retrovika-netplay-bye", isDaemon = true) {
+                // Um STATE grande ainda saindo: espera um pouco pela vez; senão fecha sem o BYE.
+                if (out != null && runCatching { writeLock.tryLock(BYE_WAIT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)) {
+                    try { runCatching { out.writeLineAscii("BYE") } } finally { writeLock.unlock() }
+                }
+                runCatching { socket.close() }
+            }
         }
         if (v != null) scope.launch(Dispatchers.Default) { runCatching { v.stopNetplay() } }
         reason?.let(message)
@@ -243,7 +267,15 @@ class NetplayController(
 
     private fun closeFd(fd: Int) = runCatching { ParcelFileDescriptor.adoptFd(fd).close() }
 
+    /** Escreve no soquete de controle sem se misturar a outra escrita (chamar fora da thread principal). */
+    private inline fun writeControl(block: () -> Unit) {
+        writeLock.lock()
+        try { block() } finally { writeLock.unlock() }
+    }
+
     companion object {
         private const val WAIT_NOTICE_MS = 700L
+        private const val JOIN_TIMEOUT_MS = 10_000
+        private const val BYE_WAIT_MS = 2_000L
     }
 }
