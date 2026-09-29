@@ -167,7 +167,40 @@ def w_snippet(t):
     return " || ".join(out) or None
 
 
-STRATEGIES = [("wd-estrito", wd_strict), ("wp-frase", w_phrase), ("wp-redirect", w_redirect), ("wp-nearmatch", w_nearmatch),
+import html as _html
+
+CUE = re.compile(r"(japan|japanese|hepburn|known as|titled|released as)", re.I)
+AFTER = re.compile(r"^\s*(?:[,.;:)(\[—–]|$|(?:is|was|in|for)\b)")
+
+
+def phrase_with_context(t):
+    """Busca por frase, mas só aceita quando o trecho mostra o nome inteiro logo depois de um
+    "known in Japan as", "Japanese title", "Hepburn:" etc."""
+    for q in dict.fromkeys([key(t), romaji(t)]):
+        r = wp({"list": "search", "srsearch": f'"{q}"', "srlimit": "5", "srprop": "snippet"})
+        hits = r.get("query", {}).get("search", [])
+        if not hits:
+            continue
+        titles = [h["title"] for h in hits]
+        desc = {p["title"]: p.get("description", "") for p in wp({"titles": "|".join(titles), "prop": "description"})["query"]["pages"]}
+        for h in hits:
+            if not desc.get(h["title"], "").lower().endswith("game"):
+                continue
+            snip = h["snippet"]
+            for m in re.finditer(r'(?:<span class="searchmatch">[^<]*</span>[\s\-:–—]*)+', snip):
+                before = _html.unescape(re.sub(r"<[^>]+>", "", snip[:m.start()]))[-60:]
+                after = _html.unescape(re.sub(r"<[^>]+>", "", snip[m.end():]))
+                if CUE.search(before) and AFTER.match(after):
+                    return h["title"]
+    return None
+
+
+def proposal(t):
+    """Proposta completa: Wikidata estrito -> Wikipedia redirecionamento -> frase com contexto."""
+    return wd_strict(t) or w_redirect(t) or phrase_with_context(t)
+
+
+STRATEGIES = [("proposta", proposal), ("frase-ctx", phrase_with_context), ("wd-estrito", wd_strict), ("wp-frase", w_phrase), ("wp-redirect", w_redirect), ("wp-nearmatch", w_nearmatch),
               ("wd-busca", wd_search), ("wd-entities", wd_entities)]
 
 score = {name: [0, 0, 0] for name, _ in STRATEGIES}  # certo, errado, nada
@@ -190,7 +223,7 @@ for title, expected in CASES:
         print(f"  {name:13} {ms:5} ms  {'OK ' if ok else '-- '} {got}")
 
 print("\nTRECHOS da busca por frase:")
-for title, expected in CASES:
+for title, expected in CASES[:1]:
     try:
         print(f"  {title[:30]:30} {w_snippet(title)}")
     except Exception as e:  # noqa: BLE001
