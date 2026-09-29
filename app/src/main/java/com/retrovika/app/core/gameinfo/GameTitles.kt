@@ -172,6 +172,9 @@ object Platforms {
         "arduboy" to Match(setOf("arduboy"), setOf("arduboy")),
     )
 
+    /** O console tem plataformas conhecidas no Backloggd/IGDB (senão não há como conferir a plataforma). */
+    fun knows(systemId: String): Boolean = systemId in bySystem
+
     /** Verdadeiro se alguma plataforma do jogo ([slugs] dos links ou [names] exibidos) é do console [systemId]. */
     fun matches(systemId: String, slugs: Collection<String>, names: Collection<String>): Boolean {
         val m = bySystem[systemId] ?: return false
