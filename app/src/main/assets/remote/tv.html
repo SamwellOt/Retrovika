@@ -238,7 +238,7 @@
       if (current !== ms) return;
       try { sb = ms.addSourceBuffer(type); } catch (e) { restartVideo(); return; }
       sb.mode = 'segments';
-      sb.addEventListener('updateend', pump);
+      sb.addEventListener('updateend', () => { keepUp(); pump(); });
       sb.addEventListener('error', restartVideo);
       pump();
     }, { once: true });
@@ -278,22 +278,28 @@
     if (queue.length > 90) skipToKey();
     pump();
   }
-  setInterval(() => {
+  // Segura o mínimo possível atrás do último quadro recebido: cada quadro guardado é atraso na tela.
+  function keepUp() {
     if (!sb || !video.buffered.length) return;
     const last = video.buffered.length - 1;
     const end = video.buffered.end(last);
     const lag = end - video.currentTime;
     // Atrasou demais (aba escondida, Wi-Fi engasgou): pula para o fim em vez de acelerar.
-    if (lag > 0.5 || video.currentTime < video.buffered.start(last)) video.currentTime = Math.max(video.buffered.start(last), end - 0.04);
-    else video.playbackRate = lag > 0.12 ? 1.1 : 1;
+    if (lag > 0.25 || video.currentTime < video.buffered.start(last)) video.currentTime = Math.max(video.buffered.start(last), end - 0.03);
+    else video.playbackRate = lag > 0.1 ? 1.25 : lag > 0.05 ? 1.1 : 1;
+  }
+  setInterval(() => {
+    if (!sb || !video.buffered.length) return;
+    keepUp();
     if (video.paused && started) video.play().catch(() => {});
     if (!sb.updating && !queue.length && video.currentTime - video.buffered.start(0) > 30) {
       try { sb.remove(0, video.currentTime - 10); } catch (_) {}
     }
   }, 100);
 
-  // --- Áudio: PCM de 16 bits agendado em sequência no Web Audio, com ~60 ms de folga ---
-  let actx = null, nextTime = 0;
+  // --- Áudio: PCM de 16 bits agendado em sequência no Web Audio ---
+  // A folga começa em 40 ms e só cresce (até 120 ms) quando o som falta, num Wi-Fi que oscila mais.
+  let actx = null, nextTime = 0, lead = 0.04;
   function ensureAudio() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -308,8 +314,11 @@
     const frames = samples.length >> 1;
     if (!frames || rate < 3000) return;
     const now = actx.currentTime;
-    if (nextTime < now + 0.01) nextTime = now + 0.06;
-    else if (nextTime > now + 0.25) return; // acumulou atraso: joga fora um pedaço
+    if (nextTime < now + 0.01) {
+      // Faltou por pouco: é oscilação da rede. Um buraco longo é jogo pausado, não conta.
+      if (nextTime > 0 && now - nextTime < 0.5) lead = Math.min(0.12, lead + 0.02);
+      nextTime = now + lead;
+    } else if (nextTime > now + lead + 0.1) return; // acumulou atraso: joga fora um pedaço
     const ab = actx.createBuffer(2, frames, rate);
     const l = ab.getChannelData(0), r = ab.getChannelData(1);
     for (let i = 0; i < frames; i++) { l[i] = samples[2 * i] / 32768; r[i] = samples[2 * i + 1] / 32768; }

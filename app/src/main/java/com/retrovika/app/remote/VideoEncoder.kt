@@ -15,8 +15,8 @@ import android.view.Surface
  * se o encoder for recriado) e [onFrame]. Se o codec morrer depois de iniciar, [onError] avisa (na thread
  * de saída): quem usa tenta o próximo [mode].
  *
- * [mode] vai do mais rápido ao mais compatível: 0 é o encoder de hardware com ajustes de latência, 1 o
- * mesmo sem eles e 2 o encoder de software.
+ * [mode] vai do mais rápido ao mais compatível: 0 é o encoder de hardware em tempo real e baixa latência,
+ * 1 só com baixa latência, 2 sem ajustes e 3 o encoder de software.
  */
 class VideoEncoder(
     val width: Int,
@@ -49,10 +49,12 @@ class VideoEncoder(
             // Jogo parado (menu aberto) não gera quadros: o encoder repete o último para quem chega ver algo.
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000L)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-            if (mode == MODE_TUNED) {
-                // Tempo real e baixa latência: alguns encoders (Qualcomm da Xiaomi) aceitam e morrem logo depois.
-                setInteger(MediaFormat.KEY_PRIORITY, 0)
+            // Tempo real: alguns encoders (Qualcomm da Xiaomi) aceitam e morrem logo depois.
+            if (mode == MODE_REALTIME) setInteger(MediaFormat.KEY_PRIORITY, 0)
+            if (mode <= MODE_LOW_LATENCY) {
+                // Um quadro por vez, sem esperar os seguintes: cada quadro retido é atraso na outra tela.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LATENCY, 1)
+                setInteger("vendor.qti-ext-enc-low-latency.enable", 1)
             }
         }
         // Baseline não tem quadros B (que atrasariam a imagem); se o encoder recusar, fica o perfil padrão.
@@ -144,16 +146,18 @@ class VideoEncoder(
 
     companion object {
         private const val TAG = "VideoEncoder"
-        private const val MODE_TUNED = 0
-        private const val MODE_SOFTWARE = 2
-        const val MODES = 3
+        private const val MODE_REALTIME = 0
+        private const val MODE_LOW_LATENCY = 1
+        private const val MODE_SOFTWARE = 3
+        const val MODES = 4
         private val CONFIG_TYPES = setOf(Avc.NAL_SPS, Avc.NAL_PPS, Avc.NAL_AUD)
 
+        /** O encoder AVC do próprio Android; alguns aparelhos não o marcam como isSoftwareOnly, daí o nome. */
         private fun softwareEncoder(): String? =
             MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
-                info.isEncoder && MediaFormat.MIMETYPE_VIDEO_AVC in info.supportedTypes.map { it.lowercase() } &&
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isSoftwareOnly
-                    else info.name.startsWith("OMX.google.") || info.name.startsWith("c2.android.")
+                info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) } &&
+                    (info.name.startsWith("c2.android.") || info.name.startsWith("OMX.google.") ||
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && info.isSoftwareOnly)
             }?.name
     }
 }

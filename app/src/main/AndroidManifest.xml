@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Jogar pela rede: trava o Wi-Fi no modo de baixa latência enquanto o servidor está ligado (RemotePlay). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Núcleos sem a VFS do libretro (Play!, bsnes…) precisam do caminho real dos jogos de pastas vinculadas.
          Só é pedida quando um desses jogos é aberto (StorageAccess). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />

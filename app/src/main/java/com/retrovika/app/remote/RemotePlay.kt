@@ -1,8 +1,11 @@
 package com.retrovika.app.remote
 
 import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.util.Log
 import android.view.KeyEvent
+import androidx.core.content.pm.PackageInfoCompat
 import com.retrovika.app.R
 import com.retrovika.app.emulation.input.PadButton
 import com.retrovika.app.emulation.input.PadLayout
@@ -85,12 +88,39 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     @Volatile private var streamGeneration = 0
     /** Desde quando a imagem já deveria estar chegando (encoder ligado com o jogo rodando). */
     @Volatile private var videoExpectedSince = 0L
-    /** [VideoEncoder.mode] em uso: sobe quando o encoder morre ou não entrega nada, e fica no que funcionou. */
-    @Volatile private var encoderMode = 0
+    private val prefs by lazy { context.getSharedPreferences("remote_play", Context.MODE_PRIVATE) }
+    /**
+     * [VideoEncoder.mode] em uso: sobe quando o encoder morre ou não entrega nada. O que funcionou fica salvo
+     * (por versão do app, que pode trazer ajustes novos), para a próxima transmissão já começar nele.
+     */
+    @Volatile private var encoderMode = -1
+    /** O encoder atual já entregou um quadro de imagem (o SPS sozinho não prova que a captura chega nele). */
+    @Volatile private var videoArrived = false
+    /**
+     * Algum modo foi trocado por tempo esgotado, que pode ser só um núcleo lento para mostrar o primeiro
+     * quadro: o modo seguinte vale para esta sessão, mas não é salvo.
+     */
+    @Volatile private var modeFromTimeout = false
+    private val encoderModeKey by lazy {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        "encoder_mode_${PackageInfoCompat.getLongVersionCode(info)}"
+    }
     private var audioPump: Thread? = null
     @Volatile private var lastKeyRequest = 0L
 
     private val assets = mutableMapOf<String, ByteArray>()
+
+    /**
+     * Com o servidor ligado, o Wi-Fi do celular não entra em economia de energia: nela os pacotes esperam o
+     * próximo beacon do roteador (~100 ms), atrasando a imagem que sai e os botões que chegam.
+     */
+    private val wifiLock by lazy {
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        @Suppress("DEPRECATION")
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        else WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        wifi.createWifiLock(mode, "Retrovika:RemotePlay").apply { setReferenceCounted(false) }
+    }
 
     // region Controle pelo app
 
@@ -111,6 +141,7 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
                 return
             }
             server = s
+            runCatching { wifiLock.acquire() }.onFailure { Log.w(TAG, "Wi-Fi lock failed", it) }
             val base = if (port == 80) "http://$address" else "http://$address:$port"
             _state.update { it.copy(running = true, address = base, code = code, errorRes = null) }
         }
@@ -127,6 +158,7 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         }
         stopStreaming(view)
         s.stop()
+        runCatching { if (wifiLock.isHeld) wifiLock.release() }
         _state.update { State(muteHost = it.muteHost, streamSupported = it.streamSupported) }
         applyHostAudio()
     }
@@ -438,6 +470,7 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         // Os retornos do encoder chegam na thread dele, às vezes depois de ele ser trocado: cada um só vale
         // para a geração em que foi criado.
         val generation = ++streamGeneration
+        if (encoderMode < 0) encoderMode = prefs.getInt(encoderModeKey, 0).coerceIn(0, VideoEncoder.MODES - 1)
         var enc: VideoEncoder? = null
         while (enc == null) {
             enc = try {
@@ -460,6 +493,7 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         }
         Log.i(TAG, "Encoder ${enc.name} (mode ${enc.mode})")
         encoder = enc
+        videoArrived = false
         videoExpectedSince = System.currentTimeMillis()
         v.setCaptureSurface(enc.surface, enc.width, enc.height)
         v.setAudioCapture(true)
@@ -511,12 +545,13 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
      * no menu e na tela em vez de deixá-la preta sem motivo.
      */
     private fun checkVideoArrived() {
-        if (fmp4 != null || paused || encoder == null) return
+        if (videoArrived || paused || encoder == null) return
         if (System.currentTimeMillis() - videoExpectedSince < VIDEO_TIMEOUT_MS) return
         if (_state.value.errorRes == R.string.remote_stream_failed) return
         Log.e(TAG, "No video from the capture surface (mode $encoderMode)")
         if (encoderMode + 1 < VideoEncoder.MODES) {
             val generation = streamGeneration
+            modeFromTimeout = true
             Thread { encoderFailed(generation) }.start()
         } else {
             showStreamFailed()
@@ -537,6 +572,12 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     }
 
     private fun onVideoFrame(frame: EncodedFrame) {
+        if (!videoArrived) {
+            videoArrived = true
+            if (!modeFromTimeout && prefs.getInt(encoderModeKey, -1) != encoderMode) {
+                prefs.edit().putInt(encoderModeKey, encoderMode).apply()
+            }
+        }
         val mp4 = fmp4 ?: return
         val screens = synchronized(lock) { sessions.filter { it.kind == Kind.SCREEN && it.video != null } }
         for (s in screens) {
