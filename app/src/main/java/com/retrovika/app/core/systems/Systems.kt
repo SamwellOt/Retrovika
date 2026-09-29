@@ -180,6 +180,8 @@ object Systems {
                         Preset.BALANCED to emptyMap(),
                         Preset.QUALITY to mapOf("pcsx_rearmed_neon_enhancement_enable" to "enabled"),
                     ),
+                    // Cartão 1 é a SRAM (.srm); o 2 é saves/psx/pcsx-card2.mcd, criado e formatado pelo núcleo.
+                    fixed = mapOf("pcsx_rearmed_memcard1" to "libretro", "pcsx_rearmed_memcard2" to "shared"),
                 ),
                 CoreInfo(
                     "swanstation", "SwanStation", R.string.core_swanstation,
@@ -189,6 +191,8 @@ object Systems {
                         Preset.BALANCED to mapOf("swanstation_GPU_ResolutionScale" to "2"),
                         Preset.QUALITY to mapOf("swanstation_GPU_ResolutionScale" to "4", "swanstation_GPU_PGXPEnable" to "true"),
                     ),
+                    // O cartão 2 vem vazio no núcleo: com "Shared" é saves/psx/duckstation_shared_card_2.mcd.
+                    fixed = mapOf("swanstation_MemoryCards_Card1Type" to "Libretro", "swanstation_MemoryCards_Card2Type" to "Shared"),
                 ),
             ),
             layout = PadLayouts.PSX, accent = 0xFF9E9E9E,
@@ -208,7 +212,11 @@ object Systems {
             extensions = setOf("iso", "chd", "cso", "bin", "cue"),
             cores = listOf(
                 CoreInfo("play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true),
-                CoreInfo("pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS)),
+                CoreInfo(
+                    "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
+                    // Compartilhados, os dois cartões ficam em system/pcsx2/memcards; por jogo, só existe o 1.
+                    fixed = mapOf("pcsx2_shared_memory_cards" to "enabled"),
+                ),
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,
             libretroDbName = "Sony - PlayStation 2",

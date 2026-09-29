@@ -34,6 +34,11 @@ data class CoreInfo(
     val needsRealPath: Boolean = false,
     /** Aceita o contexto GLES abaixo da versão que o núcleo pede (o Play! pede 3.2 e roda em 3.1). */
     val relaxedGlesVersion: Boolean = false,
+    /**
+     * Variáveis que valem por cima das escolhas do usuário e nem aparecem nas opções do núcleo: o que
+     * quebraria o jogo se fosse mudado (sem memory card, jogo de PlayStation não salva nem continua).
+     */
+    val fixed: Map<String, String> = emptyMap(),
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */

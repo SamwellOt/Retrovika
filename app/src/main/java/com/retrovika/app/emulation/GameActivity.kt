@@ -200,6 +200,9 @@ class GameActivity : ComponentActivity() {
      * é a do boot, ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
      */
     private var gameLoaded = false
+    private val sramLock = Any()
+    /** A última SRAM gravada: sem mudança, o arquivo não é escrito de novo. */
+    private var lastSram: ByteArray? = null
 
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(id: Int) = Unit
@@ -441,7 +444,7 @@ class GameActivity : ComponentActivity() {
 
     private suspend fun optionsFor(core: CoreInfo): Map<String, String> {
         val preset = app.settings.presetFor(system.id).first()
-        return core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id)
+        return core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id) + core.fixed
     }
 
     private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>) = data.apply {
@@ -638,6 +641,7 @@ class GameActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
+        lifecycleScope.launch { saveSramPeriodically(view) }
         lifecycleScope.launch {
             val vibrator = rumbleVibrator
             // O núcleo só avisa quando a força muda: a vibração dura até chegar força zero (ou o jogo pausar),
@@ -755,6 +759,32 @@ class GameActivity : ComponentActivity() {
         app.scope.launch { app.library.recordSession(game.id, seconds) }
     }
 
+    /** Temporário + renomear: falta de espaço ou o processo morto no meio não zeram o save do cartucho. */
+    private fun writeSram(sram: ByteArray) {
+        if (sram.isEmpty()) return
+        synchronized(sramLock) {
+            if (sram.contentEquals(lastSram)) return
+            val file = states.sramFile()
+            val tmp = File(file.path + ".tmp")
+            tmp.writeBytes(sram)
+            if (tmp.renameTo(file)) lastSram = sram else tmp.delete()
+        }
+    }
+
+    /**
+     * A SRAM (e o memory card 1 do PlayStation, que é ela) só era gravada ao sair ou pausar: se o núcleo
+     * derrubasse o app, o que o jogo salvou na sessão sumia. Enquanto roda, grava de tempos em tempos
+     * quando mudou.
+     */
+    private suspend fun saveSramPeriodically(view: GLRetroView) {
+        while (retroView === view) {
+            delay(SRAM_SAVE_INTERVAL_MS)
+            if (retroView !== view || !gameLoaded || guestSession || !emulationRunning()) continue
+            // Cópia simples da memória: não passa pela thread de emulação, que pode parar no meio.
+            withContext(Dispatchers.IO) { runCatching { writeSram(view.serializeSRAM(false)) } }
+        }
+    }
+
     private fun emulationRunning() = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
 
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
@@ -768,14 +798,7 @@ class GameActivity : ComponentActivity() {
         runCatching {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
-            val sram = view.serializeSRAM(running)
-            // Temporário + renomear: falta de espaço ou o processo morto no meio não zeram o save do cartucho.
-            if (sram.isNotEmpty()) {
-                val file = states.sramFile()
-                val tmp = File(file.path + ".tmp")
-                tmp.writeBytes(sram)
-                if (!tmp.renameTo(file)) tmp.delete()
-            }
+            writeSram(view.serializeSRAM(running))
             if (auto && autoSaveReady) {
                 // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
                 // parado, vale o que foi capturado quando a emulação parou.
@@ -874,7 +897,7 @@ class GameActivity : ComponentActivity() {
         }
 
         override fun coreOptions(): List<CoreOption> =
-            retroView?.getVariables()?.mapNotNull(CoreOption::parse).orEmpty()
+            retroView?.getVariables()?.mapNotNull(CoreOption::parse).orEmpty().filter { it.key !in core.fixed }
 
         override fun setCoreOption(option: CoreOption, value: String) {
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
@@ -1268,6 +1291,7 @@ class GameActivity : ComponentActivity() {
         private const val EXTRA_GAME_ID = "game_id"
         private const val BLACK_SCREEN_CHECKS = 4
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
+        private const val SRAM_SAVE_INTERVAL_MS = 30_000L
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
         private const val BENCH_LOAD_TIMEOUT_MS = 25_000L

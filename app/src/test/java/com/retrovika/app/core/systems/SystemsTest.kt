@@ -69,4 +69,20 @@ class SystemsTest {
             assertNotNull(id, DatCatalog.datName(id, system!!.libretroDbName))
         }
     }
+
+    @Test
+    fun `nucleos de PlayStation com memory card que o usuario nao desliga`() {
+        val expected = mapOf(
+            "pcsx_rearmed" to mapOf("pcsx_rearmed_memcard1" to "libretro", "pcsx_rearmed_memcard2" to "shared"),
+            "swanstation" to mapOf("swanstation_MemoryCards_Card1Type" to "Libretro", "swanstation_MemoryCards_Card2Type" to "Shared"),
+            "pcsx2" to mapOf("pcsx2_shared_memory_cards" to "enabled"),
+        )
+        val cores = Systems.all.filter { it.id == "psx" || it.id == "ps2" }.flatMap { it.cores }.associateBy { it.id }
+        expected.forEach { (id, fixed) -> assertEquals(id, fixed, cores.getValue(id).fixed) }
+        // Um valor fixo também nos padrões ou presets seria ignorado: cada chave num lugar só.
+        Systems.all.flatMap { it.cores }.forEach { core ->
+            val tuned = core.defaults.keys + core.presets.values.flatMap { it.keys }
+            assertTrue(core.id, core.fixed.keys.none { it in tuned })
+        }
+    }
 }
