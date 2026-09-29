@@ -50,9 +50,10 @@ class WikiClient {
         val clean = GameTitles.clean(title).ifBlank { return null }
         val wanted = GameTitles.romajiKey(clean)
         if (wanted.length < 4) return null
-        // A busca da Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda
-        // tentativa usa a forma sem vogais longas.
-        for (query in listOf(clean, wanted).distinctBy { it.lowercase() }) {
+        // Busca pela frase exata (sem aspas, "to", "ame" e "hana" trazem listas e cantoras antes do
+        // jogo). A Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda tentativa
+        // usa a forma sem vogais longas.
+        for (query in searchQueries(clean)) {
             val page = searchArticles(query).firstOrNull { p ->
                 val description = p.description.lowercase()
                 val isGame = ("game" in description || "video game" in p.intro.lowercase()) && "series" !in description
@@ -67,13 +68,18 @@ class WikiClient {
         return null
     }
 
-    private class Article(val title: String, val description: String, val intro: String, val item: String?, val redirects: List<String>)
+    internal fun searchQueries(clean: String): List<String> {
+        val wanted = GameTitles.romajiKey(clean)
+        return listOf("\"${GameTitles.key(clean)}\"", "\"$wanted\"", wanted).distinct()
+    }
+
+    internal class Article(val title: String, val description: String, val intro: String, val item: String?, val redirects: List<String>)
 
     /**
      * Busca na Wikipedia em inglês; cada resultado já vem com a abertura, a descrição curta, o item do
      * Wikidata e os títulos que redirecionam para ele.
      */
-    private suspend fun searchArticles(query: String): List<Article> {
+    internal suspend fun searchArticles(query: String): List<Article> {
         val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
             "action" to "query", "generator" to "search", "gsrsearch" to query, "gsrnamespace" to "0",
             "gsrlimit" to "5", "prop" to "extracts|description|pageprops|redirects", "exintro" to "1",
