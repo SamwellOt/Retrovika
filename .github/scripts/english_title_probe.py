@@ -40,6 +40,7 @@ CASES = [
 
 
 def get(url):
+    time.sleep(0.4)  # a API da Wikimedia devolve 429 com pedidos em rajada
     with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
         return json.loads(r.read())
 
@@ -143,7 +144,10 @@ def wd_strict(t):
             if "game" not in d or "series" in d or "franchise" in d:
                 continue
             if romaji(h.get("match", {}).get("text", "")) == want:
-                return f"{h.get('label')} ({h['id']}, {h.get('description')})"
+                e = get("https://www.wikidata.org/w/api.php?" + urllib.parse.urlencode({
+                    "action": "wbgetentities", "ids": h["id"], "props": "claims", "format": "json"}))["entities"][h["id"]]
+                igdb = [c["mainsnak"]["datavalue"]["value"] for c in e.get("claims", {}).get("P5794", []) if "datavalue" in c["mainsnak"]]
+                return f"{h.get('label')} ({h['id']}, {h.get('description')}" + (f", igdb={igdb[0]})" if igdb else ")")
     return None
 
 
@@ -200,8 +204,16 @@ def proposal(t):
     return wd_strict(t) or w_redirect(t) or phrase_with_context(t)
 
 
-STRATEGIES = [("proposta", proposal), ("frase-ctx", phrase_with_context), ("wd-estrito", wd_strict), ("wp-frase", w_phrase), ("wp-redirect", w_redirect), ("wp-nearmatch", w_nearmatch),
-              ("wd-busca", wd_search), ("wd-entities", wd_entities)]
+def kotlin(t):
+    """O que o app faz (WikiClient.otherTitle): um resultado de mesmo nome sem slug do IGDB não serve."""
+    for fn in (wd_strict, w_redirect, phrase_with_context):
+        got = fn(t)
+        if got and (key(got.split(" (Q")[0]) != key(t) or "igdb" in got):
+            return got
+    return None
+
+
+STRATEGIES = [("app", kotlin), ("frase-ctx", phrase_with_context)]
 
 score = {name: [0, 0, 0] for name, _ in STRATEGIES}  # certo, errado, nada
 for title, expected in CASES:
@@ -222,12 +234,19 @@ for title, expected in CASES:
         score[name][0 if ok else (1 if found else 2)] += 1
         print(f"  {name:13} {ms:5} ms  {'OK ' if ok else '-- '} {got}")
 
-print("\nTRECHOS da busca por frase:")
-for title, expected in CASES[:1]:
-    try:
-        print(f"  {title[:30]:30} {w_snippet(title)}")
-    except Exception as e:  # noqa: BLE001
-        print(f"  {title[:30]:30} ERRO {e}")
+print("\nFLOWER, SUN, AND RAIN — como o artigo mostra o nome japonês:")
+for q in ['"hana to taiyo to ame to"']:
+    r = wp({"list": "search", "srsearch": q, "srlimit": "5", "srprop": "snippet"})
+    for h in r.get("query", {}).get("search", []):
+        print(f"  trecho [{h['title']}]: {h['snippet'][:400]!r}")
+text = get("https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode({
+    "action": "parse", "page": "Flower, Sun, and Rain", "prop": "wikitext", "format": "json", "formatversion": "2"}))["parse"]["wikitext"]
+for line in text.splitlines():
+    if "taiy" in line.lower() or "hana to" in line.lower():
+        print(f"  wikitexto: {line[:400]!r}")
+e = get("https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q3074435&props=labels|aliases&format=json")["entities"]["Q3074435"]
+print("  wikidata rótulos:", {k: v["value"] for k, v in e.get("labels", {}).items() if k in ("en", "ja", "ja-latn", "mul")})
+print("  wikidata apelidos:", {k: [a["value"] for a in v] for k, v in e.get("aliases", {}).items()})
 
 print("\nPLACAR (certo / errado / nada):")
 for name, (a, b, c) in score.items():
