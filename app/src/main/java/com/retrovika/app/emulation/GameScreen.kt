@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -137,10 +138,8 @@ fun GameScreen(
                 // no DS/3DS usam a tela toda.
                 val fullVideo = padProfile.fullScreenVideo(portrait, padShown)
                 // A estrutura é sempre a mesma (vídeo + controle) para o GLRetroView nunca ser recriado ao girar a tela.
-                AndroidView(
-                    factory = { state.view },
-                    modifier = if (fullVideo) Modifier.fillMaxSize() else Modifier.fillMaxWidth().fillMaxHeight(VIDEO_SPLIT).align(Alignment.TopCenter),
-                )
+                val videoModifier = if (fullVideo) Modifier.fillMaxSize() else Modifier.fillMaxWidth().fillMaxHeight(VIDEO_SPLIT).align(Alignment.TopCenter)
+                AndroidView(factory = { state.view }, modifier = videoModifier)
                 if (padShown && system != null) {
                     VirtualGamepad(
                         layout = system.layout,
@@ -160,6 +159,7 @@ fun GameScreen(
                         fastForward = fastForward,
                         onMenu = menu::open,
                         onFastForward = menu::toggleFastForward,
+                        onTranslate = if (menu.canTranslate()) menu::translate else null,
                         modifier = if (!fullVideo) {
                             Modifier.align(Alignment.TopCenter).padding(top = maxHeight * VIDEO_SPLIT + 4.dp)
                         } else Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
@@ -168,6 +168,8 @@ fun GameScreen(
                         dimmed = !padShown,
                     )
                 }
+                // Sobre o vídeo, no mesmo lugar dele: as caixas traduzidas batem com o texto da captura.
+                menu.translation()?.let { TranslationOverlay(it, onClose = menu::closeTranslation, modifier = videoModifier) }
             }
         }
 
@@ -224,10 +226,14 @@ internal fun BoxScope.padModifier(overlay: Boolean): Modifier =
     else Modifier.fillMaxWidth().fillMaxHeight(1f - VIDEO_SPLIT).align(Alignment.BottomCenter).padding(top = 48.dp, bottom = 16.dp)
 
 @Composable
-private fun Hud(fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, modifier: Modifier, vertical: Boolean, dimmed: Boolean = false) {
+private fun Hud(
+    fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, onTranslate: (() -> Unit)?,
+    modifier: Modifier, vertical: Boolean, dimmed: Boolean = false,
+) {
     val content: @Composable () -> Unit = {
         HudButton(Icons.Rounded.Menu, stringResource(R.string.game_menu), false, onMenu)
         HudButton(Icons.Rounded.FastForward, stringResource(R.string.game_fast_forward), fastForward, onFastForward)
+        onTranslate?.let { HudButton(Icons.Rounded.Translate, stringResource(R.string.translate_button), false, it) }
     }
     val m = if (dimmed) modifier.alpha(0.45f) else modifier
     if (vertical) Column(m, verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
@@ -512,6 +518,11 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                         SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i); disks = disks.first to i })
                     }
                 }
+            }
+        }
+        item {
+            OutlinedButton(onClick = { menu.close(); menu.translate() }) {
+                Icon(Icons.Rounded.Translate, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.translate_screen))
             }
         }
         item {

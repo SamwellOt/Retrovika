@@ -42,6 +42,8 @@ import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.share.LanTransfer
+import com.retrovika.app.core.settings.uiLanguage
+import com.retrovika.app.core.translate.LiveTranslator
 import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
@@ -142,6 +144,11 @@ class GameActivity : ComponentActivity() {
     private var guestSession = false
     /** Estado recebido a abrir no primeiro quadro, no lugar do salvamento automático. */
     private var pendingStateFile: File? = null
+    /** Tradução da tela aberta: a emulação fica pausada até ela fechar. */
+    private var translation by mutableStateOf<TranslationUi?>(null)
+    /** Criado só quando alguém traduz: os clientes do ML Kit ficam fora dos jogos que não usam. */
+    private var translator: LiveTranslator? = null
+    private var translateJob: kotlinx.coroutines.Job? = null
     /** Estado sendo compartilhado a partir do menu. */
     private var sharing by mutableStateOf<ShareSheet?>(null)
     private lateinit var states: SaveStates
@@ -487,6 +494,8 @@ class GameActivity : ComponentActivity() {
 
     override fun onDestroy() {
         sharing?.server?.close()
+        translateJob?.cancel()
+        translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
@@ -498,7 +507,7 @@ class GameActivity : ComponentActivity() {
 
     private fun updateEmulationState() {
         if (emulationOwner.registry.currentState == Lifecycle.State.DESTROYED) return
-        val running = activityResumed && !menuOpen && ui is EmulationUi.Running
+        val running = activityResumed && !menuOpen && translation == null && ui is EmulationUi.Running
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
         if (running && sessionStart == 0L) sessionStart = System.currentTimeMillis()
         // O jogo volta a andar: o estado congelado deixa de ser o atual.
@@ -690,6 +699,20 @@ class GameActivity : ComponentActivity() {
             sheet.link = RetrovikaLink.State(hosts, server.port, token, game.title).toUri()
         }
 
+        override fun translation(): TranslationUi? = translation
+
+        override fun canTranslate(): Boolean =
+            ::game.isInitialized && (settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true))
+
+        override fun translate() = startTranslation()
+
+        override fun closeTranslation() {
+            translateJob?.cancel()
+            translateJob = null
+            translation = null
+            updateEmulationState()
+        }
+
         override fun closeShare() {
             sharing?.server?.close()
             sharing = null
@@ -756,7 +779,44 @@ class GameActivity : ComponentActivity() {
         padSaves.trySend(save)
     }
 
+    /**
+     * Tradução ao vivo: captura a tela, pausa (o estado sai antes, como ao abrir o menu, para o salvamento
+     * automático valer se o app for para o fundo) e mostra o texto traduzido por cima da própria captura.
+     */
+    private fun startTranslation() {
+        val view = retroView ?: return
+        if (ui !is EmulationUi.Running || menuOpen || menuOpening || translation != null) return
+        releaseAllInputs(view)
+        menuOpening = true
+        captureFrame(view) { _, full ->
+            lifecycleScope.launch {
+                val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
+                menuOpening = false
+                if (retroView !== view || full == null) return@launch
+                frozenState = state?.takeIf { it.isNotEmpty() }
+                menuSnapshot = null
+                translation = TranslationUi.Working(full, LiveTranslator.Stage.READING)
+                updateEmulationState()
+                val target = uiLanguage()
+                translateJob = lifecycleScope.launch {
+                    translation = try {
+                        val tr = translator ?: LiveTranslator().also { translator = it }
+                        val blocks = tr.translate(full, target) { stage ->
+                            if (translation is TranslationUi.Working) translation = TranslationUi.Working(full, stage)
+                        }
+                        TranslationUi.Ready(full, blocks)
+                    } catch (c: kotlinx.coroutines.CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        TranslationUi.Failed(full, t.userMessage(this@GameActivity))
+                    }
+                }
+            }
+        }
+    }
+
     private fun toggleMenu() {
+        if (translation != null) { menuActions.closeTranslation(); return }
         // No editor de layout, voltar retorna ao menu (o que foi mexido e não salvo é descartado).
         if (padEditing) { padEditing = false; return }
         if (menuOpen) menuActions.close() else openMenu()
@@ -946,6 +1006,10 @@ interface MenuActions {
     fun shareAsFile()
     fun shareAsQr()
     fun closeShare()
+    fun translation(): TranslationUi?
+    fun canTranslate(): Boolean
+    fun translate()
+    fun closeTranslation()
     fun setPadProfile(profile: PadProfile)
     fun padForGame(): Boolean
     fun setPadForGame(forGame: Boolean)

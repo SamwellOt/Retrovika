@@ -63,6 +63,7 @@ import androidx.compose.material.icons.rounded.SdCard
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -265,6 +266,8 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.FastForward, Palette.Orange, stringResource(R.string.settings_fast_forward), listOf(2, 3, 4, 6), s.fastForwardSpeed, { "${it}×" }) { scope.launch { repo.setFastForwardSpeed(it) } }
             RowDivider()
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
+            RowDivider()
+            SwitchRow(Icons.Rounded.Translate, Palette.Cyan, stringResource(R.string.settings_translate_everywhere), stringResource(R.string.settings_translate_everywhere_subtitle), s.translateEverywhere) { scope.launch { repo.setTranslateEverywhere(it) } }
         }
 
         group(R.string.settings_group_interface) {

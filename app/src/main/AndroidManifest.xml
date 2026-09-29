@@ -62,6 +62,9 @@
             </intent-filter>
         </activity>
 
+        <!-- Pede aos serviços do Google o modelo de OCR japonês já na instalação (tradução ao vivo). -->
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr_ja" />
+
         <!-- Pacotes de estado entregues ao menu de compartilhar do Android. -->
         <provider
             android:name="androidx.core.content.FileProvider"

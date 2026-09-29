@@ -63,6 +63,8 @@ data class AppSettings(
     val reduceMotion: Boolean = false,
     val coverSize: CoverSize = CoverSize.NORMAL,
     val gameSort: GameSort = GameSort.TITLE,
+    /** Botão de tradução ao vivo em todos os jogos; sem isso, só nos japoneses. */
+    val translateEverywhere: Boolean = false,
 )
 
 class SettingsRepository(private val context: Context, scope: CoroutineScope) {
@@ -84,6 +86,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val reduceMotion = booleanPreferencesKey("reduce_motion")
         val coverSize = stringPreferencesKey("cover_size")
         val gameSort = stringPreferencesKey("game_sort")
+        val translateEverywhere = booleanPreferencesKey("translate_everywhere")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
@@ -114,6 +117,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             reduceMotion = p[Keys.reduceMotion] ?: false,
             coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
+            translateEverywhere = p[Keys.translateEverywhere] ?: false,
         )
     }
 
@@ -146,12 +150,13 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setReduceMotion(v: Boolean) = set(Keys.reduceMotion, v)
     suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
+    suspend fun setTranslateEverywhere(v: Boolean) = set(Keys.translateEverywhere, v)
 
     /** Volta controle, vídeo, emulação, interface e downloads aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
     suspend fun resetPreferences() = context.dataStore.edit { p ->
         listOf(
             Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
-            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort,
+            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.translateEverywhere,
         ).forEach { p.remove(it) }
     }
 

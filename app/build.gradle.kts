@@ -124,6 +124,9 @@ dependencies {
     // QR codes: gerar (estado compartilhado, partida em rede) e ler pela câmera.
     implementation(libs.zxing.core)
     implementation(libs.zxing.embedded)
+    // Tradução ao vivo: OCR japonês (modelo instalado pelos serviços do Google) e tradução no aparelho.
+    implementation(libs.mlkit.text.japanese)
+    implementation(libs.mlkit.translate)
 
     implementation(project(":libretrodroid"))
 

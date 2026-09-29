@@ -22,6 +22,8 @@ xz = "1.10"
 junit = "4.13.2"
 zxing = "3.5.3"
 zxingEmbedded = "4.3.0"
+mlkitTextJapanese = "16.0.1"
+mlkitTranslate = "17.0.3"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -53,6 +55,8 @@ commons-compress = { module = "org.apache.commons:commons-compress", version.ref
 xz = { module = "org.tukaani:xz", version.ref = "xz" }
 junit = { module = "junit:junit", version.ref = "junit" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+mlkit-text-japanese = { module = "com.google.android.gms:play-services-mlkit-text-recognition-japanese", version.ref = "mlkitTextJapanese" }
+mlkit-translate = { module = "com.google.mlkit:translate", version.ref = "mlkitTranslate" }
 zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingEmbedded" }
 
 [plugins]
