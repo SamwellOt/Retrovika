@@ -47,46 +47,6 @@ object GameTitles {
             .replace(Regex("""m(?=[bmp])"""), "n")
             // A partícula を aparece como "wo" ou "o".
             .replace(Regex("""\bwo\b"""), "o")
-
-    /**
-     * Outros nomes que a abertura de um artigo da Wikipedia dá ao jogo: as partes dos parênteses
-     * ("(Japanese: 花と太陽と雨と, Hepburn: Hana to Taiyō to Ame to)") sem o rótulo, e o que vem depois
-     * de "known in Japan as".
-     */
-    fun knownAs(intro: String): List<String> {
-        val parts = Regex("""\(([^()]*)\)""").findAll(intro).flatMap { it.groupValues[1].split(',', ';') } +
-            Regex("""in Japan as\s+([^,;.(]+)""", RegexOption.IGNORE_CASE).findAll(intro).map { it.groupValues[1] }
-        return parts.map { it.replace(label, "").trim() }.filter { it.isNotBlank() }.toList()
-    }
-
-    /**
-     * Nomes em japonês e romanizados que o código de um artigo da Wikipedia declara nas predefinições
-     * de idioma: `{{Nihongo|''Flower, Sun, and Rain''|花と太陽と雨と|Hana to Taiyō to Ame to}}`,
-     * `{{Nihongo foot|…}}`, `{{lang|ja-Latn|…}}`, `{{transl|ja|…}}`; e os títulos em itálico do texto
-     * (`''Hana to Taiyō to Ame to''`), sempre inteiros.
-     */
-    fun wikiNames(wikitext: String): List<String> {
-        val templates = wikiTemplate.findAll(wikitext).flatMap { m ->
-            m.groupValues[1].split('|').asSequence().filterNot { namedParam.containsMatchIn(it) }
-        }
-        val italics = italic.findAll(wikitext).map { it.groupValues[1] }
-        return (templates + italics)
-            .map { it.replace(wikiLink, "$1").replace("'''", "").replace("''", "").trim() }
-            .filter { it.isNotBlank() && !langCode.matches(it) }
-            .toList()
-    }
-
-    private val italic = Regex("""''+((?:[^'\n{}|\[\]]|\[\[[^\]]*]])+?)''+""")
-
-    private val wikiTemplate = Regex("""\{\{\s*(?:nihongo\w*(?:\s+foot)?|lang|langx|transl)\s*\|([^{}]*)}}""", RegexOption.IGNORE_CASE)
-    private val namedParam = Regex("""^\s*[\w-]+\s*=""")
-    private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)]]""")
-    private val langCode = Regex("""ja(?:-\w+)?""", RegexOption.IGNORE_CASE)
-
-    private val label = Regex(
-        """^\s*(?:(?:Japanese|Revised Hepburn|Hepburn|romanized|lit\.?|also known as|known as|or)(?![a-z])\s*:?\s*)+""",
-        RegexOption.IGNORE_CASE,
-    )
 }
 
 /**

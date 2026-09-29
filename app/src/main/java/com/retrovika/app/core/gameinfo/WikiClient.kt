@@ -38,35 +38,19 @@ class WikiClient {
     data class OtherTitle(val title: String, val item: String?, val igdbSlug: String?)
 
     /**
-     * Acha o nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título
-     * japonês romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). A Wikipedia em inglês
-     * guarda a romanização como redirecionamento para o artigo ("Hana to Taiyō to Ame to"), e às vezes
-     * também a cita nos parênteses da abertura (em muitos artigos ela foi para uma nota de rodapé, que
-     * o resumo não traz). Só vale um artigo de jogo em que o título pedido é um desses outros nomes
-     * inteiro, não só uma parte do texto: "Doraemon" não pode virar um "Doraemon 3" que cita o
-     * primeiro. Nulo quando não acha ou quando o nome é o mesmo.
+     * O nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título japonês
+     * romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). Busca a frase exata na
+     * Wikipedia em inglês, que só devolve artigos em que ela aparece, e fica com o primeiro artigo de
+     * jogo. Nulo quando não acha ou quando o nome é o mesmo.
      */
     suspend fun otherTitle(title: String): OtherTitle? {
         val clean = GameTitles.clean(title).ifBlank { return null }
-        val wanted = GameTitles.romajiKey(clean)
-        if (wanted.length < 4) return null
-        // Busca pela frase exata (sem aspas, "to", "ame" e "hana" trazem listas e cantoras antes do
-        // jogo). A Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda tentativa
-        // usa a forma sem vogais longas.
-        val checked = HashMap<String, Boolean>()
-        suspend fun hasName(article: Article): Boolean = checked[article.title] ?: run {
-            val quick = article.redirects + GameTitles.knownAs(article.intro.take(INTRO_CHARS))
-            // Muitas vezes a romanização não está na abertura (vai para uma nota de rodapé ou para o
-            // texto sobre o desenvolvimento), que é tudo o que o resumo traz: então lê o código do artigo.
-            val found = quick.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted } ||
-                runCatching { GameTitles.wikiNames(articleWikitext(article.title)) }.getOrDefault(emptyList())
-                    .any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }
-            checked[article.title] = found
-            found
-        }
-        for (query in searchQueries(clean)) {
-            val games = searchArticles(query).filter { it.isGame() }
-            val page = games.take(MAX_CHECKED).firstOrNull { hasName(it) } ?: continue
+        if (GameTitles.key(clean).length < 4) return null
+        // A Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda busca usa a
+        // forma sem vogais longas.
+        val queries = listOf(GameTitles.key(clean), GameTitles.romajiKey(clean)).distinct()
+        for (query in queries) {
+            val page = searchArticles("\"$query\"").firstOrNull { it.isGame() } ?: continue
             val name = GameTitles.clean(page.title)
             if (GameTitles.same(name, clean)) return null
             val igdb = page.item?.let { runCatching { igdbOf(it) }.getOrNull() }
@@ -75,40 +59,16 @@ class WikiClient {
         return null
     }
 
-    /**
-     * Artigo sobre um jogo: a descrição curta termina em "game" ("2001 video game"). Empresas ("Japanese
-     * video game company"), listas e séries citam o jogo em itálico e não podem passar.
-     */
-    private fun Article.isGame(): Boolean {
-        val d = description.trim().lowercase()
-        return if (d.isNotEmpty()) d.endsWith("game") else Regex("""\bis an? [^.]*video game\b""").containsMatchIn(intro.take(INTRO_CHARS))
-    }
+    private class Article(val title: String, val description: String, val item: String?)
 
-    /** O código (wikitexto) do artigo inteiro. */
-    internal suspend fun articleWikitext(title: String): String {
-        val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
-            "action" to "parse", "page" to title, "prop" to "wikitext",
-            "format" to "json", "formatversion" to "2",
-        ))
-        return json(url)["parse"]?.jsonObject?.get("wikitext")?.jsonPrimitive?.contentOrNull.orEmpty()
-    }
+    /** Artigo sobre um jogo ("2001 video game"); empresas, listas e séries ("… video game company") não. */
+    private fun Article.isGame(): Boolean = description.trim().lowercase().endsWith("game")
 
-    internal fun searchQueries(clean: String): List<String> {
-        val wanted = GameTitles.romajiKey(clean)
-        return listOf("\"${GameTitles.key(clean)}\"", "\"$wanted\"", wanted).distinct()
-    }
-
-    internal class Article(val title: String, val description: String, val intro: String, val item: String?, val redirects: List<String>)
-
-    /**
-     * Busca na Wikipedia em inglês; cada resultado já vem com a abertura, a descrição curta, o item do
-     * Wikidata e os títulos que redirecionam para ele.
-     */
-    internal suspend fun searchArticles(query: String): List<Article> {
+    /** Busca na Wikipedia em inglês; cada resultado vem com a descrição curta e o item do Wikidata. */
+    private suspend fun searchArticles(query: String): List<Article> {
         val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
             "action" to "query", "generator" to "search", "gsrsearch" to query, "gsrnamespace" to "0",
-            "gsrlimit" to "5", "prop" to "extracts|description|pageprops|redirects", "exintro" to "1",
-            "explaintext" to "1", "exlimit" to "max", "ppprop" to "wikibase_item", "rdnamespace" to "0", "rdlimit" to "max",
+            "gsrlimit" to "5", "prop" to "description|pageprops", "ppprop" to "wikibase_item",
             "format" to "json", "formatversion" to "2",
         ))
         val pages = json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
@@ -117,9 +77,7 @@ class WikiClient {
             Article(
                 title = p["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
                 description = p["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                intro = p["extract"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
-                redirects = p["redirects"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["title"]?.jsonPrimitive?.contentOrNull },
             )
         }
     }
@@ -301,11 +259,5 @@ class WikiClient {
         const val IGDB = "P5794"
         const val METACRITIC = "P12054"
         const val METACRITIC_OLD = "P1712"
-
-        /** Quanto da abertura do artigo conta para achar o título (a primeira frase, com folga). */
-        const val INTRO_CHARS = 600
-
-        /** Quantos artigos de jogo de cada busca têm o código da abertura lido. */
-        const val MAX_CHECKED = 2
     }
 }

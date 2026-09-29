@@ -102,21 +102,6 @@ class GameInfoNetworkTest {
     fun `titulo japones romanizado acha o nome em ingles`() = runBlocking {
         val wiki = WikiClient()
         val other = timed("Wikipedia · Hana to Taiyou to Ame to") { wiki.otherTitle("Hana to Taiyou to Ame to (Japan)") }
-        if (other == null) {
-            // Diagnóstico: o que cada busca da Wikipedia devolveu.
-            for (query in wiki.searchQueries("Hana to Taiyou to Ame to")) {
-                println("  busca $query")
-                runCatching { wiki.searchArticles(query) }.onFailure { println("    erro: $it") }.getOrNull()?.forEach { a ->
-                    val romaji = a.redirects.filter { "hana" in it.lowercase() || "taiy" in it.lowercase() }
-                    println("    ${a.title} · ${a.description} · ${a.item} · redirecionamentos=$romaji · ${a.intro.take(160).replace('\n', ' ')}")
-                    if ("game" in a.description) {
-                        val text = runCatching { wiki.articleWikitext(a.title) }.getOrElse { it.toString() }
-                        println("      nomes: ${GameTitles.wikiNames(text).filter { "taiy" in it.lowercase() }}")
-                        text.lines().filter { "taiy" in it.lowercase() }.forEach { println("      linha: ${it.take(300)}") }
-                    }
-                }
-            }
-        }
         println("  $other")
         assertNotNull("nome em inglês não encontrado", other)
         assertTrue(other!!.title, GameTitles.same(other.title, "Flower, Sun, and Rain"))

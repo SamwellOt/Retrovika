@@ -36,22 +36,6 @@ class GameTitlesTest {
     }
 
     @Test
-    fun `le os outros nomes da abertura do artigo`() {
-        val lead = "Flower, Sun, and Rain (Japanese: 花と太陽と雨と, Hepburn: Hana to Taiyō to Ame to) is a 2001 adventure game."
-        assertTrue("Hana to Taiyō to Ame to" in GameTitles.knownAs(lead))
-        assertTrue("Ganbare Goemon" in GameTitles.knownAs("Mystical Ninja, known in Japan as Ganbare Goemon (がんばれゴエモン), is"))
-        // Um nome que só aparece dentro de outro não vale: a continuação não é o jogo pedido.
-        val sequel = "Doraemon 3 (Japanese: ドラえもん3, Hepburn: Doraemon Surī) is a sequel to Doraemon."
-        assertFalse(GameTitles.knownAs(sequel).any { GameTitles.romajiKey(it) == "doraemon" })
-        val wikitext = "''Flower, Sun, and Rain''{{efn|{{Nihongo|Japanese|花と太陽と雨と|Hana to Taiyō to Ame to}}}} is an [[adventure game]]"
-        assertTrue("Hana to Taiyō to Ame to" in GameTitles.wikiNames(wikitext))
-        assertTrue(GameTitles.wikiNames("{{nihongo foot|''X''|エックス|Ekkusu|lead=yes}}").containsAll(listOf("X", "Ekkusu")))
-        assertTrue("Hana to Taiyō to Ame to" in GameTitles.wikiNames("released in Japan as ''Hana to Taiyō to Ame to'' in 2001"))
-        // "or" só é rótulo como palavra inteira.
-        assertEquals(listOf("Orochi"), GameTitles.knownAs("X (Orochi) is"))
-    }
-
-    @Test
     fun `reconhece a plataforma do console pelo slug ou pelo nome`() {
         assertTrue(Platforms.matches("snes", listOf("sfam"), emptyList()))
         assertTrue(Platforms.matches("psx", emptyList(), listOf("PlayStation")))
