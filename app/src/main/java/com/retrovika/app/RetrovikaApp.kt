@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.retrovika.app.ui.share.Incoming
+import com.retrovika.app.ui.share.ReceiveSession
 
 /** Contêiner de dependências simples, sem framework de injeção. */
 class AppContainer(app: Application) {
@@ -47,6 +48,8 @@ class AppContainer(app: Application) {
     val sharedStates = SharedStates(app, paths, library)
     /** Estado ou partida recebidos de fora (Intent, QR code), à espera da tela que os mostra. */
     val incoming = MutableStateFlow<Incoming?>(null)
+    /** Recebimento de [incoming] em andamento; fica aqui para sobreviver à recriação da Activity. */
+    val receive = ReceiveSession()
     val downloads = DownloadManager(app, scope, paths, library, settings.cached) { catalog.resolve(it) }
 }
 

@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -93,6 +94,8 @@ import com.retrovika.app.ui.components.Badge
 import androidx.compose.material.icons.rounded.Star
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -378,8 +381,11 @@ private fun CoreNotice(core: CoreInfo) {
     val states by app.cores.states.collectAsStateWithLifecycle()
     val state = states[core.id] ?: CoreState.NotInstalled
     // needsInstall confere o .so e os pacotes de sistema no disco: refeito só quando o tipo de estado
-    // muda (instalado, falhou…), não a cada aviso de progresso do download.
-    val missing = remember(state::class, core.id) { app.cores.needsInstall(core) }
+    // muda (instalado, falhou…), não a cada aviso de progresso do download. Fora da thread principal:
+    // começa como "não falta" para o aviso não piscar enquanto o disco é lido.
+    val missing by produceState(false, state::class, core.id) {
+        value = withContext(Dispatchers.IO) { app.cores.needsInstall(core) }
+    }
     if (!missing && state !is CoreState.Downloading) return
     Row(
         Modifier

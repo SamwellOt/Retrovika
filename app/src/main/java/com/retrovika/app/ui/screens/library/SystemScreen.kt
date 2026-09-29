@@ -91,6 +91,8 @@ import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -126,12 +128,20 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
             val res = context.localized()
             importStatus.message = res.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
             importStatus.errors = null
-            val result = app.library.importFiles(uris, system)
-            importStatus.message = if (result.unknown.isEmpty()) res.getString(R.string.system_import_done)
-            else res.getString(R.string.system_import_skipped, result.unknown.joinToString())
-            // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
-            importStatus.errors = result.failed.takeIf { it.isNotEmpty() }
-                ?.joinToString("\n") { (name, reason) -> res.getString(R.string.system_import_failed, name, reason) }
+            // O escopo do app não tem tratador: uma exceção solta aqui derrubaria o processo.
+            try {
+                val result = app.library.importFiles(uris, system)
+                importStatus.message = if (result.unknown.isEmpty()) res.getString(R.string.system_import_done)
+                else res.getString(R.string.system_import_skipped, result.unknown.joinToString())
+                // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
+                importStatus.errors = result.failed.takeIf { it.isNotEmpty() }
+                    ?.joinToString("\n") { (name, reason) -> res.getString(R.string.system_import_failed, name, reason) }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                importStatus.message = null
+                importStatus.errors = t.userMessage(context)
+            }
         }
     }
 

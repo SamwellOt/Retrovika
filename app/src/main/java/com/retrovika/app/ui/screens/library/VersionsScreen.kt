@@ -31,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,7 +86,6 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
     val system = Systems.byId(systemId) ?: return
     val context = LocalContext.current
     val app = context.container
-    val scope = rememberCoroutineScope()
     val games by remember(systemId) { app.library.bySystem(systemId) }.collectAsStateWithLifecycle(null)
     val language = remember { context.uiLanguage() }
     val groups = remember(games, language) { games?.let { Versions.groups(it, language) } }
@@ -155,7 +153,8 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                                         val found = app.dat.identifyAll(list) { done, total -> check.progress = done to total }
                                         found.forEach { (game, entry) -> app.library.setIdentified(game.id, entry.name, entry.region) }
                                         check.error = false
-                                        check.message = res.resources.getQuantityString(R.plurals.versions_verify_result, found.size, found.size)
+                                        // Mesmo truque do countString: em português o 0 cai em "one" ("0 jogo")
+                                        check.message = res.resources.getQuantityString(R.plurals.versions_verify_result, if (found.isEmpty()) 2 else found.size, found.size)
                                     } catch (c: CancellationException) {
                                         throw c
                                     } catch (t: Throwable) {
@@ -214,7 +213,24 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    scope.launch { toRemove.forEach { app.library.delete(it, deleteFile = !it.isContentUri) } }
+                    // No escopo do app, como a verificação: sair da tela no meio não pode interromper a remoção
+                    // entre apagar o arquivo e apagar o registro no banco.
+                    app.scope.launch(Dispatchers.Main) {
+                        var failure: Throwable? = null
+                        toRemove.forEach { game ->
+                            try {
+                                app.library.delete(game, deleteFile = !game.isContentUri)
+                            } catch (c: CancellationException) {
+                                throw c
+                            } catch (t: Throwable) {
+                                failure = t
+                            }
+                        }
+                        failure?.let {
+                            check.error = true
+                            check.message = it.userMessage(context)
+                        }
+                    }
                 }) { Text(stringResource(R.string.common_remove), color = Palette.Coral) }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(R.string.common_cancel)) } },

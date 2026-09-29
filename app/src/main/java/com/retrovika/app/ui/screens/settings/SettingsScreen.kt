@@ -119,6 +119,8 @@ import com.retrovika.app.ui.components.Wordmark
 import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.core.diagnostics.ErrorReport
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -215,12 +217,15 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             RowDivider()
             NavRow(Icons.Rounded.BugReport, Palette.Coral, stringResource(R.string.settings_error_report), stringResource(R.string.settings_error_report_subtitle)) {
                 scope.launch {
-                    val report = withContext(Dispatchers.IO) { ErrorReport.build(context) }
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
-                        .setType("text/plain")
-                        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Retrovika")
-                        .putExtra(android.content.Intent.EXTRA_TEXT, report)
-                    context.startActivity(android.content.Intent.createChooser(send, context.getString(R.string.settings_error_report)))
+                    // Qualquer falha (disco, nenhum app para compartilhar) vira mensagem: aqui não há quem a capture.
+                    try {
+                        val send = withContext(Dispatchers.IO) { ErrorReport.shareIntent(context, ErrorReport.build(context)) }
+                        context.startActivity(android.content.Intent.createChooser(send, context.getString(R.string.settings_error_report)))
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        Toast.makeText(context, t.userMessage(context), Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }

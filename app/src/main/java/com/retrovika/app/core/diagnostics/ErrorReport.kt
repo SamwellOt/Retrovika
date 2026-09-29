@@ -3,7 +3,9 @@ package com.retrovika.app.core.diagnostics
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
+import android.content.Intent
 import android.os.Build
+import androidx.core.content.FileProvider
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +50,28 @@ object ErrorReport {
         }.getOrElse { "(log indisponível: ${it.message})" }
         append(log)
     }
+
+    /**
+     * Grava [report] como arquivo de texto no cache (pasta coberta pelo FileProvider) e devolve o Intent de
+     * compartilhar. O relatório inteiro no EXTRA_TEXT passava do limite do Binder (TransactionTooLargeException);
+     * no texto vai só o cabeçalho, curto. Faz E/S: chamar fora da thread principal.
+     */
+    fun shareIntent(context: Context, report: String): Intent {
+        // Subpasta própria: o compartilhamento de estados limpa os arquivos soltos de "shared/"
+        val dir = context.cacheDir.resolve("shared/report").apply { mkdirs() }
+        val file = dir.resolve("retrovika-report.txt")
+        file.writeText(report)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val summary = report.substringBefore("\n\n").take(SUMMARY_CHARS)
+        return Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, "Retrovika")
+            .putExtra(Intent.EXTRA_TEXT, summary)
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
+    private const val SUMMARY_CHARS = 2_000
 
     private fun socName(): String =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else Build.HARDWARE

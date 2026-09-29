@@ -25,4 +25,11 @@
     <string name="share_chooser_file">Abrir arquivo .rvstate</string>
     <string name="share_scan_prompt">Aponte para o QR code na tela do seu amigo</string>
     <string name="share_qr_not_ours">Este QR code não é do Retrovika.</string>
+    <string name="share_link_bad_host">Este link não aponta para um aparelho da sua rede local, então foi ignorado.</string>
+    <string name="share_link_confirm_state_title">Receber um estado compartilhado?</string>
+    <string name="share_link_confirm_netplay_title">Entrar numa partida em rede?</string>
+    <string name="share_link_confirm_state">Um link pede para baixar o estado \"%1$s\" de outro aparelho. O Retrovika só se conecta a ele se você continuar.</string>
+    <string name="share_link_confirm_netplay">Um link convida você para a partida \"%1$s\". Se continuar, o Retrovika se conecta ao outro aparelho e abre o jogo como jogador 2.</string>
+    <string name="share_link_confirm_host">Aparelho: %1$s</string>
+    <string name="share_link_confirm_accept">Continuar</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.share
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -55,14 +56,27 @@ import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.AppContainer
+import com.retrovika.app.core.settings.localized
+import java.net.Inet6Address
+import java.net.InetAddress
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import com.retrovika.app.core.netplay.NetplayGuest
 
 /** O que chegou de fora: um arquivo .rvstate ou um link de QR code. */
 sealed interface Incoming {
     data class File(val uri: Uri) : Incoming
-    data class Link(val link: RetrovikaLink) : Incoming
+
+    /**
+     * [confirmed] = o usuário já aceitou a conexão. Links que chegam por Intent (qualquer app ou página pode abrir
+     * `retrovika://`) começam sem confirmação; o QR code lido dentro do app já é uma escolha do usuário.
+     */
+    data class Link(val link: RetrovikaLink, val confirmed: Boolean = false) : Incoming
 }
 
 /** O Intent que abriu o app traz algo para receber? */
@@ -71,7 +85,7 @@ fun Intent.toIncoming(): Incoming? {
     return when (action) {
         Intent.ACTION_VIEW -> when {
             data == null -> null
-            data.scheme == RetrovikaLink.SCHEME -> RetrovikaLink.parse(data.toString())?.let { Incoming.Link(it) }
+            data.scheme == RetrovikaLink.SCHEME -> RetrovikaLink.parse(data.toString())?.let { Incoming.Link(it, confirmed = false) }
             data.scheme == "content" || data.scheme == "file" -> Incoming.File(data)
             else -> null
         }
@@ -84,10 +98,91 @@ fun Intent.toIncoming(): Incoming? {
     }
 }
 
-private sealed interface Phase {
-    data class Working(val progress: Float?) : Phase
-    data class Done(val result: SharedStates.Received) : Phase
-    data class Failed(val message: String) : Phase
+/** No máximo tantos endereços por link: cada um é uma tentativa de conexão. */
+private const val MAX_LINK_HOSTS = 4
+
+private val IPV4_LITERAL = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
+private val IPV6_LITERAL = Regex("""^[0-9a-fA-F:.]+(%[0-9A-Za-z_.-]+)?$""")
+
+/**
+ * Só aceita IPs literais de rede local (privados, link-local, loopback), sem nomes de DNS: um link não pode
+ * fazer o app conectar a um servidor qualquer da internet. O teste de literal vem antes de [InetAddress.getByName],
+ * que com um nome faria uma consulta DNS.
+ */
+fun lanHosts(hosts: List<String>): List<String> = hosts.asSequence()
+    .map { it.trim().removePrefix("[").removeSuffix("]") }
+    .mapNotNull { h ->
+        val addr = when {
+            // IPv4 montado byte a byte: "300.1.1.1" iria parar no DNS se passasse por getByName
+            IPV4_LITERAL.matches(h) -> {
+                val parts = h.split('.').map { it.toInt() }
+                if (parts.any { it > 255 }) null
+                else runCatching { InetAddress.getByAddress(ByteArray(4) { i -> parts[i].toByte() }) }.getOrNull()
+            }
+            // Só hexadecimal e ':' não é um nome resolvível; o literal é interpretado sem consulta
+            h.contains(':') && IPV6_LITERAL.matches(h) -> runCatching { InetAddress.getByName(h) }.getOrNull()
+            else -> null
+        } ?: return@mapNotNull null
+        val local = addr.isSiteLocalAddress || addr.isLinkLocalAddress || addr.isLoopbackAddress ||
+            // IPv6 ULA (fc00::/7): o Java só considera "site local" o antigo fec0::/10
+            (addr is Inet6Address && (addr.address[0].toInt() and 0xfe) == 0xfc)
+        // Devolve a forma normalizada, para a conexão usar exatamente o endereço verificado
+        if (local) addr.hostAddress else null
+    }
+    .distinct()
+    .take(MAX_LINK_HOSTS)
+    .toList()
+
+internal sealed interface ReceivePhase {
+    data class Working(val progress: Float?) : ReceivePhase
+    data class Done(val result: SharedStates.Received) : ReceivePhase
+    data class Failed(val message: String) : ReceivePhase
+}
+
+/**
+ * Recebimento em andamento, guardado no [com.retrovika.app.AppContainer] ao lado de `incoming`: girar a tela
+ * recria a Activity, e o download pela rede local (e a gravação do estado) não pode recomeçar nem se perder.
+ * Só é usado na thread principal (pela composição); o trabalho roda no escopo do app.
+ */
+class ReceiveSession {
+    internal val phase = MutableStateFlow<ReceivePhase>(ReceivePhase.Working(null))
+    private var source: Incoming? = null
+    private var job: Job? = null
+
+    /** Começa a receber [incoming]; se já está recebendo (ou recebeu) esse mesmo, não faz nada. */
+    internal fun start(app: AppContainer, context: Context, incoming: Incoming) {
+        if (source == incoming) return
+        job?.cancel()
+        source = incoming
+        phase.value = ReceivePhase.Working(null)
+        job = app.scope.launch {
+            val result = try {
+                val bytes = when (incoming) {
+                    is Incoming.File -> app.sharedStates.readUri(incoming.uri)
+                    is Incoming.Link -> LanTransfer.fetch(lanHosts(incoming.link.hosts), incoming.link.port, incoming.link.token, StatePackage.MAX_SIZE) { done, total ->
+                        if (isActive) phase.value = ReceivePhase.Working(if (total > 0) done / total.toFloat() else null)
+                    }
+                }
+                ReceivePhase.Done(app.sharedStates.receive(bytes))
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                ReceivePhase.Failed(
+                    if (incoming is Incoming.Link) context.localized().getString(R.string.share_receive_lan_failed) else t.userMessage(context),
+                )
+            }
+            if (isActive) phase.value = result
+        }
+    }
+
+    /** Fecha o que está sendo recebido (cancela a transferência, se ainda estiver rodando). */
+    fun clear(app: AppContainer) {
+        job?.cancel()
+        job = null
+        source = null
+        phase.value = ReceivePhase.Working(null)
+        app.incoming.value = null
+    }
 }
 
 /**
@@ -100,37 +195,68 @@ fun ReceiveHost(onNetplay: (RetrovikaLink.Netplay) -> Unit) {
     val app = context.container
     val incoming by app.incoming.collectAsStateWithLifecycle()
     val current = incoming ?: return
-    if (current is Incoming.Link && current.link is RetrovikaLink.Netplay) {
-        LaunchedEffect(current) {
-            app.incoming.value = null
-            onNetplay(current.link)
+    val dismiss = { app.receive.clear(app) }
+    if (current is Incoming.Link) {
+        val hosts = remember(current) { lanHosts(current.link.hosts) }
+        if (hosts.isEmpty()) {
+            AlertDialog(
+                onDismissRequest = dismiss,
+                containerColor = Palette.SurfaceHigh,
+                title = { Text(stringResource(R.string.share_receive_title)) },
+                text = { Text(stringResource(R.string.share_link_bad_host), style = MaterialTheme.typography.bodyMedium, color = Palette.Coral) },
+                confirmButton = { TextButton(onClick = dismiss) { Text(stringResource(R.string.common_close)) } },
+            )
+            return
         }
-        return
-    }
-    var phase by remember(current) { mutableStateOf<Phase>(Phase.Working(null)) }
-    LaunchedEffect(current) {
-        phase = try {
-            val bytes = when (current) {
-                is Incoming.File -> app.sharedStates.readUri(current.uri)
-                is Incoming.Link -> LanTransfer.fetch(current.link.hosts, current.link.port, current.link.token, StatePackage.MAX_SIZE) { done, total ->
-                    phase = Phase.Working(if (total > 0) done / total.toFloat() else null)
-                }
+        if (!current.confirmed) {
+            // Nada de rede antes do usuário aceitar: mostra de onde vem e o que vai acontecer.
+            val netplay = current.link is RetrovikaLink.Netplay
+            AlertDialog(
+                onDismissRequest = dismiss,
+                containerColor = Palette.SurfaceHigh,
+                title = { Text(stringResource(if (netplay) R.string.share_link_confirm_netplay_title else R.string.share_link_confirm_state_title)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            stringResource(
+                                if (netplay) R.string.share_link_confirm_netplay else R.string.share_link_confirm_state,
+                                current.link.title.ifBlank { "?" },
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            stringResource(R.string.share_link_confirm_host, hosts.joinToString(", ") + ":" + current.link.port),
+                            style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { app.incoming.value = current.copy(confirmed = true) }) {
+                        Text(stringResource(R.string.share_link_confirm_accept))
+                    }
+                },
+                dismissButton = { TextButton(onClick = dismiss) { Text(stringResource(R.string.common_cancel)) } },
+            )
+            return
+        }
+        val link = current.link
+        if (link is RetrovikaLink.Netplay) {
+            LaunchedEffect(current) {
+                app.receive.clear(app)
+                onNetplay(link.copy(hosts = hosts))
             }
-            Phase.Done(app.sharedStates.receive(bytes))
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            Phase.Failed(if (current is Incoming.Link) context.getString(R.string.share_receive_lan_failed) else t.userMessage(context))
+            return
         }
     }
-    val dismiss = { app.incoming.value = null }
+    LaunchedEffect(current) { app.receive.start(app, context.applicationContext, current) }
+    val phase by app.receive.phase.collectAsStateWithLifecycle()
     AlertDialog(
         onDismissRequest = dismiss,
         containerColor = Palette.SurfaceHigh,
         title = { Text(stringResource(R.string.share_receive_title)) },
         text = {
             when (val p = phase) {
-                is Phase.Working -> Row(verticalAlignment = Alignment.CenterVertically) {
+                is ReceivePhase.Working -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Palette.Cyan)
                     Spacer(Modifier.width(12.dp))
                     Text(
@@ -138,12 +264,12 @@ fun ReceiveHost(onNetplay: (RetrovikaLink.Netplay) -> Unit) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                is Phase.Failed -> Text(p.message, style = MaterialTheme.typography.bodyMedium, color = Palette.Coral)
-                is Phase.Done -> Received(p.result)
+                is ReceivePhase.Failed -> Text(p.message, style = MaterialTheme.typography.bodyMedium, color = Palette.Coral)
+                is ReceivePhase.Done -> Received(p.result)
             }
         },
         confirmButton = {
-            val done = (phase as? Phase.Done)?.result as? SharedStates.Received.Ready
+            val done = (phase as? ReceivePhase.Done)?.result as? SharedStates.Received.Ready
             if (done != null) {
                 GradientButton(stringResource(R.string.share_receive_play), {
                     dismiss()
@@ -154,7 +280,7 @@ fun ReceiveHost(onNetplay: (RetrovikaLink.Netplay) -> Unit) {
             }
         },
         dismissButton = {
-            if (phase is Phase.Done && (phase as Phase.Done).result is SharedStates.Received.Ready) {
+            if ((phase as? ReceivePhase.Done)?.result is SharedStates.Received.Ready) {
                 TextButton(onClick = dismiss) { Text(stringResource(R.string.common_cancel)) }
             }
         },
@@ -240,7 +366,7 @@ fun rememberReceiveLaunchers(): ReceiveLaunchers {
         val text = result.contents ?: return@rememberLauncherForActivityResult
         val link = RetrovikaLink.parse(text)
         if (link == null) Toast.makeText(context, R.string.share_qr_not_ours, Toast.LENGTH_LONG).show()
-        else app.incoming.value = Incoming.Link(link)
+        else app.incoming.value = Incoming.Link(link, confirmed = true)
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) app.incoming.value = Incoming.File(uri)

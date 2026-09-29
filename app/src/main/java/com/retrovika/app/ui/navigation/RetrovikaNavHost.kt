@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -159,9 +160,11 @@ fun RetrovikaNavHost() {
     val receive = rememberReceiveLaunchers()
     var choosingReceive by remember { mutableStateOf(false) }
     if (choosingReceive) ReceiveChooser(receive, onDismiss = { choosingReceive = false })
-    var joining by remember { mutableStateOf<RetrovikaLink.Netplay?>(null) }
-    ReceiveHost(onNetplay = { joining = it })
-    joining?.let { link -> NetplayJoin(link, onDone = { joining = null }) }
+    // Guardado como texto do link (rememberSaveable): girar a tela recria a Activity e não pode perder a partida.
+    var joiningLink by rememberSaveable { mutableStateOf<String?>(null) }
+    val joining = remember(joiningLink) { joiningLink?.let { RetrovikaLink.parse(it) as? RetrovikaLink.Netplay } }
+    ReceiveHost(onNetplay = { joiningLink = it.toUri() })
+    joining?.let { link -> NetplayJoin(link, onDone = { joiningLink = null }) }
 
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
     // de todas as pastas a cada vez deixava o menu lento. Roda no escopo do app: se a Activity for
