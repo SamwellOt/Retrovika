@@ -2,7 +2,9 @@ package com.retrovika.app.core.catalog
 
 import androidx.annotation.StringRes
 import com.retrovika.app.core.gameinfo.SourceDetails
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class CatalogEntry(
     val id: String,
     val sourceId: String,

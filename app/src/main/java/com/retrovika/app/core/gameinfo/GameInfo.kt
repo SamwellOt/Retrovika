@@ -1,5 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
+import kotlinx.serialization.Serializable
+
 /**
  * Informações de um jogo do catálogo, reunidas de três lugares: a própria fonte do download
  * ([SourceDetails]), o Backloggd ([BackloggdInfo]: nota da comunidade, estatísticas, reviews) e a
@@ -37,6 +39,7 @@ data class SourceDetails(
 )
 
 /** Uma review da comunidade do Backloggd. [rating] vai de 0,5 a 5 (nulo quando a pessoa só escreveu). */
+@Serializable
 data class BackloggdReview(
     val user: String,
     val avatarUrl: String?,
@@ -54,6 +57,7 @@ data class BackloggdReview(
  * Página do jogo no Backloggd. Os contadores vêm abreviados como o site mostra ("99K", "1.9K"); as
  * horas, como "20h". [histogram] tem as 10 faixas de nota (0,5★ a 5★), com a quantidade de votos em cada.
  */
+@Serializable
 data class BackloggdInfo(
     val slug: String,
     val url: String,
@@ -76,6 +80,7 @@ data class BackloggdInfo(
 )
 
 /** Nota da crítica registrada no Wikidata ("94/100" do Metacritic, "39/40" da Famitsu…). */
+@Serializable
 data class ReviewScore(val score: String, val reviewer: String) {
     /** A nota em 0–100, quando o texto é uma fração ("94/100", "9/10"). */
     val normalized: Int?
@@ -88,8 +93,10 @@ data class ReviewScore(val score: String, val reviewer: String) {
 }
 
 /** Link para outra base de dados de jogos (HowLongToBeat, MobyGames, IGDB…). */
+@Serializable
 data class ExternalLink(val name: String, val url: String)
 
+@Serializable
 data class WikiInfo(
     val entityId: String,
     val title: String?,

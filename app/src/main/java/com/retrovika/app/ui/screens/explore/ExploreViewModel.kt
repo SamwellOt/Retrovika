@@ -122,7 +122,12 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     /** Maior posição da grade que já apareceu na tela desde a última busca; os parciais chegam de outras threads. */
     @Volatile private var seenUntil = -1
 
-    init { reload(debounce = false) }
+    init {
+        reload(debounce = false)
+        // Quem está no Explorar costuma abrir um jogo em seguida: a verificação do Backloggd (quando a rede a
+        // recebe) já fica feita. No escopo do app, para não ser cortada ao trocar de aba.
+        app.scope.launch { runCatching { app.gameInfo.warmUp() } }
+    }
 
     /** A tela avisa até onde a rolagem já mostrou (índice da grade, que fica à frente do da lista por causa do cabeçalho). */
     fun onSeen(index: Int) { if (index > seenUntil) seenUntil = index }
@@ -190,9 +195,19 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             _state.update {
                 it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false, partialFailure = false)
             }
+            // A última lista deste filtro aparece na hora; a busca abaixo a atualiza no lugar.
+            snapshotKey(_state.value)?.let { key ->
+                app.catalogSnapshots.read(key)?.let { saved ->
+                    _state.update { it.copy(entries = saved.entries, totalResults = saved.totalResults) }
+                }
+            }
             fetch(1)
         }
     }
+
+    /** Só a navegação por filtros (sem termo de busca) fica guardada: é a que se repete ao abrir o app. */
+    private fun snapshotKey(s: ExploreState): String? =
+        if (s.query.isNotBlank()) null else listOf(s.sourceId, s.systemId, s.kind, s.genre?.name).joinToString("|")
 
     fun loadMore() {
         val s = _state.value
@@ -242,7 +257,8 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
 
     private suspend fun fetch(page: Int) {
         val s = _state.value
-        val before = s.entries
+        // Na 1ª página o que está na tela é a lista guardada (ou nada): a busca a substitui, sem somar.
+        val before = if (page == 1) emptyList() else s.entries
         val job = coroutineContext[Job]
         val first = try {
             fetchPage(s, page) { partial ->
@@ -269,6 +285,7 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             return
         }
         appendPage(first)
+        if (page == 1) snapshotKey(s)?.let { key -> app.scope.launch { app.catalogSnapshots.write(key, first) } }
 
         // Filtro que rende pouco por página: as próximas vêm em paralelo até encher a tela.
         app.catalog.fillAfter(first, loaded = { _state.value.entries.size }, fetch = { p -> fetchPage(s, p) }, onPage = ::appendPage)

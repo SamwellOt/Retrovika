@@ -27,7 +27,7 @@ class WikiClient {
      * [igdbSlug] (vindo do Backloggd) acha o item exato pelo ID do IGDB. Sem ele, busca pelo título e
      * aceita só um item de mesmo nome descrito como jogo.
      */
-    suspend fun find(title: String, lang: String, igdbSlug: String? = null): WikiInfo? {
+    suspend fun find(title: String, lang: String, igdbSlug: String? = null, onHltbId: (String?) -> Unit = {}): WikiInfo? {
         // runCatching engoliria o cancelamento (a página fechou) e seguiria buscando por título à toa.
         val bySlug = igdbSlug?.let {
             try { Result.success(byIgdb(it)) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
@@ -38,7 +38,7 @@ class WikiClient {
             // Falha de rede no slug sem nada achado pelo título: é erro, não "sem artigo" guardado no cache.
             ?: bySlug?.exceptionOrNull()?.let { throw it }
             ?: return null
-        return entity(id, lang)
+        return entity(id, lang, onHltbId)
     }
 
     /** Outro nome do jogo, com o item do Wikidata e o slug do IGDB (= Backloggd) quando há. */
@@ -179,13 +179,16 @@ class WikiClient {
         }?.get("id")?.jsonPrimitive?.contentOrNull
     }
 
-    private suspend fun entity(id: String, lang: String): WikiInfo? = coroutineScope {
+    /** [onHltbId] recebe o ID do HowLongToBeat assim que o item chega, antes dos nomes e do resumo. */
+    private suspend fun entity(id: String, lang: String, onHltbId: (String?) -> Unit): WikiInfo? = coroutineScope {
         val url = Urls.withQuery(wikidata, listOf(
             "action" to "wbgetentities", "ids" to id, "props" to "claims|sitelinks|labels",
             "languages" to "$lang|en", "sitefilter" to "${lang}wiki|enwiki", "format" to "json",
         ))
         val entity = json(url)["entities"]?.jsonObject?.get(id)?.jsonObject ?: return@coroutineScope null
         val claims = entity["claims"]?.jsonObject ?: JsonObject(emptyMap())
+        val hltb = string(claims, HLTB)
+        onHltbId(hltb)
 
         // O artigo no idioma do app, ou o inglês quando não há.
         val sitelinks = entity["sitelinks"]?.jsonObject
@@ -205,7 +208,6 @@ class WikiClient {
         fun names(prop: String) = itemIds(claims, prop).mapNotNull { labels[it] }.distinct()
 
         val igdb = claims[IGDB]?.jsonArray?.firstNotNullOfOrNull { value(it)?.jsonPrimitive?.contentOrNull }
-        val hltb = string(claims, HLTB)
         val links = buildList {
             hltb?.let { add(ExternalLink("HowLongToBeat", "https://howlongtobeat.com/game/$it")) }
             (string(claims, MOBYGAMES)?.let { "https://www.mobygames.com/game/$it" }

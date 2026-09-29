@@ -1,6 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -44,9 +45,11 @@ class HowLongToBeatClient(private val fetch: suspend (String) -> String = { Http
     }
 }
 
+@Serializable
 data class HltbInfo(val id: String, val url: String, val title: String?, val times: List<HltbTime>)
 
 /** Um tempo do HowLongToBeat: [seconds] é a média que o site mostra, de [count] jogadores. */
+@Serializable
 data class HltbTime(val kind: Kind, val seconds: Long, val count: Long) {
     /** Na ordem da página do site. [key] é o campo do JSON (a contagem é `<key>_count`). */
     enum class Kind(val key: String) {
