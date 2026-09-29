@@ -39,11 +39,12 @@ class WikiClient {
 
     /**
      * Acha o nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título
-     * japonês romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). O artigo da Wikipedia
-     * em inglês cita a romanização logo na abertura ("Hepburn: Hana to Taiyō to Ame to"); só vale um
-     * artigo de jogo em que o título pedido é um desses outros nomes inteiro, não só uma parte do
-     * texto: "Doraemon" não pode virar um "Doraemon 3" que cita o primeiro. Nulo quando não acha ou
-     * quando o nome é o mesmo.
+     * japonês romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). A Wikipedia em inglês
+     * guarda a romanização como redirecionamento para o artigo ("Hana to Taiyō to Ame to"), e às vezes
+     * também a cita nos parênteses da abertura (em muitos artigos ela foi para uma nota de rodapé, que
+     * o resumo não traz). Só vale um artigo de jogo em que o título pedido é um desses outros nomes
+     * inteiro, não só uma parte do texto: "Doraemon" não pode virar um "Doraemon 3" que cita o
+     * primeiro. Nulo quando não acha ou quando o nome é o mesmo.
      */
     suspend fun otherTitle(title: String): OtherTitle? {
         val clean = GameTitles.clean(title).ifBlank { return null }
@@ -53,8 +54,10 @@ class WikiClient {
         // tentativa usa a forma sem vogais longas.
         for (query in listOf(clean, wanted).distinctBy { it.lowercase() }) {
             val page = searchArticles(query).firstOrNull { p ->
-                val isGame = "game" in p.description.lowercase() || "video game" in p.intro.lowercase()
-                isGame && GameTitles.knownAs(p.intro.take(INTRO_CHARS)).any { GameTitles.romajiKey(it) == wanted }
+                val description = p.description.lowercase()
+                val isGame = ("game" in description || "video game" in p.intro.lowercase()) && "series" !in description
+                val names = p.redirects + GameTitles.knownAs(p.intro.take(INTRO_CHARS))
+                isGame && names.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }
             } ?: continue
             val name = GameTitles.clean(page.title)
             if (GameTitles.same(name, clean)) return null
@@ -64,14 +67,17 @@ class WikiClient {
         return null
     }
 
-    private class Article(val title: String, val description: String, val intro: String, val item: String?)
+    private class Article(val title: String, val description: String, val intro: String, val item: String?, val redirects: List<String>)
 
-    /** Busca na Wikipedia em inglês; cada resultado já vem com a abertura, a descrição curta e o item. */
+    /**
+     * Busca na Wikipedia em inglês; cada resultado já vem com a abertura, a descrição curta, o item do
+     * Wikidata e os títulos que redirecionam para ele.
+     */
     private suspend fun searchArticles(query: String): List<Article> {
         val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
             "action" to "query", "generator" to "search", "gsrsearch" to query, "gsrnamespace" to "0",
-            "gsrlimit" to "5", "prop" to "extracts|description|pageprops", "exintro" to "1",
-            "explaintext" to "1", "exlimit" to "max", "ppprop" to "wikibase_item", "redirects" to "1",
+            "gsrlimit" to "5", "prop" to "extracts|description|pageprops|redirects", "exintro" to "1",
+            "explaintext" to "1", "exlimit" to "max", "ppprop" to "wikibase_item", "rdnamespace" to "0", "rdlimit" to "max",
             "format" to "json", "formatversion" to "2",
         ))
         val pages = json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
@@ -82,6 +88,7 @@ class WikiClient {
                 description = p["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 intro = p["extract"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
+                redirects = p["redirects"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["title"]?.jsonPrimitive?.contentOrNull },
             )
         }
     }

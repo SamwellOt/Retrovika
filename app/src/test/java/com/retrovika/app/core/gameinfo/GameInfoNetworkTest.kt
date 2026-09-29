@@ -102,6 +102,12 @@ class GameInfoNetworkTest {
     fun `titulo japones romanizado acha o nome em ingles`() = runBlocking {
         val wiki = WikiClient()
         val other = timed("Wikipedia · Hana to Taiyou to Ame to") { wiki.otherTitle("Hana to Taiyou to Ame to (Japan)") }
+        if (other == null) {
+            // Diagnóstico: o que a busca da Wikipedia devolveu (título, descrição, redirecionamentos).
+            val url = "https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=hana%20to%20taiyo%20to%20ame%20to" +
+                "&gsrlimit=5&prop=description|redirects&rdnamespace=0&rdlimit=max&format=json&formatversion=2"
+            println(runCatching { com.retrovika.app.core.net.Http.getString(url, mapOf("User-Agent" to "Retrovika-test")) }.getOrElse { it.toString() }.take(3000))
+        }
         assertNotNull("nome em inglês não encontrado", other)
         assertTrue(other!!.title, GameTitles.same(other.title, "Flower, Sun, and Rain"))
         println("  ${other.title} · ${other.item} · IGDB ${other.igdbSlug}")
