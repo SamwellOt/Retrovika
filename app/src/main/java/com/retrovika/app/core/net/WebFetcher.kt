@@ -19,6 +19,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -63,6 +65,18 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         @JavascriptInterface
         fun done(id: Int, status: Int, body: String) {
             pending.remove(id)?.complete(status to body)
+        }
+    }
+
+    /**
+     * Abre o WebView em [origin] e passa pela verificação antes do primeiro pedido. Fica aberto pelo prazo
+     * normal ([IDLE_MS]) esperando os pedidos.
+     */
+    suspend fun warm(origin: String) {
+        try {
+            lock.withLock { withContext(Dispatchers.Main) { ready(origin) } }
+        } finally {
+            main.launch { scheduleRelease() }
         }
     }
 
@@ -174,13 +188,15 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             addJavascriptInterface(Bridge(), "RetrovikaBridge")
             loadUrl(url)
         }
-        // A verificação roda e recarrega a página sozinha; pronto quando o título deixa de ser o dela.
+        // A verificação roda e recarrega a página sozinha; pronto quando o título deixa de ser o dela. Não
+        // precisa esperar a página inteira (imagens, anúncios): com o documento lido, o fetch() já funciona.
         val passed = try {
             withTimeoutOrNull(CHALLENGE_TIMEOUT_MS) {
                 while (true) {
                     delay(POLL_MS)
                     val title = web.title.orEmpty()
                     if (title.isNotBlank() && !isChallengeTitle(title) && web.progress == 100) break
+                    if (documentReady(web)) break
                 }
             }
         } catch (t: Throwable) {
@@ -193,6 +209,21 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             throw HttpStatusException(403, url)
         }
         return web
+    }
+
+    /**
+     * O documento da página já foi lido (readyState "interactive" ou "complete"), tem título e não é a
+     * verificação. O título vem do próprio documento: o do WebView pode ser a URL antes de a página chegar.
+     */
+    private suspend fun documentReady(web: WebView): Boolean {
+        val raw = CompletableDeferred<String?>()
+        web.evaluateJavascript("JSON.stringify([document.readyState, document.title])") { raw.complete(it) }
+        val state = runCatching {
+            val inner = Http.json.parseToJsonElement(raw.await() ?: return false).jsonPrimitive.content
+            Http.json.parseToJsonElement(inner).jsonArray.map { it.jsonPrimitive.content }
+        }.getOrNull() ?: return false
+        val (ready, title) = state.getOrNull(0) to state.getOrNull(1).orEmpty()
+        return ready != "loading" && title.isNotBlank() && !isChallengeTitle(title)
     }
 
     private fun scheduleRelease() {

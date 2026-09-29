@@ -78,7 +78,8 @@ class CatalogSpeedTest {
             val firstLimit = if (case.externalLimit) ARCHIVE_LIMIT_MS else FIRST_LIMIT_MS
             // Quando só o Internet Archive tem jogos para o filtro, os primeiros jogos esperam o servidor
             // dele; o que o app controla é responder rápido com o que as outras fontes têm (mesmo nada).
-            val onlyArchive = case.sourceId == null && firstVisibleMs > firstAnswerMs && firstVisibleMs == firstMs
+            // "Última resposta" com folga de alguns ms: os dois tempos são medidos em pontos diferentes (1530 × 1531 ms).
+            val onlyArchive = case.sourceId == null && firstVisibleMs > firstAnswerMs && firstMs - firstVisibleMs <= LAST_ANSWER_SLACK_MS
             val cobrado = if (onlyArchive) firstAnswerMs else firstVisibleMs
             if (cobrado > firstLimit) slow += "${case.label}: primeira resposta em ${cobrado} ms"
             // Em "Todas as fontes" a tela cheia espera o Archive; o que conta ali são os primeiros jogos.
@@ -94,5 +95,6 @@ class CatalogSpeedTest {
         const val LIMIT_MS = 3_000L
         /** Internet Archive sozinho: o tempo é do servidor dele (1–5 s em consulta nova). */
         const val ARCHIVE_LIMIT_MS = 8_000L
+        const val LAST_ANSWER_SLACK_MS = 20L
     }
 }

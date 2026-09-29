@@ -695,6 +695,25 @@ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_netplayFr
     return (jlong) LibretroDroid::getInstance().netplayFrame();
 }
 
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_requestFrameSnapshot(
+    JNIEnv* env,
+    jclass obj
+) {
+    LibretroDroid::getInstance().requestFrameSnapshot();
+}
+
+JNIEXPORT jintArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_takeFrameSnapshot(
+    JNIEnv* env,
+    jclass obj
+) {
+    std::vector<int32_t> snapshot = LibretroDroid::getInstance().takeFrameSnapshot();
+    if (snapshot.empty()) return nullptr;
+    jintArray result = env->NewIntArray((jsize) snapshot.size());
+    if (result == nullptr) return nullptr;
+    env->SetIntArrayRegion(result, 0, (jsize) snapshot.size(), snapshot.data());
+    return result;
+}
+
 JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getRunCount(
     JNIEnv* env,
     jclass obj

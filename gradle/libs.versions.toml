@@ -25,6 +25,8 @@ junit = "4.13.2"
 zxingEmbedded = "4.3.0"
 mlkitTextJapanese = "16.0.1"
 mlkitTranslate = "17.0.3"
+# Tem de ser a mesma versão do .aar de onde OcrPack tira a libonnxruntime.so (e dos hashes dela).
+onnxruntime = "1.30.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -59,6 +61,7 @@ zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
 mlkit-text-japanese = { module = "com.google.android.gms:play-services-mlkit-text-recognition-japanese", version.ref = "mlkitTextJapanese" }
 mlkit-translate = { module = "com.google.mlkit:translate", version.ref = "mlkitTranslate" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingEmbedded" }
 
 [plugins]

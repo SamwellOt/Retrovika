@@ -146,6 +146,17 @@ public:
     void setAudioEnabled(bool enabled);
 
     Capture& getCapture() { return capture; }
+
+    /**
+     * Tradução da tela: pede uma cópia do próximo quadro de software do núcleo, na resolução nativa e
+     * sem shader nem escala (o OCR lê letras de pixel muito melhor assim).
+     */
+    void requestFrameSnapshot();
+    /**
+     * [largura, altura, esquerda, topo, direita, base da área do jogo na view] seguido dos pixels ARGB.
+     * Vazio enquanto o quadro não chegou; largura 0 quando o núcleo desenha por GPU (não há o que copiar).
+     */
+    std::vector<int32_t> takeFrameSnapshot();
     /** Taxa real das amostras que o núcleo entrega (já com o ajuste ao refresh da tela). */
     int getAudioSampleRate() const { return audioSampleRate; }
 
@@ -217,6 +228,11 @@ private:
 
     Capture capture;
     int audioSampleRate = 0;
+
+    std::atomic<bool> snapshotRequested {false};
+    std::mutex snapshotLock;
+    std::vector<int32_t> snapshot;
+    void copySnapshot(const void *data, unsigned width, unsigned height, size_t pitch);
 };
 
 } //namespace libretrodroid

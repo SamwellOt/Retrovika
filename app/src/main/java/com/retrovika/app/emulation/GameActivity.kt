@@ -51,7 +51,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withTimeoutOrNull
 import com.retrovika.app.core.settings.uiLanguage
+import com.retrovika.app.core.translate.AiConfig
+import com.retrovika.app.core.translate.Box
+import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.core.translate.LiveTranslator
+import com.retrovika.app.core.translate.OcrFrame
 import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
@@ -64,6 +68,7 @@ import com.retrovika.app.remote.RemoteGame
 import com.retrovika.app.ui.theme.RetrovikaTheme
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
+import com.swordfish.libretrodroid.LibretroDroid
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
@@ -1055,6 +1060,8 @@ class GameActivity : ComponentActivity() {
         if (gameLoaded && !autoSaveReady) return
         releaseAllInputs(view)
         menuOpening = true
+        // O quadro do núcleo, sem shader nem escala, chega no próximo quadro desenhado (antes da pausa).
+        LibretroDroid.requestFrameSnapshot()
         captureFrame(view) { _, full ->
             lifecycleScope.launch {
                 val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
@@ -1067,11 +1074,18 @@ class GameActivity : ComponentActivity() {
                 val target = uiLanguage()
                 translateJob = lifecycleScope.launch {
                     translation = try {
-                        val tr = translator ?: LiveTranslator().also { translator = it }
-                        val blocks = tr.translate(full, target) { stage ->
+                        val frame = nativeFrame(full) ?: OcrFrame(full, Box(0, 0, full.width, full.height))
+                        val current = app.settings.current()
+                        val ai = current.geminiKey?.takeIf { it.isNotBlank() }?.let { AiConfig(it, current.geminiModel) }
+                        val tr = translator ?: LiveTranslator(app.ocrPack).also { translator = it }
+                        val result = tr.translate(frame, target, ai, GeminiText.GameContext(game.title, system.name)) { stage ->
                             if (translation is TranslationUi.Working) translation = TranslationUi.Working(full, stage)
                         }
-                        TranslationUi.Ready(full, blocks)
+                        TranslationUi.Ready(
+                            full, result.blocks,
+                            aiError = result.aiError?.userMessage(this@GameActivity),
+                            suggestPack = result.suggestPack,
+                        )
                     } catch (c: kotlinx.coroutines.CancellationException) {
                         throw c
                     } catch (t: Throwable) {
@@ -1080,6 +1094,27 @@ class GameActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * O quadro nativo pedido em [startTranslation], se chegou: núcleos de GPU não têm (a captura da view
+     * fica valendo), e jogos girados também não servem, porque a área na tela está em outra orientação.
+     */
+    private suspend fun nativeFrame(full: Bitmap): OcrFrame? = withContext(Dispatchers.Default) {
+        var data: IntArray? = null
+        for (i in 0 until 10) {
+            data = runCatching { LibretroDroid.takeFrameSnapshot() }.getOrNull()
+            if (data != null) break
+            kotlinx.coroutines.delay(20)
+        }
+        val d = data ?: return@withContext null
+        val w = d[0]
+        val h = d[1]
+        if (w <= 0 || h <= 0 || d.size < 6 + w * h) return@withContext null
+        val area = Box(d[2], d[3], d[4], d[5])
+        if (area.isEmpty || area.right > full.width || area.bottom > full.height) return@withContext null
+        if ((w > h) != (area.width > area.height) && kotlin.math.abs(w - h) > h / 8) return@withContext null
+        OcrFrame(Bitmap.createBitmap(d, 6, w, w, h, Bitmap.Config.ARGB_8888), area)
     }
 
     private fun toggleMenu() {

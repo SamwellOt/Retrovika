@@ -151,6 +151,8 @@ public class LibretroDroid {
     public static native long netplayStatus();
     public static native long netplayFrame();
     public static native long getRunCount();
+    public static native void requestFrameSnapshot();
+    public static native int[] takeFrameSnapshot();
     public static native double getContentFps();
     public static native void setCaptureSurface(Surface surface, int width, int height);
     public static native void setAudioCapture(boolean enabled);

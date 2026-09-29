@@ -57,7 +57,11 @@ import com.retrovika.app.ui.theme.Palette
 sealed interface TranslationUi {
     val frame: Bitmap
     data class Working(override val frame: Bitmap, val stage: LiveTranslator.Stage) : TranslationUi
-    data class Ready(override val frame: Bitmap, val blocks: List<TranslatedBlock>) : TranslationUi
+    /** [aiError]: a IA falhou e a tradução comum assumiu. [suggestPack]: vale baixar o OCR para jogos japoneses. */
+    data class Ready(
+        override val frame: Bitmap, val blocks: List<TranslatedBlock>,
+        val aiError: String? = null, val suggestPack: Boolean = false,
+    ) : TranslationUi
     data class Failed(override val frame: Bitmap, val message: String) : TranslationUi
 }
 
@@ -85,8 +89,8 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
                 val pad = 3f
                 val x = with(density) { ((block.box.left - pad) * sx).toDp() }
                 val y = with(density) { ((block.box.top - pad) * sy).toDp() }
-                val w = with(density) { ((block.box.width() + pad * 2) * sx).toDp() }
-                val h = with(density) { ((block.box.height() + pad * 2) * sy).toDp() }
+                val w = with(density) { ((block.box.width + pad * 2) * sx).toDp() }
+                val h = with(density) { ((block.box.height + pad * 2) * sy).toDp() }
                 Box(
                     Modifier.offset(x, y).size(w.coerceAtLeast(24.dp), h.coerceAtLeast(18.dp))
                         .clip(RoundedCornerShape(6.dp))
@@ -121,6 +125,7 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
                         is TranslationUi.Working -> stringResource(
                             when (state.stage) {
                                 LiveTranslator.Stage.READING -> R.string.translate_reading
+                                LiveTranslator.Stage.ASKING_AI -> R.string.translate_asking_ai
                                 LiveTranslator.Stage.DOWNLOADING_MODEL -> R.string.translate_downloading
                                 LiveTranslator.Stage.TRANSLATING -> R.string.translate_translating
                             },
@@ -138,6 +143,16 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
                     Modifier.size(32.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.08f)).clickable(onClick = onClose),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Rounded.Close, stringResource(R.string.translate_close), tint = Palette.TextPrimary, modifier = Modifier.size(18.dp)) }
+            }
+            if (state is TranslationUi.Ready && selected == null) {
+                state.aiError?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(stringResource(R.string.translate_ai_fallback, it), style = MaterialTheme.typography.labelSmall, color = Palette.Coral)
+                }
+                if (state.suggestPack) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(stringResource(R.string.translate_suggest_pack), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
+                }
             }
             selected?.let { block ->
                 Spacer(Modifier.height(10.dp))

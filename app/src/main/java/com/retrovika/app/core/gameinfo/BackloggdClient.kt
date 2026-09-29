@@ -5,6 +5,7 @@ import com.retrovika.app.core.net.HttpStatusException
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.WebFetcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -29,6 +30,14 @@ class BackloggdClient(
      * verificação em JavaScript. Nulo nos testes da JVM, onde não há WebView.
      */
     private val web: (suspend (String) -> String)? = null,
+    /** Abre o WebView no site antes do primeiro pedido (a verificação leva alguns segundos). */
+    private val warm: (suspend () -> Unit)? = null,
+    /**
+     * Quando a CDN pediu a verificação pela última vez (epoch ms, 0 se nunca), guardado entre aberturas do
+     * app por [onChallenge]: a mesma rede costuma continuar recebendo a verificação.
+     */
+    challengedAt: Long = 0,
+    private val onChallenge: (Long) -> Unit = {},
 ) {
     private val base = "https://backloggd.com"
 
@@ -43,7 +52,18 @@ class BackloggdClient(
      * 403). Expira: a CDN só pede a verificação a alguns IPs, e a rede do aparelho muda.
      */
     @Volatile
-    private var viaWebUntil = 0L
+    private var viaWebUntil = if (System.currentTimeMillis() - challengedAt < HINT_MS) System.currentTimeMillis() + VIA_WEB_MS else 0L
+
+    @Volatile
+    private var hinted = challengedAt > 0
+
+    /**
+     * Se a última sessão precisou do WebView, já o abre e passa pela verificação: a página do jogo que o
+     * usuário abrir em seguida não espera esses segundos. Sem a dica, não faz nada.
+     */
+    suspend fun warmUp() {
+        if (System.currentTimeMillis() < viaWebUntil) warm?.invoke()
+    }
 
     /** GET pelo OkHttp; se a CDN pedir a verificação (403), passa a usar o WebView por um tempo. */
     private suspend fun get(url: String): String {
@@ -61,12 +81,18 @@ class BackloggdClient(
             }
         }
         return try {
-            Http.getString(url, headers)
+            Http.getString(url, headers).also {
+                // A CDN voltou a atender o OkHttp: a dica da verificação deixa de valer.
+                if (hinted) { hinted = false; onChallenge(0) }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (fetch == null || !WebFetcher.isChallenge(e)) throw e
-            viaWebUntil = System.currentTimeMillis() + VIA_WEB_MS
+            val now = System.currentTimeMillis()
+            viaWebUntil = now + VIA_WEB_MS
+            hinted = true
+            onChallenge(now)
             fetch(url)
         }
     }
@@ -106,16 +132,26 @@ class BackloggdClient(
         }
         if (ranked.isEmpty()) return null
 
-        val errors = ArrayList<Throwable>()
-        val exact = load(ranked.filter { it.extra == 0 }.take(MAX_CANDIDATES), errors)
-        exact.onPlatform(systemId)?.let { return it.open() }
-        val close = load(ranked.filter { it.extra > 0 }.take(MAX_CANDIDATES), errors)
-        close.onPlatform(systemId)?.let { return it.open() }
-        exact.firstOrNull { it.second != null }?.let { return it.open() }
-        // Página que falhou (rede, verificação da CDN) é erro, não "o jogo não está lá": senão o
-        // "não encontrado" ficaria no cache por 15 minutos.
-        errors.firstOrNull()?.let { throw it }
-        return null
+        return coroutineScope {
+            // As resenhas do candidato mais provável vêm junto com as páginas, não depois: quase sempre é ele.
+            val likely = ranked.first().suggestion.slug
+            val reviewsAhead = async { catching { reviews(likely) } }
+            suspend fun Pair<String, Document?>.open(): BackloggdInfo =
+                parseGame(second!!, first).withReviews(reviewsAhead.takeIf { first == likely })
+
+            val errors = ArrayList<Throwable>()
+            val exact = load(ranked.filter { it.extra == 0 }.take(MAX_CANDIDATES), errors)
+            val found = exact.onPlatform(systemId)
+                ?: load(ranked.filter { it.extra > 0 }.take(MAX_CANDIDATES), errors).onPlatform(systemId)
+                ?: exact.firstOrNull { it.second != null }
+            val result = found?.open()
+            // Sem uso (outro candidato venceu), o pedido adiantado não pode segurar a resposta.
+            reviewsAhead.cancel()
+            // Página que falhou (rede, verificação da CDN) é erro, não "o jogo não está lá": senão o
+            // "não encontrado" ficaria no cache por 15 minutos.
+            if (result == null) errors.firstOrNull()?.let { throw it }
+            result
+        }
     }
 
     internal data class Ranked(val suggestion: Suggestion, val extra: Int)
@@ -143,8 +179,6 @@ class BackloggdClient(
     private fun List<Pair<String, Document?>>.onPlatform(systemId: String) =
         firstOrNull { (_, page) -> page != null && Platforms.matches(systemId, platformSlugs(page), platformNames(page)) }
 
-    private suspend fun Pair<String, Document?>.open(): BackloggdInfo = parseGame(second!!, first).withReviews()
-
     suspend fun suggestions(query: String): List<Suggestion> {
         val json = Http.json.parseToJsonElement(
             get(Urls.withQuery("$base/autocomplete.json", listOf("query" to query))),
@@ -160,16 +194,21 @@ class BackloggdClient(
         }
     }
 
-    suspend fun game(slug: String): BackloggdInfo = parseGame(page(slug), slug).withReviews()
+    suspend fun game(slug: String): BackloggdInfo = coroutineScope {
+        val reviews = async { catching { reviews(slug) } }
+        parseGame(page(slug), slug).withReviews(reviews)
+    }
 
     private suspend fun page(slug: String): Document =
         Jsoup.parse(get("$base/games/${Urls.encode(slug)}/"), base)
 
     /** As reviews chegam por um pedido à parte (o site as carrega depois da página). */
-    private suspend fun BackloggdInfo.withReviews(): BackloggdInfo {
-        val reviews = catching {
-            parseReviews(get("$base/reviews/preview/${Urls.encode(slug)}/?sort_by=trending"))
-        }
+    private suspend fun reviews(slug: String): List<BackloggdReview> =
+        parseReviews(get("$base/reviews/preview/${Urls.encode(slug)}/?sort_by=trending"))
+
+    /** [ahead]: o pedido das reviews já disparado junto com a página; sem ele, pede agora. */
+    private suspend fun BackloggdInfo.withReviews(ahead: Deferred<Result<List<BackloggdReview>>>? = null): BackloggdInfo {
+        val reviews = ahead?.await() ?: catching { reviews(slug) }
         // Sem as reviews a página ainda serve; reviewsFailed evita guardar no cache esse resultado incompleto.
         return copy(reviews = reviews.getOrDefault(emptyList()).take(MAX_REVIEWS), reviewsFailed = reviews.isFailure)
     }
@@ -259,5 +298,7 @@ class BackloggdClient(
         const val MAX_CANDIDATES = 4
         const val MAX_REVIEWS = 6
         const val VIA_WEB_MS = 10 * 60 * 1000L
+        /** Por quanto tempo a verificação de uma sessão faz a próxima ir direto ao WebView. */
+        const val HINT_MS = 24 * 60 * 60 * 1000L
     }
 }

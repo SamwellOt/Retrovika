@@ -136,6 +136,7 @@ class DownloadManager(
                 runDownload(
                     taskId, direct.url, direct.fileName ?: variant.fileName, system, entry.title, entry.coverUrl, entry.developer,
                     entry.tags.joinToString(" · ").ifBlank { null }, refererOf(variant.origin ?: entry) + direct.headers, ipv6 = direct.ipv6,
+                    parallel = if ((variant.origin ?: entry).sourceId in SINGLE_CONNECTION_SOURCES) 1 else PARALLEL_CONNECTIONS,
                     onWaited = { waited = true },
                 )
                 return
@@ -157,7 +158,7 @@ class DownloadManager(
             .ifBlank { context.localized().getString(R.string.download_default_name) }
         val task = DownloadTask(title = name.substringBeforeLast('.'), systemId = system.id, coverUrl = null)
         // O nome do fim do link pode não ser o do arquivo (o "uc" do Google Drive): vale o que o servidor disser.
-        launchTask(task) { id -> runDownload(id, url, name, system, task.title, null, null, null, serverName = true) }
+        launchTask(task) { id -> runDownload(id, url, name, system, task.title, null, null, null, serverName = true, parallel = PARALLEL_CONNECTIONS) }
     }
 
     /**
@@ -258,6 +259,8 @@ class DownloadManager(
         /** O nome veio do fim do link, não da fonte: o do servidor (Content-Disposition, URL final) é melhor. */
         serverName: Boolean = false,
         ipv6: Boolean? = null,
+        /** Conexões ao mesmo tempo (ver [Http.download]); os downloads do navegador levam cookies e ficam em 1. */
+        parallel: Int = 1,
         onWaited: () -> Unit = {},
     ) {
         val dir = paths.romsFor(system.id)
@@ -268,7 +271,7 @@ class DownloadManager(
         var saved: File? = null
         val file = try {
             // keepExisting: outro jogo com o mesmo nome de arquivo (dois "rom.gb") não é apagado.
-            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), onSaved = { saved = it }, onWait = { until ->
+            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), parallel = parallel, onSaved = { saved = it }, onWait = { until ->
                 if (until > 0) onWaited()
                 update(taskId) { it.copy(retryAt = until, speed = 0) }
             }, onBytes = { read, total ->
@@ -364,6 +367,13 @@ class DownloadManager(
         val ACTIVE = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.EXTRACTING)
         val RETRYABLE = setOf(DownloadStatus.FAILED, DownloadStatus.CANCELED)
         private const val MAX_LINK_REFRESHES = 2
+        /** Pedaços baixados ao mesmo tempo quando o servidor aceita Range. */
+        private const val PARALLEL_CONNECTIONS = 4
+        /**
+         * Fontes cujos servidores de arquivo bloqueiam o IP por minutos (até uma hora) com pedidos demais: o
+         * RomsFun (ver CLAUDE.md). Nelas o arquivo vem por uma conexão só, como antes.
+         */
+        private val SINGLE_CONNECTION_SOURCES = setOf("romsfun")
         /** Recusas que um link novo resolve: sessão/verificação vencida (403) ou link expirado. */
         /** Link vencido ou recusado (403/410), o que um link novo resolve; 404, 500 etc. não valem outra rodada. */
         private fun isRefusal(e: LocalizedException): Boolean = e.messageRes == R.string.download_forbidden ||

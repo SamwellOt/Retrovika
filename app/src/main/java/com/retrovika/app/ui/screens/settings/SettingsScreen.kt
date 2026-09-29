@@ -300,8 +300,14 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
             RowDivider()
             SwitchRow(Icons.Rounded.Speed, Palette.Sun, stringResource(R.string.settings_auto_benchmark), stringResource(R.string.settings_auto_benchmark_subtitle), s.autoBenchmark) { scope.launch { repo.setAutoBenchmark(it) } }
-            RowDivider()
+        }
+
+        group(R.string.settings_group_translate) {
             SwitchRow(Icons.Rounded.Translate, Palette.Cyan, stringResource(R.string.settings_translate_everywhere), stringResource(R.string.settings_translate_everywhere_subtitle), s.translateEverywhere) { scope.launch { repo.setTranslateEverywhere(it) } }
+            RowDivider()
+            OcrPackRow()
+            RowDivider()
+            AiTranslationRow(s)
         }
 
         group(R.string.settings_group_interface) {

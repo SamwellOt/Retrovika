@@ -8,22 +8,30 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.Call
+import okhttp3.ConnectionPool
 import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.net.Inet6Address
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
 /** Resposta HTTP fora da faixa 2xx; [code] permite tratar casos como 404 sem depender da mensagem. */
@@ -41,6 +49,10 @@ object Http {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(true)
+        // O padrão guarda só 5 conexões ociosas, divididas com as capas (Coil usa este cliente): a cada
+        // página nova do catálogo ou do jogo, as dos sites já abertos tinham sido descartadas e cada pedido
+        // pagava de novo o DNS e o TLS.
+        .connectionPool(ConnectionPool(24, 5, TimeUnit.MINUTES))
         .addInterceptor { chain ->
             // Mantém o User-Agent quando ele foi definido na requisição (ex.: o do WebView, ao qual os cookies do site estão presos).
             val request = chain.request()
@@ -130,6 +142,12 @@ object Http {
         keepExisting: Boolean = false,
         serverName: Boolean = false,
         http: OkHttpClient = client,
+        /**
+         * Conexões ao mesmo tempo, cada uma baixando um pedaço (Range), quando o servidor aceita: servidores
+         * que limitam a velocidade por conexão (Internet Archive e outros) ficam várias vezes mais rápidos.
+         * 1 para sites que bloqueiam o IP com muitos pedidos.
+         */
+        parallel: Int = 1,
         onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
         onSaved: (File) -> Unit = {},
         onWait: (until: Long) -> Unit = {},
@@ -151,7 +169,18 @@ object Http {
             var busyWait = 0L
             var dropTries = 0
             var lastReport = 0L
-            while (true) {
+            // Em partes quando dá; senão (servidor sem Range, arquivo pequeno, ocupado), o download comum abaixo.
+            var inParts = false
+            val cookies = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
+            if (parallel > 1 && !cookies) {
+                downloadInParts(url, part, headers, http, parallel, onBytes, onProgress, onWait)?.let { done ->
+                    read = done.total
+                    total = done.total
+                    if (serverName) remoteName = done.remoteName
+                    inParts = true
+                }
+            }
+            while (!inParts) {
                 val request = Request.Builder().url(url).apply {
                     headers.forEach { (k, v) -> header(k, v) }
                     if (read > 0) header("Range", "bytes=$read-")
@@ -245,6 +274,182 @@ object Http {
         dest
     }
 
+    /** Arquivo baixado em partes: o tamanho e o nome que o servidor deu (Content-Disposition). */
+    private class PartsResult(val total: Long, val remoteName: String?)
+
+    /** Um pedaço do arquivo, de [start] até [end] (inclusive). */
+    private class Piece(val start: Long, val end: Long)
+
+    /** O servidor parou de atender pedaços (respondeu 200 com o arquivo inteiro): o download comum recomeça. */
+    private class NoRangesException : IOException()
+
+    /**
+     * Baixa [url] em pedaços com [connections] conexões ao mesmo tempo, gravando cada um na sua posição de
+     * [part]. O primeiro pedido (Range desde o byte 0) serve de teste: se o servidor não responde 206, ou o
+     * arquivo é pequeno, devolve null sem gravar nada e o download comum assume (um pedido a mais, só).
+     *
+     * Servidor ocupado (503/429) num pedaço reduz as conexões: aquela desiste e devolve o pedaço à fila;
+     * só a última espera o Retry-After. Conexão que cai continua o pedaço de onde parou.
+     */
+    private suspend fun downloadInParts(
+        url: String, part: File, headers: Map<String, String>, http: OkHttpClient, connections: Int,
+        onBytes: (Long, Long) -> Unit, onProgress: (Float) -> Unit, onWait: (Long) -> Unit,
+    ): PartsResult? = coroutineScope {
+        // HTTP/1.1: no HTTP/2 os pedaços dividiriam uma conexão só, e o limite por conexão continuaria valendo.
+        val h1 = http.newBuilder().protocols(listOf(Protocol.HTTP_1_1)).build()
+        val probeCall = h1.newCall(rangeRequest(url, headers, 0, null))
+        // Cancelar o download corta também o pedido de teste, que é lido fora do executeCancellable.
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { probeCall.cancel() } }
+        val probe = try { probeCall.execute() } catch (t: Throwable) { watcher.cancel(); throw t }
+        val total = probe.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+        if (probe.code != 206 || total == null || total < MIN_PARTS_BYTES) {
+            probe.close()
+            watcher.cancel()
+            return@coroutineScope null
+        }
+        val remoteName = remoteFileName(probe)
+        val pieceSize = (total / (connections * 4)).coerceIn(MIN_PIECE_BYTES, MAX_PIECE_BYTES)
+        val queue = ArrayDeque<Piece>()
+        var start = 0L
+        while (start < total) {
+            val end = minOf(start + pieceSize, total) - 1
+            queue.addLast(Piece(start, end))
+            start = end + 1
+        }
+        val done = AtomicLong(0)
+        val active = AtomicInteger(connections)
+        val busyWaited = AtomicLong(0)
+        val lastReport = AtomicLong(0)
+        fun report() {
+            val now = System.nanoTime()
+            val last = lastReport.get()
+            if (now - last > PROGRESS_INTERVAL_NS && lastReport.compareAndSet(last, now)) {
+                val d = done.get()
+                onBytes(d, total)
+                onProgress(d.toFloat() / total)
+            }
+        }
+        RandomAccessFile(part, "rw").use { raf ->
+            val channel = raf.channel
+            try {
+                val first = synchronized(queue) { queue.removeFirst() }
+                var noRanges = false
+                val workers = (0 until connections).map { i ->
+                    launch(Dispatchers.IO) {
+                        var piece: Piece? = if (i == 0) first else null
+                        var response: Response? = if (i == 0) probe else null
+                        try {
+                            while (true) {
+                                val current = piece ?: synchronized(queue) { queue.removeFirstOrNull() }
+                                if (current == null) { active.decrementAndGet(); break }
+                                piece = null
+                                val rest = fetchPiece(h1, url, headers, current, channel, response, done, active, busyWaited, ::report, onWait)
+                                response = null
+                                if (rest != null) {
+                                    // Ocupado com outras conexões ainda trabalhando: esta sai e o que falta do pedaço volta à fila.
+                                    synchronized(queue) { queue.addFirst(rest) }
+                                    break
+                                }
+                            }
+                        } catch (e: NoRangesException) {
+                            noRanges = true
+                        }
+                    }
+                }
+                workers.joinAll()
+                if (noRanges) throw NoRangesException()
+                // Todas desistiram por ocupado ao mesmo tempo: a última espera e segue sozinha com o que sobrou.
+                while (true) {
+                    val current = synchronized(queue) { queue.removeFirstOrNull() } ?: break
+                    active.set(1)
+                    fetchPiece(h1, url, headers, current, channel, null, done, active, busyWaited, ::report, onWait)
+                        ?.let { rest -> synchronized(queue) { queue.addFirst(rest) } }
+                }
+            } catch (e: NoRangesException) {
+                raf.setLength(0)
+                return@coroutineScope null
+            } finally {
+                probe.close()
+                watcher.cancel()
+            }
+        }
+        if (done.get() != total) throw IOException("fim prematuro: ${done.get()} de $total")
+        onBytes(total, total)
+        PartsResult(total, remoteName)
+    }
+
+    private fun rangeRequest(url: String, headers: Map<String, String>, from: Long, to: Long?): Request =
+        Request.Builder().url(url).apply {
+            headers.forEach { (k, v) -> header(k, v) }
+            header("Range", "bytes=$from-${to ?: ""}")
+        }.build()
+
+    /**
+     * Baixa [piece] e grava na posição dele. [initial] é uma resposta já aberta que começa no início do
+     * pedaço (o pedido de teste). Devolve null com o pedaço completo, ou o que falta dele quando o servidor está
+     * ocupado e há outras conexões para continuar (os bytes já gravados ficam). Sendo a última conexão, espera
+     * o Retry-After (dentro do limite de [BUSY_BUDGET_MS]), avisando [onWait] como o download comum.
+     */
+    private suspend fun fetchPiece(
+        http: OkHttpClient, url: String, headers: Map<String, String>, piece: Piece, channel: FileChannel,
+        initial: Response?, done: AtomicLong, active: AtomicInteger, busyWaited: AtomicLong, report: () -> Unit,
+        onWait: (Long) -> Unit,
+    ): Piece? {
+        var pos = piece.start
+        var opened = initial
+        var drops = 0
+        var busyTries = 0
+        val ctx = coroutineContext
+        // Lê a resposta até o fim do pedaço; devolve a espera pedida quando o servidor está ocupado (0 se leu).
+        val read: (Response) -> Long = { res ->
+            when {
+                res.code == 503 || res.code == 429 ->
+                    retryAfterMs(res.header("Retry-After")) ?: BUSY_WAITS_MS[minOf(busyTries++, BUSY_WAITS_MS.size - 1)]
+                res.code == 200 -> throw NoRangesException()
+                res.code != 206 -> throw LocalizedException(R.string.download_http_error, res.code, url)
+                else -> {
+                    val input = res.body!!.byteStream()
+                    val buffer = ByteArray(64 * 1024)
+                    while (pos <= piece.end) {
+                        ctx.ensureActive()
+                        val n = input.read(buffer, 0, minOf(buffer.size.toLong(), piece.end - pos + 1).toInt())
+                        if (n < 0) break
+                        val bb = ByteBuffer.wrap(buffer, 0, n)
+                        var at = pos
+                        while (bb.hasRemaining()) at += channel.write(bb, at)
+                        pos += n
+                        done.addAndGet(n.toLong())
+                        report()
+                    }
+                    if (pos <= piece.end) throw IOException("pedaço incompleto")
+                    0L
+                }
+            }
+        }
+        while (pos <= piece.end) {
+            val before = pos
+            val wait = try {
+                val first = opened
+                opened = null
+                first?.use(read) ?: http.newCall(rangeRequest(url, headers, pos, piece.end)).executeCancellable(read)
+            } catch (e: IOException) {
+                if (e is LocalizedException || e is NoRangesException) throw e
+                if (pos > before) drops = 0
+                if (drops++ >= MAX_RESUMES) throw e
+                delay(RESUME_WAIT_MS)
+                continue
+            }
+            if (wait > 0) {
+                if (active.get() > 1) { active.decrementAndGet(); return Piece(pos, piece.end) }
+                if (busyWaited.addAndGet(wait) > BUSY_BUDGET_MS) throw LocalizedException(R.string.download_server_busy)
+                onWait(System.currentTimeMillis() + wait)
+                delay(wait)
+                onWait(0)
+            }
+        }
+        return null
+    }
+
     private const val PROGRESS_INTERVAL_NS = 150_000_000L
     private const val PART_PREFIX = "dl-"
     private const val PART_SUFFIX = ".part"
@@ -306,6 +511,10 @@ object Http {
         return ms.coerceIn(1_000, MAX_RETRY_AFTER_MS)
     }
     private const val MAX_RESUMES = 5
+    /** Abaixo disso o download em partes não compensa os pedidos a mais. */
+    private const val MIN_PARTS_BYTES = 8L * 1024 * 1024
+    private const val MIN_PIECE_BYTES = 2L * 1024 * 1024
+    private const val MAX_PIECE_BYTES = 32L * 1024 * 1024
     private const val RESUME_WAIT_MS = 2_000L
 
     /**

@@ -29,8 +29,8 @@ android {
         applicationId = "com.retrovika.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.5.0"
+        versionCode = 23
+        versionName = "0.5.1"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -78,7 +78,12 @@ android {
     // Só os idiomas do app: descarta as traduções extras das bibliotecas.
     androidResources { localeFilters += listOf("en", "pt") }
     packaging {
-        jniLibs { useLegacyPackaging = true }
+        jniLibs {
+            useLegacyPackaging = true
+            // O runtime do ONNX (~33 MB por arquitetura) é baixado pelo OcrPack só por quem quer o OCR para
+            // jogos japoneses; no APK fica só a ponte JNI (libonnxruntime4j_jni.so), de ~100 KB.
+            excludes += "**/libonnxruntime.so"
+        }
     }
 }
 
@@ -129,6 +134,8 @@ dependencies {
     // Tradução ao vivo: OCR japonês (modelo instalado pelos serviços do Google) e tradução no aparelho.
     implementation(libs.mlkit.text.japanese)
     implementation(libs.mlkit.translate)
+    // MeikiOCR (OCR treinado em jogos japoneses): classes Java do ONNX Runtime; a biblioteca nativa vem do OcrPack.
+    implementation(libs.onnxruntime.android)
 
     implementation(project(":libretrodroid"))
 

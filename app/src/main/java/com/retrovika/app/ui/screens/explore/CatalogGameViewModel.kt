@@ -97,17 +97,46 @@ class CatalogGameViewModel(private val app: AppContainer, entry: CatalogEntry, p
             val variants = attempt { withSizes(app.catalog.variants(entry)) }
             _state.update { it.copy(variants = variants) }
         }
-        launch {
-            val backloggd = attempt { app.gameInfo.backloggd(entry.title, entry.systemId) }
-            _state.update { it.copy(backloggd = backloggd) }
-            // O slug do Backloggd é o do IGDB, que o Wikidata registra: acha o artigo certo mesmo com
-            // títulos repetidos. Sem ele, a busca vai pelo nome.
-            val wiki = attempt { app.gameInfo.wiki(entry.title, lang, backloggd.value?.slug) }
-            _state.update { it.copy(wiki = wiki) }
-            // O ID do HowLongToBeat vem do Wikidata.
-            val hltb = wiki.value?.hltbId?.let { id -> attempt { app.gameInfo.howLongToBeat(id) } } ?: Part.Ready(null)
-            _state.update { it.copy(hltb = hltb) }
+        launch { loadGameInfo(entry) }
+    }
+
+    /**
+     * Backloggd, Wikipedia e HowLongToBeat ao mesmo tempo: a Wikipedia sai pelo título junto com o Backloggd
+     * (que pode levar segundos na verificação da CDN) e aparece assim que chega; os tempos do HowLongToBeat
+     * saem assim que o Wikidata dá o ID. Quando o Backloggd responde, o slug dele (o do IGDB, que o Wikidata
+     * registra) confere o artigo: se o do título for outro jogo de mesmo nome, troca pelo certo.
+     */
+    private suspend fun loadGameInfo(entry: CatalogEntry) = coroutineScope {
+        val hltbLock = Any()
+        var hltbId: String? = null
+        var hltbJob: Job? = null
+        fun loadHltb(id: String?) = synchronized(hltbLock) {
+            if (hltbJob != null && id == hltbId) return@synchronized
+            hltbId = id
+            hltbJob?.cancel()
+            hltbJob = launch {
+                val hltb = id?.let { attempt { app.gameInfo.howLongToBeat(it) } } ?: Part.Ready(null)
+                _state.update { it.copy(hltb = hltb) }
+            }
         }
+
+        val byTitle = async {
+            attempt { app.gameInfo.wiki(entry.title, lang, null, ::loadHltb) }.also { wiki ->
+                // Achado pelo título: já aparece (o Backloggd só confirma). Não achado ainda não é "sem artigo".
+                if (wiki.value != null) _state.update { if (it.wiki is Part.Loading) it.copy(wiki = wiki) else it }
+            }
+        }
+        val backloggd = attempt { app.gameInfo.backloggd(entry.title, entry.systemId) }
+        _state.update { it.copy(backloggd = backloggd) }
+
+        val speculative = byTitle.await()
+        val slug = backloggd.value?.slug
+        val wiki = if (slug == null || speculative.value?.igdbSlug == slug) speculative else {
+            val bySlug = attempt { app.gameInfo.wiki(entry.title, lang, slug, ::loadHltb) }
+            if (bySlug.value == null && speculative.value != null) speculative else bySlug
+        }
+        _state.update { it.copy(wiki = wiki) }
+        loadHltb(wiki.value?.hltbId)
     }
 
     /** Arquivos sem tamanho na listagem (Homebrew Hub): pergunta ao servidor com um HEAD, sem baixar. */

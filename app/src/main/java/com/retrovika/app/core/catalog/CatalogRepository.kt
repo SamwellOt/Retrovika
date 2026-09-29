@@ -166,8 +166,9 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         var next = first.page + 1
         var lastPage = maxOf(first.totalPages, first.page)
         var rounds = 0
+        var width = if (first.entries.size < SPARSE_PER_PAGE) MAX_PARALLEL_PAGES else PARALLEL_PAGES
         while (loaded() < MIN_FILL && next <= lastPage && rounds < MAX_FILL_ROUNDS) {
-            val batch = (next until next + PARALLEL_PAGES).filter { it <= lastPage }
+            val batch = (next until next + width).filter { it <= lastPage }
             // Página parcial (uma fonte falhou) conta como falha: seguir adiante pularia a página daquela fonte.
             val pages = coroutineScope {
                 batch.map { p -> async { runCatching { fetch(p) }.getOrNull()?.takeIf { !it.partial } } }.awaitAll()
@@ -184,6 +185,10 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
             next = batch[arrived.size - 1] + 1
             if (arrived.size < pages.size) break
             rounds++
+            // Páginas quase vazias (o filtro descarta a maior parte de cada uma): a próxima rodada pede o dobro
+            // de uma vez. Cada rodada custa o tempo da página mais lenta, não a soma delas.
+            val perPage = arrived.sumOf { it.entries.size }.toFloat() / arrived.size
+            if (perPage < SPARSE_PER_PAGE) width = minOf(width * 2, MAX_PARALLEL_PAGES)
         }
     }
 
@@ -241,7 +246,10 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         /** Com menos jogos que isso na tela, as próximas páginas vêm sem esperar a rolagem. */
         const val MIN_FILL = 12
         const val PARALLEL_PAGES = 3
-        /** Rodadas em paralelo antes de esperar o usuário rolar de novo (até 9 páginas extras). */
+        /** Menos jogos que isso por página conta como filtro esparso. */
+        const val SPARSE_PER_PAGE = 3f
+        const val MAX_PARALLEL_PAGES = 6
+        /** Rodadas em paralelo antes de esperar o usuário rolar de novo (até 15 páginas extras, se esparso). */
         const val MAX_FILL_ROUNDS = 3
         const val CACHE_TTL_MS = 5 * 60 * 1000L
     }

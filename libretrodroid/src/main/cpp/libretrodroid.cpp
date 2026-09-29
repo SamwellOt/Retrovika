@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 #include <jni.h>
 
 #include <EGL/egl.h>
@@ -634,6 +635,9 @@ void LibretroDroid::handleVideoRefresh(
     unsigned int height,
     size_t pitch
 ) {
+    if (snapshotRequested.load()) {
+        copySnapshot(data, width, height, pitch);
+    }
     if (video) {
         video->onNewFrame(data, width, height, pitch);
 
@@ -641,6 +645,67 @@ void LibretroDroid::handleVideoRefresh(
             video->renderFrame();
         }
     }
+}
+
+void LibretroDroid::requestFrameSnapshot() {
+    std::lock_guard<std::mutex> lock(snapshotLock);
+    snapshot.clear();
+    snapshotRequested = true;
+}
+
+std::vector<int32_t> LibretroDroid::takeFrameSnapshot() {
+    std::lock_guard<std::mutex> lock(snapshotLock);
+    std::vector<int32_t> result;
+    result.swap(snapshot);
+    return result;
+}
+
+void LibretroDroid::copySnapshot(const void *data, unsigned width, unsigned height, size_t pitch) {
+    // Quadro repetido (NULL): espera o próximo desenhado.
+    if (data == nullptr || width == 0 || height == 0) return;
+    std::vector<int32_t> out(6, 0);
+    if (data != RETRO_HW_FRAME_BUFFER_VALID && video) {
+        // Área do jogo na view, em pixels com a origem no topo (os vértices estão em NDC, y para cima).
+        auto& vertices = video->getLayout().getForegroundVertices();
+        float minX = 1.0F, maxX = -1.0F, minY = 1.0F, maxY = -1.0F;
+        for (size_t i = 0; i < vertices.size(); i += 2) {
+            minX = std::min(minX, vertices[i]);
+            maxX = std::max(maxX, vertices[i]);
+            minY = std::min(minY, vertices[i + 1]);
+            maxY = std::max(maxY, vertices[i + 1]);
+        }
+        int screenWidth = video->getLayout().getScreenWidth();
+        int screenHeight = video->getLayout().getScreenHeight();
+        out[0] = (int32_t) width;
+        out[1] = (int32_t) height;
+        out[2] = (int32_t) std::lround((minX + 1.0F) * 0.5F * screenWidth);
+        out[3] = (int32_t) std::lround((1.0F - maxY) * 0.5F * screenHeight);
+        out[4] = (int32_t) std::lround((maxX + 1.0F) * 0.5F * screenWidth);
+        out[5] = (int32_t) std::lround((1.0F - minY) * 0.5F * screenHeight);
+        out.resize(6 + (size_t) width * height);
+        int format = Environment::getInstance().getPixelFormat();
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        for (unsigned y = 0; y < height; y++) {
+            int32_t* row = out.data() + 6 + (size_t) y * width;
+            if (format == RETRO_PIXEL_FORMAT_XRGB8888) {
+                auto* src = reinterpret_cast<const uint32_t*>(bytes + y * pitch);
+                for (unsigned x = 0; x < width; x++) row[x] = (int32_t) (0xFF000000u | (src[x] & 0xFFFFFFu));
+            } else {
+                auto* src = reinterpret_cast<const uint16_t*>(bytes + y * pitch);
+                bool is565 = format == RETRO_PIXEL_FORMAT_RGB565;
+                for (unsigned x = 0; x < width; x++) {
+                    uint32_t p = src[x];
+                    uint32_t r = is565 ? (p >> 11) & 31 : (p >> 10) & 31;
+                    uint32_t g = is565 ? ((p >> 5) & 63) * 255 / 63 : ((p >> 5) & 31) * 255 / 31;
+                    uint32_t b = p & 31;
+                    row[x] = (int32_t) (0xFF000000u | ((r * 255 / 31) << 16) | (g << 8) | (b * 255 / 31));
+                }
+            }
+        }
+    }
+    std::lock_guard<std::mutex> lock(snapshotLock);
+    snapshot.swap(out);
+    snapshotRequested = false;
 }
 
 size_t LibretroDroid::handleAudioCallback(const int16_t *data, size_t frames) {
