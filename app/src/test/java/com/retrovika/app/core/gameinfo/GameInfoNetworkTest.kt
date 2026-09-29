@@ -110,7 +110,9 @@ class GameInfoNetworkTest {
                     val romaji = a.redirects.filter { "hana" in it.lowercase() || "taiy" in it.lowercase() }
                     println("    ${a.title} · ${a.description} · ${a.item} · redirecionamentos=$romaji · ${a.intro.take(160).replace('\n', ' ')}")
                     if ("game" in a.description) {
-                        println("      wikitexto: ${runCatching { GameTitles.wikiNames(wiki.leadWikitext(a.title)) }.getOrElse { it.toString() }}")
+                        val text = runCatching { wiki.articleWikitext(a.title) }.getOrElse { it.toString() }
+                        println("      nomes: ${GameTitles.wikiNames(text).filter { "taiy" in it.lowercase() }}")
+                        text.lines().filter { "taiy" in it.lowercase() }.forEach { println("      linha: ${it.take(300)}") }
                     }
                 }
             }

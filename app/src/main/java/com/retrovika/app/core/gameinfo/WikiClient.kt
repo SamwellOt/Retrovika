@@ -56,10 +56,10 @@ class WikiClient {
         val checked = HashMap<String, Boolean>()
         suspend fun hasName(article: Article): Boolean = checked[article.title] ?: run {
             val quick = article.redirects + GameTitles.knownAs(article.intro.take(INTRO_CHARS))
-            // A romanização costuma estar numa nota de rodapé ({{Nihongo}} dentro de {{efn}}), que o
-            // resumo não traz: então lê o código da abertura do artigo.
+            // Muitas vezes a romanização não está na abertura (vai para uma nota de rodapé ou para o
+            // texto sobre o desenvolvimento), que é tudo o que o resumo traz: então lê o código do artigo.
             val found = quick.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted } ||
-                runCatching { GameTitles.wikiNames(leadWikitext(article.title)) }.getOrDefault(emptyList())
+                runCatching { GameTitles.wikiNames(articleWikitext(article.title)) }.getOrDefault(emptyList())
                     .any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }
             checked[article.title] = found
             found
@@ -78,10 +78,10 @@ class WikiClient {
         return null
     }
 
-    /** O código (wikitexto) da abertura do artigo, com as notas de rodapé dela. */
-    internal suspend fun leadWikitext(title: String): String {
+    /** O código (wikitexto) do artigo inteiro. */
+    internal suspend fun articleWikitext(title: String): String {
         val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
-            "action" to "parse", "page" to title, "prop" to "wikitext", "section" to "0",
+            "action" to "parse", "page" to title, "prop" to "wikitext",
             "format" to "json", "formatversion" to "2",
         ))
         return json(url)["parse"]?.jsonObject?.get("wikitext")?.jsonPrimitive?.contentOrNull.orEmpty()
