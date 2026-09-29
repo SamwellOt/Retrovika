@@ -515,7 +515,8 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     }
 
     private fun onVideoConfig(sps: ByteArray, pps: ByteArray) {
-        val mp4 = Fmp4(VIDEO_WIDTH, VIDEO_HEIGHT, sps, pps)
+        // Só o SPS do segmento de inicialização vale: o VideoEncoder tira os que vêm junto dos quadros.
+        val mp4 = Fmp4(VIDEO_WIDTH, VIDEO_HEIGHT, Avc.lowDelaySps(sps), pps)
         synchronized(lock) {
             fmp4 = mp4
             sessions.filter { it.kind == Kind.SCREEN }.forEach { startVideo(it, mp4) }

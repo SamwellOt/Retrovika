@@ -112,6 +112,49 @@ class Fmp4Test {
         assertNull(track.fragment(mp4, EncodedFrame(byteArrayOf(0, 0, 0, 1, 0x41), false, 5_100_000L)))
     }
 
+    // Os SPS de entrada e o esperado foram gerados e conferidos por um parser à parte (fora do app).
+    @Test
+    fun lowDelaySpsAddsTheVuiWhenMissing() {
+        assertEquals("6742c01f965402802dfcb00da08042a0", Avc.lowDelaySps(hex("6742c01f965402802dfca8")).toHex())
+    }
+
+    @Test
+    fun lowDelaySpsKeepsTheTimingInfoAndItsEmulationPrevention() {
+        assertEquals(
+            "6742c01f965402802dfcb80880000003008000001e46d0402150",
+            Avc.lowDelaySps(hex("6742c01f965402802dfcb80880000003008000001e42")).toHex(),
+        )
+    }
+
+    @Test
+    fun lowDelaySpsReadsHighProfileAndPocType1() {
+        assertEquals(
+            "67640029ac2a1c8c50f602802dfcb80b501010106d040217",
+            Avc.lowDelaySps(hex("67640029ac2a1c8c50f602802dfcb80b5010101020")).toHex(),
+        )
+    }
+
+    @Test
+    fun lowDelaySpsZeroesAnExistingReorderCount() {
+        assertEquals(
+            "67640029ac2ca5014016fe5c0440000003004000001e23c2211960",
+            Avc.lowDelaySps(hex("67640029ac2ca5014016fe5c0440000003004000001e23c2211658")).toHex(),
+        )
+    }
+
+    @Test
+    fun lowDelaySpsLeavesAnAlreadyLowDelaySpsAlone() {
+        // O SPS real deste teste já traz max_num_reorder_frames = 0.
+        assertArrayEquals(sps, Avc.lowDelaySps(sps))
+        // Lixo não quebra nada: volta como veio.
+        val junk = byteArrayOf(0x67, 0x42)
+        assertArrayEquals(junk, Avc.lowDelaySps(junk))
+    }
+
+    private fun hex(s: String) = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+    private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
+
     private data class Box(val type: String, val start: Int, val body: Int, val end: Int)
 
     private fun boxes(data: ByteArray, from: Int, to: Int): List<Box> {

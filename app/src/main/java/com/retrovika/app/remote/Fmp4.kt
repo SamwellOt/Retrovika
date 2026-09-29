@@ -46,6 +46,185 @@ object Avc {
 
     /** O "codecs" do MediaSource: avc1.PPCCLL (perfil, restrições e nível, direto do SPS). */
     fun codecString(sps: ByteArray): String = "avc1.%02x%02x%02x".format(sps[1].toInt() and 0xFF, sps[2].toInt() and 0xFF, sps[3].toInt() and 0xFF)
+
+    /**
+     * O mesmo SPS dizendo que nenhum quadro sai fora de ordem (VUI com bitstream_restriction e
+     * max_num_reorder_frames = 0). Sem isso, o decodificador de hardware do Chrome (e o do Windows no
+     * Firefox) segura quadros até encher o DPB do nível, até 9 em 720p: 150 ms de atraso a 60 quadros.
+     * Os encoders do Android quase nunca mandam esse campo. Se o SPS tiver algo que não sabemos ler
+     * (matriz de quantização), volta o original.
+     */
+    fun lowDelaySps(sps: ByteArray): ByteArray = runCatching { rewriteSps(sps) }.getOrNull() ?: sps
+
+    private val HIGH_PROFILES = setOf(100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135)
+
+    private fun rewriteSps(sps: ByteArray): ByteArray? {
+        if (sps.size < 4 || type(sps) != NAL_SPS) return null
+        val rbsp = unescape(sps, 1)
+        val r = BitReader(rbsp)
+        val profile = r.u(8)
+        r.u(16) // restrições e nível
+        r.ue() // seq_parameter_set_id
+        if (profile in HIGH_PROFILES) {
+            if (r.ue() == 3) r.u(1)
+            r.ue(); r.ue(); r.u(1)
+            if (r.u(1) == 1) return null // seq_scaling_matrix_present_flag
+        }
+        r.ue() // log2_max_frame_num_minus4
+        when (r.ue()) {
+            0 -> r.ue()
+            1 -> {
+                r.u(1); r.se(); r.se()
+                repeat(r.ue()) { r.se() }
+            }
+        }
+        val refFrames = r.ue()
+        r.u(1)
+        r.ue(); r.ue()
+        if (r.u(1) == 0) r.u(1)
+        r.u(1)
+        if (r.u(1) == 1) repeat(4) { r.ue() }
+
+        val w = BitWriter()
+        // Valores que o padrão supõe quando o campo falta.
+        var mvOverBoundaries = 1
+        var bytesPerPic = 2
+        var bitsPerMb = 1
+        var mvHorizontal = 15
+        var mvVertical = 15
+        var decBuffering = refFrames
+        val vuiAt = r.position
+        if (r.u(1) == 0) {
+            w.copy(rbsp, vuiAt)
+            w.u(1, 1)
+            // aspect_ratio, overscan, video_signal_type, chroma_loc, timing, nal_hrd, vcl_hrd, pic_struct
+            repeat(8) { w.u(1, 0) }
+        } else {
+            if (r.u(1) == 1 && r.u(8) == 255) r.u(32)
+            if (r.u(1) == 1) r.u(1)
+            if (r.u(1) == 1) {
+                r.u(4)
+                if (r.u(1) == 1) r.u(24)
+            }
+            if (r.u(1) == 1) { r.ue(); r.ue() }
+            if (r.u(1) == 1) { r.u(32); r.u(32); r.u(1) }
+            val nalHrd = r.u(1) == 1
+            if (nalHrd) skipHrd(r)
+            val vclHrd = r.u(1) == 1
+            if (vclHrd) skipHrd(r)
+            if (nalHrd || vclHrd) r.u(1)
+            r.u(1) // pic_struct_present_flag
+            val restrictionAt = r.position
+            if (r.u(1) == 1) {
+                mvOverBoundaries = r.u(1)
+                bytesPerPic = r.ue(); bitsPerMb = r.ue()
+                mvHorizontal = r.ue(); mvVertical = r.ue()
+                if (r.ue() == 0) return sps
+                decBuffering = r.ue()
+            }
+            w.copy(rbsp, restrictionAt)
+        }
+        w.u(1, 1)
+        w.u(1, mvOverBoundaries)
+        w.ue(bytesPerPic); w.ue(bitsPerMb)
+        w.ue(mvHorizontal); w.ue(mvVertical)
+        w.ue(0) // max_num_reorder_frames
+        w.ue(maxOf(decBuffering, refFrames, 1))
+        w.trailingBits()
+        return byteArrayOf(sps[0]) + escape(w.toByteArray())
+    }
+
+    private fun skipHrd(r: BitReader) {
+        val count = r.ue() + 1
+        r.u(8) // bit_rate_scale, cpb_size_scale
+        repeat(count) { r.ue(); r.ue(); r.u(1) }
+        r.u(20)
+    }
+
+    /** Tira os bytes de prevenção de emulação (00 00 03 → 00 00). */
+    fun unescape(data: ByteArray, offset: Int = 0): ByteArray {
+        val out = ByteArrayOutputStream(data.size)
+        var zeros = 0
+        for (i in offset until data.size) {
+            val b = data[i].toInt() and 0xFF
+            if (zeros >= 2 && b == 3) { zeros = 0; continue }
+            out.write(b)
+            zeros = if (b == 0) zeros + 1 else 0
+        }
+        return out.toByteArray()
+    }
+
+    /** Põe os bytes de prevenção de emulação: dois zeros seguidos de um byte até 3 ganham um 03 no meio. */
+    fun escape(rbsp: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream(rbsp.size + 8)
+        var zeros = 0
+        for (byte in rbsp) {
+            val b = byte.toInt() and 0xFF
+            if (zeros >= 2 && b <= 3) { out.write(3); zeros = 0 }
+            out.write(b)
+            zeros = if (b == 0) zeros + 1 else 0
+        }
+        return out.toByteArray()
+    }
+
+    private class BitReader(private val data: ByteArray) {
+        var position = 0
+            private set
+
+        fun u(bits: Int): Int {
+            var v = 0L
+            repeat(bits) {
+                if (position >= data.size * 8) throw IllegalArgumentException("SPS truncated")
+                val bit = (data[position ushr 3].toInt() ushr (7 - (position and 7))) and 1
+                v = (v shl 1) or bit.toLong()
+                position++
+            }
+            return v.toInt()
+        }
+
+        fun ue(): Int {
+            var zeros = 0
+            while (u(1) == 0) if (++zeros > 31) throw IllegalArgumentException("Bad Exp-Golomb")
+            return ((1L shl zeros) - 1 + u(zeros).toLong().and(0xFFFFFFFFL)).toInt()
+        }
+
+        fun se(): Int {
+            val k = ue()
+            return if (k and 1 == 1) (k + 1) / 2 else -(k / 2)
+        }
+    }
+
+    private class BitWriter {
+        private val out = ByteArrayOutputStream()
+        private var current = 0
+        private var count = 0
+
+        fun u(bits: Int, value: Int) {
+            for (i in bits - 1 downTo 0) {
+                current = (current shl 1) or ((value ushr i) and 1)
+                if (++count == 8) { out.write(current); current = 0; count = 0 }
+            }
+        }
+
+        fun ue(value: Int) {
+            val v = value + 1
+            val length = 32 - Integer.numberOfLeadingZeros(v)
+            u(length - 1, 0)
+            u(length, v)
+        }
+
+        /** Os primeiros [bits] bits de [data], como estão. */
+        fun copy(data: ByteArray, bits: Int) {
+            for (i in 0 until bits) u(1, (data[i ushr 3].toInt() ushr (7 - (i and 7))) and 1)
+        }
+
+        fun trailingBits() {
+            u(1, 1)
+            while (count != 0) u(1, 0)
+        }
+
+        fun toByteArray(): ByteArray = out.toByteArray()
+    }
 }
 
 /**

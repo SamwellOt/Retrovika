@@ -232,6 +232,8 @@
     queue = []; sb = null; waitKey = false;
     ms = new MS();
     video.disableRemotePlayback = true;
+    // Onde o navegador aceita a dica, o player não junta quadros antes de mostrar.
+    if ('latencyHint' in video) { try { video.latencyHint = 0; } catch (_) {} }
     video.src = URL.createObjectURL(ms);
     const current = ms;
     ms.addEventListener('sourceopen', () => {
@@ -285,8 +287,8 @@
     const end = video.buffered.end(last);
     const lag = end - video.currentTime;
     // Atrasou demais (aba escondida, Wi-Fi engasgou): pula para o fim em vez de acelerar.
-    if (lag > 0.25 || video.currentTime < video.buffered.start(last)) video.currentTime = Math.max(video.buffered.start(last), end - 0.03);
-    else video.playbackRate = lag > 0.1 ? 1.25 : lag > 0.05 ? 1.1 : 1;
+    if (lag > 0.2 || video.currentTime < video.buffered.start(last)) video.currentTime = Math.max(video.buffered.start(last), end - 0.03);
+    else video.playbackRate = lag > 0.1 ? 1.5 : lag > 0.06 ? 1.25 : lag > 0.035 ? 1.1 : 1;
   }
   setInterval(() => {
     if (!sb || !video.buffered.length) return;
