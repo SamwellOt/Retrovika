@@ -298,7 +298,7 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
 }
 
 private enum class MenuTab(@StringRes val label: Int) {
-    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core)
+    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CHEATS(R.string.game_tab_cheats), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core)
 }
 
 @Composable
@@ -354,7 +354,9 @@ private fun PauseMenu(
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuTab.entries.forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
+                val cheats = menu.cheats()
+                MenuTab.entries.filter { it != MenuTab.CHEATS || cheats?.supported == true }
+                    .forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
             }
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -363,6 +365,7 @@ private fun PauseMenu(
                     MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader)
                     MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, system?.name.orEmpty(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
+                    MenuTab.CHEATS -> menu.cheats()?.let { CheatsTab(it) }
                 }
             }
         }

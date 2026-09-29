@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trapaças (aba do menu de pausa). -->
+<resources>
+    <string name="game_tab_cheats">Cheats</string>
+    <string name="cheats_source">Cheat file (libretro-database)</string>
+    <string name="cheats_searching">Looking for this game\'s cheats…</string>
+    <string name="cheats_no_file">No file chosen</string>
+    <string name="cheats_find">Find</string>
+    <string name="cheats_change">Change</string>
+    <string name="cheats_retry">Try again</string>
+    <string name="cheats_filter">Filter cheats</string>
+    <string name="cheats_hint">Changes apply when you return to the game. Some cheats only work from a new area or after a reset.</string>
+    <string name="cheats_disable_all">Turn all off</string>
+    <string name="cheats_not_found">No cheat file found for this game. Search by name or add your own code.</string>
+    <string name="cheats_empty_file">This file has no codes.</string>
+    <string name="cheats_custom">Mine</string>
+    <string name="cheats_add_code">Add code</string>
+    <string name="cheats_add_description">Description</string>
+    <string name="cheats_add_code_label">Code</string>
+    <string name="cheats_add_hint">In the core\'s format (Game Genie, Pro Action Replay, GameShark…). Separate several codes with +.</string>
+    <string name="cheats_add">Add</string>
+    <string name="cheats_pick_title">Choose the cheat file</string>
+    <string name="cheats_pick_search">Search this console\'s files</string>
+    <string name="cheats_pick_suggestions">Suggested for this game</string>
+    <string name="cheats_pick_results">Results</string>
+    <string name="cheats_pick_failed">Couldn\'t load the list of files. Check your connection.</string>
+    <string name="cheats_pick_nothing">Nothing found.</string>
+    <string name="cheats_none_for_console">The libretro-database has no cheats for this console.</string>
+    <plurals name="cheats_applied">
+        <item quantity="one">%d cheat on</item>
+        <item quantity="other">%d cheats on</item>
+    </plurals>
+</resources>

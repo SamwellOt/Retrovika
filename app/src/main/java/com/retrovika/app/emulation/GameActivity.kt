@@ -128,6 +128,8 @@ class GameActivity : ComponentActivity() {
     /** A tela de falha pediu o acesso a todos os arquivos: ao voltar com ele concedido, o jogo recomeça. */
     private var awaitingFileAccess = false
     private lateinit var states: SaveStates
+    /** Trapaças do jogo; nulo até o jogo ser encontrado. */
+    private var cheats: CheatSession? = null
     private var settings = AppSettings()
     private var retroView: GLRetroView? = null
     private var sessionStart = 0L
@@ -216,6 +218,7 @@ class GameActivity : ComponentActivity() {
         game = app.library.get(gameId) ?: return fail(getString(R.string.game_not_found), getString(R.string.game_not_found_message))
         system = Systems.byId(game.systemId) ?: return fail(getString(R.string.game_unknown_system), game.systemId)
         states = SaveStates(app.paths, game)
+        cheats = CheatSession(app.cheats, game, lifecycleScope, this).also { it.restore() }
         settings = app.settings.current()
         // A tela acompanha o sensor: girar o celular alterna entre retrato e paisagem em qualquer console.
         requestedOrientation = when (system.orientation) {
@@ -375,6 +378,8 @@ class GameActivity : ComponentActivity() {
                 }
             }
             autoSaveReady = true
+            // Trapaças ligadas na última sessão voltam junto com o jogo.
+            if (retroView === view && cheats?.state?.enabled?.isNotEmpty() == true) applyCheats(view)
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
@@ -517,6 +522,9 @@ class GameActivity : ComponentActivity() {
             // A captura vale só para este menu; reaproveitá-la depois ilustraria o save com uma tela antiga.
             menuSnapshot = null
             updateEmulationState()
+            // O núcleo só aceita trapaças na thread de emulação, que acabou de voltar a rodar.
+            val view = retroView
+            if (view != null && cheats?.dirty == true) applyCheats(view)
         }
         override fun slots() = if (::states.isInitialized) states.slots() else emptyList()
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
@@ -610,6 +618,8 @@ class GameActivity : ComponentActivity() {
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
 
+        override fun cheats(): CheatSession? = cheats
+
         override fun setPadProfile(profile: PadProfile) {
             padProfile = profile
             if (::core.isInitialized) {
@@ -632,6 +642,21 @@ class GameActivity : ComponentActivity() {
             emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
             finish()
         }
+    }
+
+    /**
+     * Refaz a lista de trapaças no núcleo: limpa e liga as marcadas, em índices seguidos. Desligar uma só
+     * não basta em vários núcleos (o código já gravado na memória fica), por isso a lista inteira é refeita.
+     */
+    private fun applyCheats(view: GLRetroView) {
+        val session = cheats ?: return
+        session.dirty = false
+        val codes = session.state.enabled.map { it.code }
+        lifecycleScope.launch(Dispatchers.Default) {
+            view.resetCheat()
+            codes.forEachIndexed { i, code -> view.setCheat(i, true, code) }
+        }
+        if (codes.isNotEmpty()) toast = resources.getQuantityString(R.plurals.cheats_applied, codes.size, codes.size)
     }
 
     private fun toggleMenu() {
@@ -812,6 +837,7 @@ interface MenuActions {
     fun changeDisk(index: Int)
     fun reset()
     fun coreName(): String
+    fun cheats(): CheatSession?
     fun setPadProfile(profile: PadProfile)
     fun startPadEditor()
     fun stopPadEditor()

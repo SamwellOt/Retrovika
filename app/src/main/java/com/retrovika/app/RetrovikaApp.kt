@@ -10,6 +10,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.retrovika.app.core.bios.BiosManager
 import com.retrovika.app.core.catalog.CatalogRepository
+import com.retrovika.app.core.cheats.CheatRepository
 import com.retrovika.app.core.catalog.DownloadManager
 import com.retrovika.app.core.cores.CoreManager
 import com.retrovika.app.core.dat.DatRepository
@@ -39,6 +40,7 @@ class AppContainer(app: Application) {
     private val web = WebFetcher(app)
     val gameInfo = GameInfoRepository(BackloggdClient { url -> web.get("https://backloggd.com/", url) })
     val dat = DatRepository(app, database.dats())
+    val cheats = CheatRepository(paths)
     val downloads = DownloadManager(app, scope, paths, library, settings.cached) { catalog.resolve(it) }
 }
 

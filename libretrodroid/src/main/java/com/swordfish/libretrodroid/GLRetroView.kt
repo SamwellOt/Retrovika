@@ -167,7 +167,14 @@ class GLRetroView(
 
     fun setCheat(index: Int, enable: Boolean, code: String, useEmulationThread: Boolean = true) {
         runOnEmulationThread(useEmulationThread) {
-            LibretroDroid.setCheat(index, enable, code)
+            // Uma exceção aqui cairia na thread GL (fechando o app) e a espera acima nunca terminaria.
+            runCatching { LibretroDroid.setCheat(index, enable, code) }.onFailure { Log.e(TAG_LOG, "setCheat", it) }
+        }
+    }
+
+    fun resetCheat(useEmulationThread: Boolean = true) {
+        runOnEmulationThread(useEmulationThread) {
+            runCatching { LibretroDroid.resetCheat() }.onFailure { Log.e(TAG_LOG, "resetCheat", it) }
         }
     }
 
