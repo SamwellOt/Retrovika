@@ -4,6 +4,7 @@
     <string name="app_name" translatable="false">Retrovika</string>
 
     <string name="common_back">Back</string>
+    <string name="common_close">Close</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_remove">Remove</string>
     <string name="common_clear">Clear</string>

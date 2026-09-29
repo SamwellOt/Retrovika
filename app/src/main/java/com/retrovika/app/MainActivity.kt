@@ -1,6 +1,8 @@
 package com.retrovika.app
 
+import android.content.Intent
 import android.os.Bundle
+import com.retrovika.app.ui.share.toIncoming
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -20,6 +22,13 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
+        // Só na primeira criação: girar a tela recria a Activity com o mesmo Intent, e o estado seria recebido de novo.
+        if (savedInstanceState == null) intent?.toIncoming()?.let { container.incoming.value = it }
         setContent { RetrovikaTheme { RetrovikaNavHost() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.toIncoming()?.let { container.incoming.value = it }
     }
 }

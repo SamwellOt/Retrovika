@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.QrCodeScanner
+import com.retrovika.app.ui.components.HeaderIconButton
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -90,6 +92,7 @@ fun HomeScreen(
     onOpenLibrary: () -> Unit,
     onOpenDownloads: () -> Unit,
     onAddFolder: () -> Unit,
+    onReceive: () -> Unit,
 ) {
     val context = LocalContext.current
     val library = context.container.library
@@ -117,7 +120,10 @@ fun HomeScreen(
                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Palette.Cyan)
                         Spacer(Modifier.width(6.dp))
                         Text("${scan.found}", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
+                        Spacer(Modifier.width(10.dp))
                     }
+                    // Estado compartilhado por um amigo ou partida em rede: QR code ou arquivo.
+                    HeaderIconButton(Icons.Rounded.QrCodeScanner, stringResource(R.string.share_chooser_title), onReceive)
                 }
                 Spacer(Modifier.height(22.dp))
                 val (salute, question) = greeting(recent.isNotEmpty())

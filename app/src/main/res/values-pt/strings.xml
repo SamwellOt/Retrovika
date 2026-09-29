@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="common_back">Voltar</string>
+    <string name="common_close">Fechar</string>
     <string name="common_cancel">Cancelar</string>
     <string name="common_remove">Remover</string>
     <string name="common_clear">Limpar</string>

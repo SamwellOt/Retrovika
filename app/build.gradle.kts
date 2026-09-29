@@ -121,6 +121,9 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.commons.compress)
     implementation(libs.xz)
+    // QR codes: gerar (estado compartilhado, partida em rede) e ler pela câmera.
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.embedded)
 
     implementation(project(":libretrodroid"))
 

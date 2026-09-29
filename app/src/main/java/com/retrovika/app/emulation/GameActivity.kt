@@ -41,6 +41,8 @@ import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
+import com.retrovika.app.core.share.LanTransfer
+import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
@@ -133,6 +135,15 @@ class GameActivity : ComponentActivity() {
     private lateinit var core: CoreInfo
     /** A tela de falha pediu o acesso a todos os arquivos: ao voltar com ele concedido, o jogo recomeça. */
     private var awaitingFileAccess = false
+    /**
+     * Partida de outra pessoa (estado recebido): nada é gravado por cima do progresso de quem joga, nem a
+     * memória do cartucho nem o salvamento automático. Os slots continuam valendo.
+     */
+    private var guestSession = false
+    /** Estado recebido a abrir no primeiro quadro, no lugar do salvamento automático. */
+    private var pendingStateFile: File? = null
+    /** Estado sendo compartilhado a partir do menu. */
+    private var sharing by mutableStateOf<ShareSheet?>(null)
     private lateinit var states: SaveStates
     /** Trapaças do jogo; nulo até o jogo ser encontrado. */
     private var cheats: CheatSession? = null
@@ -214,7 +225,8 @@ class GameActivity : ComponentActivity() {
         val newId = intent.getLongExtra(EXTRA_GAME_ID, -1)
         // Compara com o pedido atual, não com o jogo carregado: durante a preparação ele ainda não
         // existe, e um toque duplo em "Jogar" reiniciava a instalação do núcleo.
-        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1)) return
+        // Mesmo jogo, sem estado recebido: é só um toque duplo em "Jogar".
+        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1) && intent.getStringExtra(EXTRA_STATE_FILE) == null) return
         persist(auto = settings.autoSave)
         setIntent(intent)
         recreate()
@@ -232,7 +244,11 @@ class GameActivity : ComponentActivity() {
             Orientation.PORTRAIT, Orientation.ANY -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
 
-        val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
+        pendingStateFile = intent.getStringExtra(EXTRA_STATE_FILE)?.let(::File)?.takeIf { it.exists() }
+        guestSession = pendingStateFile != null
+        // O estado só abre no núcleo que o gerou: quem enviou diz qual é.
+        val sharedCore = intent.getStringExtra(EXTRA_CORE_ID)?.takeIf { id -> system.cores.any { it.id == id } }
+        val coreId = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(coreId)
         val padCore = system.id
         val gameId = game.id
@@ -371,7 +387,14 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
-            if (settings.autoLoad) {
+            val received = pendingStateFile
+            if (received != null) {
+                pendingStateFile = null
+                val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
+                if (retroView !== view) return@launch
+                val ok = data != null && withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
+                toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
+            } else if (settings.autoLoad) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
                 // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
                 if (retroView !== view) return@launch
@@ -463,6 +486,7 @@ class GameActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        sharing?.server?.close()
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
@@ -499,6 +523,8 @@ class GameActivity : ComponentActivity() {
     private fun persist(auto: Boolean) {
         val view = retroView ?: return
         if (ui !is EmulationUi.Running) return
+        // Partida de outra pessoa: gravar aqui trocaria o progresso de quem joga pelo dela.
+        if (guestSession) return
         runCatching {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
@@ -526,6 +552,7 @@ class GameActivity : ComponentActivity() {
     private val menuActions = object : MenuActions {
         override fun open() = openMenu()
         override fun close() {
+            closeShare()
             menuOpen = false
             padEditing = false
             menuFrame = null
@@ -629,6 +656,44 @@ class GameActivity : ComponentActivity() {
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
 
         override fun cheats(): CheatSession? = cheats
+
+        override fun share(slot: Int) {
+            if (!::states.isInitialized) return
+            lifecycleScope.launch {
+                val data = withContext(Dispatchers.IO) { runCatching { states.read(slot) }.getOrNull() }
+                if (data == null || data.isEmpty()) { toast = getString(R.string.game_state_load_failed); return@launch }
+                val thumb = withContext(Dispatchers.IO) { states.thumbnail(slot) }
+                val bytes = withContext(Dispatchers.Default) { app.sharedStates.pack(game, core.id, data, thumb) }
+                sharing = ShareSheet(game.title, bytes, thumb)
+            }
+        }
+
+        override fun sharing(): ShareSheet? = sharing
+
+        override fun shareAsFile() {
+            val sheet = sharing ?: return
+            lifecycleScope.launch {
+                runCatching { app.sharedStates.shareIntent(game, sheet.bytes) }
+                    .onSuccess { startActivity(Intent.createChooser(it, getString(R.string.share_state_title))) }
+                    .onFailure { toast = it.userMessage(this@GameActivity) }
+            }
+        }
+
+        override fun shareAsQr() {
+            val sheet = sharing ?: return
+            if (sheet.server != null) return
+            val hosts = LanTransfer.localAddresses()
+            if (hosts.isEmpty()) { sheet.noNetwork = true; return }
+            val token = LanTransfer.newToken()
+            val server = runCatching { LanTransfer.Server(sheet.bytes, token) }.getOrElse { sheet.noNetwork = true; return }
+            sheet.server = server
+            sheet.link = RetrovikaLink.State(hosts, server.port, token, game.title).toUri()
+        }
+
+        override fun closeShare() {
+            sharing?.server?.close()
+            sharing = null
+        }
 
         override fun setPadProfile(profile: PadProfile) {
             padProfile = profile
@@ -837,10 +902,16 @@ class GameActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
         )
 
-        fun launch(context: Context, gameId: Long) {
+        private const val EXTRA_STATE_FILE = "state_file"
+        private const val EXTRA_CORE_ID = "core_id"
+
+        /** [stateFile]: estado recebido para abrir no lugar do salvamento automático, no núcleo [coreId]. */
+        fun launch(context: Context, gameId: Long, stateFile: File? = null, coreId: String? = null) {
             context.startActivity(
                 Intent(context, GameActivity::class.java)
                     .putExtra(EXTRA_GAME_ID, gameId)
+                    .apply { stateFile?.let { putExtra(EXTRA_STATE_FILE, it.absolutePath) } }
+                    .apply { coreId?.let { putExtra(EXTRA_CORE_ID, it) } }
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
@@ -870,6 +941,11 @@ interface MenuActions {
     fun reset()
     fun coreName(): String
     fun cheats(): CheatSession?
+    fun share(slot: Int)
+    fun sharing(): ShareSheet?
+    fun shareAsFile()
+    fun shareAsQr()
+    fun closeShare()
     fun setPadProfile(profile: PadProfile)
     fun padForGame(): Boolean
     fun setPadForGame(forGame: Boolean)

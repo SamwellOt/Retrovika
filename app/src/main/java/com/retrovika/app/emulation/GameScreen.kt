@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -178,6 +179,8 @@ fun GameScreen(
         AnimatedVisibility(visible = menuOpen && !padEditing, enter = fadeIn(), exit = fadeOut()) {
             PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab) { menuTab = it }
         }
+
+        if (menuOpen) menu.sharing()?.let { ShareStateSheet(it, menu) }
 
         if (menuOpen && padEditing && system != null) {
             PadLayoutEditor(
@@ -429,15 +432,27 @@ private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit
         }
     }
     val canSave = slot.index != SaveStates.AUTO_SLOT
+    val share: @Composable () -> Unit = {
+        if (slot.exists) {
+            Box(
+                Modifier.size(36.dp).clip(CircleShape).background(Palette.Cyan.copy(alpha = 0.14f)).clickable { menu.share(slot.index) },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Share, stringResource(R.string.share_state_title), tint = Palette.Cyan, modifier = Modifier.size(18.dp)) }
+        }
+    }
     if (stacked) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (canSave) save(Modifier.fillMaxWidth())
-            load(Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                load(Modifier.weight(1f))
+                share()
+            }
         }
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canSave) save(Modifier.weight(1f))
             load(Modifier.weight(1f))
+            share()
         }
     }
 }

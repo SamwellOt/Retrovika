@@ -96,6 +96,11 @@ import com.retrovika.app.ui.screens.settings.CoresScreen
 import com.retrovika.app.ui.screens.settings.SettingsScreen
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.retrovika.app.ui.share.ReceiveChooser
+import com.retrovika.app.ui.share.ReceiveHost
+import com.retrovika.app.ui.share.rememberReceiveLaunchers
 
 private data class Tab(val route: String, @StringRes val label: Int, val icon: ImageVector)
 
@@ -147,6 +152,12 @@ fun RetrovikaNavHost() {
         }
     }
     val addFolder = { folderPicker.launch(null) }
+
+    // Receber estado compartilhado ou entrar numa partida: os lançadores ficam aqui, sempre compostos.
+    val receive = rememberReceiveLaunchers()
+    var choosingReceive by remember { mutableStateOf(false) }
+    if (choosingReceive) ReceiveChooser(receive, onDismiss = { choosingReceive = false })
+    ReceiveHost(onNetplay = { link -> Toast.makeText(context, context.getString(R.string.share_receive_title) + ": " + link.title, Toast.LENGTH_SHORT).show() })
 
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
     // de todas as pastas a cada vez deixava o menu lento. Roda no escopo do app: se a Activity for
@@ -201,6 +212,7 @@ fun RetrovikaNavHost() {
                         onOpenLibrary = { selectTab("library") },
                         onOpenDownloads = openDownloads,
                         onAddFolder = addFolder,
+                        onReceive = { choosingReceive = true },
                     )
                 }
                 composable("library") { entry ->

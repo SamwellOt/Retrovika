@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Estados compartilhados (enviar e receber). -->
+<resources>
+    <string name="share_state_title">Compartilhar estado</string>
+    <string name="share_state_kicker">Tente passar desta parte</string>
+    <string name="share_state_message">Consegue passar desta parte de %1$s? Abra com o Retrovika.</string>
+    <string name="share_state_hint">Seu amigo abre o jogo exatamente neste momento. Ele precisa ter o mesmo jogo (mesma região) na biblioteca.</string>
+    <string name="share_state_send_file">Enviar como arquivo</string>
+    <string name="share_state_show_qr">Mostrar QR code (mesmo Wi-Fi)</string>
+    <string name="share_state_qr_hint">No outro celular, abra o Retrovika, toque no botão de QR no topo do Início e aponte para este código. Os dois precisam estar no mesmo Wi-Fi (ou um no roteador do outro). Deixe esta tela aberta até chegar.</string>
+    <string name="share_state_no_network">Nenhuma rede local encontrada. Conecte ao Wi-Fi ou ligue o roteador do celular, ou envie como arquivo.</string>
+    <string name="share_state_opened">Estado compartilhado carregado. O salvamento automático e o save do cartucho ficam desligados nesta partida, para não trocar o seu progresso.</string>
+    <string name="share_state_open_failed">Este estado não abriu neste núcleo ou nesta versão do jogo.</string>
+    <string name="share_state_invalid">Este arquivo não é um estado do Retrovika.</string>
+    <string name="share_receive_title">Estado compartilhado</string>
+    <string name="share_receive_working">Recebendo…</string>
+    <string name="share_receive_progress">Recebendo… %1$d%%</string>
+    <string name="share_receive_lan_failed">Não deu para falar com o outro celular. Confira se os dois estão no mesmo Wi-Fi e se o QR code ainda está aberto lá.</string>
+    <string name="share_receive_ready">Começa exatamente onde seu amigo parou. O salvamento automático fica desligado nesta partida, então o seu progresso está a salvo.</string>
+    <string name="share_receive_missing">Você não tem este jogo na biblioteca. É preciso: %1$s</string>
+    <string name="share_receive_play">Jogar daqui</string>
+    <string name="share_chooser_title">Receber</string>
+    <string name="share_chooser_message">Um estado de um amigo (\"tente passar desta parte\") ou uma partida em rede local.</string>
+    <string name="share_chooser_scan">Ler QR code</string>
+    <string name="share_chooser_file">Abrir arquivo .rvstate</string>
+    <string name="share_scan_prompt">Aponte para o QR code na tela do seu amigo</string>
+    <string name="share_qr_not_ours">Este QR code não é do Retrovika.</string>
+</resources>
