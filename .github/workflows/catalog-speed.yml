@@ -47,3 +47,6 @@ jobs:
       - run: pip install playwright && python -m playwright install --with-deps chromium
       - run: python .github/scripts/backloggd_challenge.py
       - run: xvfb-run -a python .github/scripts/backloggd_challenge.py --headed
+      # Nome em inglês de títulos japoneses romanizados: compara Wikipedia, Wikidata e a busca do Backloggd.
+      - if: always()
+        run: xvfb-run -a python .github/scripts/english_title_probe.py --headed
