@@ -57,4 +57,8 @@ mesmo submódulo do LibretroDroid 0.13.2.
   depois ao usar o vídeo que nunca foi criado.
 - **`GLRetroViewData.relaxedGlesVersion`**: aceita o contexto abaixo da versão pedida, para núcleos que
   pedem mais do que usam (o Play! pede GLES 3.2 e roda em 3.1).
+- **Captura para transmissão** (`capture.cpp`, `Video::copyForeground`/`drawCapture`, `GLRetroView.setCaptureSurface`,
+  `setAudioCapture`/`readCapturedAudio`): depois de cada quadro, a área do jogo é copiada para uma textura e dela
+  para a superfície de um encoder, na thread de emulação; as amostras de áudio vão também para um buffer circular.
+  Usado pelo "Jogar pela rede" do app. Só GLES 3.
 - `#include <functional>` em `rumble.h` e `utils/javautils.h`, exigido pelos NDKs atuais.

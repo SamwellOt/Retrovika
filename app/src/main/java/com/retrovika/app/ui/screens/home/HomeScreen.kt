@@ -78,6 +78,10 @@ import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.components.Pill
 import com.retrovika.app.ui.components.SectionHeader
 import com.retrovika.app.ui.components.SurfaceCard
+import com.retrovika.app.ui.components.UpdateCard
+import com.retrovika.app.ui.components.cardRelease
+import com.retrovika.app.core.update.UpdateState
+import kotlinx.coroutines.launch
 import com.retrovika.app.ui.components.Wordmark
 import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.ambientGlow
@@ -104,6 +108,8 @@ fun HomeScreen(
     val scan by library.scan.collectAsStateWithLifecycle()
     // Só o contador: a lista de tarefas muda a cada aviso de progresso e recomporia a tela inteira.
     val activeDownloads by context.container.downloads.activeCount.collectAsStateWithLifecycle()
+    val update by context.container.updater.state.collectAsStateWithLifecycle()
+    val settings by context.container.settings.cached.collectAsStateWithLifecycle()
     val bottom = LocalBottomInset.current
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("home", listState)
@@ -138,6 +144,17 @@ fun HomeScreen(
 
         if (activeDownloads > 0) {
             item(key = "downloads") { ActiveDownloadsCard(onClick = onOpenDownloads) }
+        }
+
+        // Versão nova do app: some com "Depois" e só volta para a próxima versão (ou pelos ajustes).
+        val release = update.cardRelease()
+        if (release != null && (update !is UpdateState.Available || release.version != settings.dismissedUpdate)) {
+            item(key = "update") {
+                UpdateCard(
+                    update, Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    onDismiss = { context.container.scope.launch { context.container.settings.setDismissedUpdate(release.version) } },
+                )
+            }
         }
 
         val hero = recent.firstOrNull()

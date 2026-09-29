@@ -29,8 +29,8 @@ android {
         applicationId = "com.retrovika.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.3.0"
+        versionCode = 21
+        versionName = "0.5.0"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -120,6 +120,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines)
     implementation(libs.jsoup)
     implementation(libs.commons.compress)
+    // .zip com senha (ZipCrypto/AES), que o commons-compress não descriptografa.
+    implementation(libs.zip4j)
     implementation(libs.xz)
     // QR codes: gerar (estado compartilhado, partida em rede) e ler pela câmera.
     implementation(libs.zxing.core)

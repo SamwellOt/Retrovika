@@ -16,7 +16,19 @@ data class CatalogEntry(
     val downloadUrl: String,
     val fileName: String,
     val kind: String,
-)
+    /**
+     * Outras páginas do mesmo jogo (mesmo console e título): de outras fontes ou repetidas na mesma (o
+     * RomsFun tem várias páginas para alguns jogos). A entrada vira um cartão só, com os arquivos de todas.
+     * Veja [CatalogRepository.mergeDuplicates].
+     */
+    val alternates: List<CatalogEntry> = emptyList(),
+) {
+    /** Esta entrada e as [alternates], na ordem de preferência das fontes. */
+    val members: List<CatalogEntry> get() = listOf(this) + alternates
+
+    /** Fontes da entrada, sem repetir (duas páginas do RomsFun contam uma vez). */
+    val sourceIds: List<String> get() = members.map { it.sourceId }.distinct()
+}
 
 /**
  * Uma página de resultados. [totalResults] é o total da busca inteira (não só desta página);
@@ -44,6 +56,8 @@ data class RomVariant(
     val region: String? = null,
     val sizeBytes: Long? = null,
     val note: String? = null,
+    /** A página que oferece este arquivo (numa entrada mesclada, pode ser uma das [CatalogEntry.alternates]). */
+    val origin: CatalogEntry? = null,
 )
 
 /** Detecta a região a partir do nome de arquivo no padrão No-Intro/TOSEC, quando presente. */
@@ -101,6 +115,13 @@ interface CatalogSource {
         val variant = variants(entry).firstOrNull() ?: return entry
         return entry.copy(downloadUrl = variant.downloadUrl, fileName = variant.fileName)
     }
+
+    /**
+     * O pedido final do arquivo de uma variante, feito já dentro do download (e de novo a cada "tentar de
+     * novo"). O padrão é o próprio link da variante; fontes com links assinados que expiram (RomsFun) geram
+     * o link aqui, com os cabeçalhos e o protocolo que o servidor exige.
+     */
+    suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink = DirectLink(variant.downloadUrl)
 }
 
 /** O que a própria entrada da busca já diz sobre o jogo. */
@@ -111,4 +132,15 @@ fun CatalogEntry.basicDetails(): SourceDetails = SourceDetails(
     developers = listOfNotNull(developer),
     tags = tags,
     website = website,
+)
+
+/**
+ * Como baixar um arquivo: [fileName] substitui o nome da variante quando só o servidor sabe a extensão
+ * real; [ipv6] fixa o protocolo (null = o que o sistema escolher). Veja [com.retrovika.app.core.net.Http.clientFor].
+ */
+data class DirectLink(
+    val url: String,
+    val fileName: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    val ipv6: Boolean? = null,
 )

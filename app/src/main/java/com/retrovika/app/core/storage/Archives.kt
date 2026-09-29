@@ -2,9 +2,12 @@ package com.retrovika.app.core.storage
 
 import com.retrovika.app.R
 import com.retrovika.app.core.net.LocalizedException
+import org.apache.commons.compress.PasswordRequiredException
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import org.apache.commons.compress.archivers.sevenz.SevenZMethod
 import org.apache.commons.compress.archivers.zip.ZipFile
 import java.io.File
+import net.lingala.zip4j.ZipFile as ZipFile4j
 
 /** Leitura de ROMs compactadas (.zip e .7z), formatos comuns em sites de download. */
 object Archives {
@@ -36,11 +39,25 @@ object Archives {
         return text.startsWith("<!doctype html") || text.startsWith("<html") || text.startsWith("<head")
     }
 
-    fun entries(archive: File): List<Entry> = when (formatOf(archive)) {
+    fun entries(archive: File, password: String? = null): List<Entry> = when (formatOf(archive)) {
         Format.ZIP -> zip(archive).use { zf -> zf.entries.toList().filterNot { it.isDirectory }.map { Entry(it.name, it.size) } }
         // 7z criado da entrada padrão ("7z a -si") não guarda nome: usa o do próprio arquivo.
-        Format.SEVEN_Z -> sevenZ(archive).use { sz -> sz.entries.filterNot { it.isDirectory }.map { Entry(it.name ?: archive.nameWithoutExtension, if (it.hasStream()) it.size else 0L) } }
+        Format.SEVEN_Z -> sevenZ(archive, password).use { sz -> sz.entries.filterNot { it.isDirectory }.map { Entry(it.name ?: archive.nameWithoutExtension, if (it.hasStream()) it.size else 0L) } }
         null -> emptyList()
+    }
+
+    /**
+     * Verdadeiro se o conteúdo está protegido por senha: entradas cifradas no .zip, AES no .7z ou o próprio
+     * índice do .7z cifrado (aí nem a lista de arquivos abre sem a senha).
+     */
+    fun needsPassword(archive: File): Boolean = when (formatOf(archive)) {
+        Format.ZIP -> zip(archive).use { zf -> zf.entries.toList().any { it.generalPurposeBit.usesEncryption() } }
+        Format.SEVEN_Z -> try {
+            sevenZ(archive, null).use { sz -> sz.entries.any { e -> e.contentMethods?.any { it.method == SevenZMethod.AES256SHA256 } == true } }
+        } catch (_: PasswordRequiredException) {
+            true
+        }
+        null -> false
     }
 
     fun entryNames(archive: File): List<String> = entries(archive).map { it.name }
@@ -60,7 +77,7 @@ object Archives {
      * compactado. Inteiro, e não só o arquivo repetido, porque um .cue/.m3u cita as faixas pelo nome.
      * O mesmo arquivo extraído de novo (conteúdo igual) continua substituindo o antigo.
      */
-    fun extract(archive: File, destDir: File, names: Set<String>): Map<String, File> {
+    fun extract(archive: File, destDir: File, names: Set<String>, password: String? = null): Map<String, File> {
         destDir.mkdirs()
         val out = LinkedHashMap<String, File>()
         // Destino final -> temporário onde a entrada é gravada.
@@ -93,7 +110,14 @@ object Archives {
             when (formatOf(archive)) {
                 // ZipFile lê o diretório central: aceita Deflate64, ZIP64 e entradas com "data descriptor",
                 // que o ZipInputStream do Java recusa (zips grandes feitos no Windows, por exemplo).
-                Format.ZIP -> zip(archive).use { zf ->
+                // Cifrado: o commons-compress não descriptografa zip, o zip4j sim (ZipCrypto e AES).
+                Format.ZIP -> if (password != null) ZipFile4j(archive, password.toCharArray()).use { zf ->
+                    for (header in zf.fileHeaders) {
+                        if (header.isDirectory || header.fileName !in names) continue
+                        val part = target(header.fileName)
+                        zf.getInputStream(header).use { input -> part.outputStream().use { input.copyTo(it) } }
+                    }
+                } else zip(archive).use { zf ->
                     for (entry in zf.entries.toList()) {
                         if (entry.isDirectory || entry.name !in names) continue
                         if (!zf.canReadEntryData(entry)) throw LocalizedException(R.string.download_unsupported_format, entry.name)
@@ -101,7 +125,8 @@ object Archives {
                         zf.getInputStream(entry).use { input -> part.outputStream().use { input.copyTo(it) } }
                     }
                 }
-                Format.SEVEN_Z -> if (!extractSevenZNative(archive, names, unnamed, ::target, ::discard)) sevenZ(archive).use { sz ->
+                // O 7z nativo não decifra AES: com senha, direto no commons-compress.
+                Format.SEVEN_Z -> if (password != null || !extractSevenZNative(archive, names, unnamed, ::target, ::discard)) sevenZ(archive, password).use { sz ->
                     while (true) {
                         val entry = sz.nextEntry ?: break
                         val name = entry.name ?: unnamed
@@ -208,8 +233,9 @@ object Archives {
      * abaixo do heap, um dicionário grande demais falha com [org.apache.commons.compress.MemoryLimitException]
      * antes de alocar, em vez de um OutOfMemoryError que pode derrubar outras threads.
      */
-    private fun sevenZ(file: File): SevenZFile = SevenZFile.builder()
+    private fun sevenZ(file: File, password: String?): SevenZFile = SevenZFile.builder()
         .setFile(file)
         .setMaxMemoryLimitKb((Runtime.getRuntime().maxMemory() / 4 * 3 / 1024).toInt())
+        .apply { if (password != null) setPassword(password.toCharArray()) }
         .get()
 }

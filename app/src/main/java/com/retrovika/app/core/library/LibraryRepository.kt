@@ -177,7 +177,6 @@ class LibraryRepository(
             val before = filesLock.withLock {
                 dao.allUris().toSet().also { scanInternal(found, auxiliary) }
             }
-            val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
             // jogos na biblioteca; senão, favoritos e tempo de jogo seriam apagados por engano.
             val unreadable = mutableListOf<String>()
@@ -186,9 +185,14 @@ class LibraryRepository(
             settings.current().linkedFolders.forEach { tree ->
                 runCatching { scanTree(Uri.parse(tree), found, seenDocs) }.onFailure { unreadable += tree }
             }
+            // Lido depois da varredura das pastas (que pode ser demorada): um jogo removido durante ela já
+            // está oculto aqui e não volta.
+            val hidden = settings.current().hiddenGames
             val existing = dao.allUris().toSet()
             val foundUris = found.map { it.uri }.toSet()
             dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden })
+            // Removido enquanto outra varredura já o reinseria: sai agora.
+            existing.filter { it in hidden }.chunked(500).forEach { dao.deleteByUris(it) }
             // Remove entradas cujo arquivo realmente sumiu e as internas que viraram auxiliares
             // (o arquivo continua lá, como faixa de outro jogo; só a entrada sai).
             val missing = existing.filter { uri ->
@@ -357,9 +361,12 @@ class LibraryRepository(
         val unknown = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
-        // Antes de criar o primeiro .part: a limpeza da abertura do app não pode apagá-lo no meio da cópia.
+        // Antes de criar o primeiro .part (e fora da trava, que a limpeza também pega): a limpeza da
+        // abertura do app não pode apagá-lo no meio da cópia.
         sweepStaleParts()
-        uris.forEach { uri ->
+        // Tudo dentro da trava das ROMs: uma varredura no meio da cópia veria as faixas .bin antes do .cue
+        // e as registraria como jogos soltos.
+        writingRoms { uris.forEach { uri ->
             val name = FileNames.safe(runCatching { displayName(uri) }.getOrNull() ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())
             if (system == null) { unknown += name; return@forEach }
@@ -374,7 +381,7 @@ class LibraryRepository(
                 input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
                 if (!part.renameTo(dest)) throw LocalizedException(R.string.system_import_rename_failed, name)
                 val file = if (Archives.isArchive(dest) && !system.keepArchives) {
-                    writingRoms { RomExtractor.extract(dest, dest.parentFile!!, system) }
+                    RomExtractor.extract(dest, dest.parentFile!!, system)
                 } else dest
                 // Como no download: o compactado sem jogo deste console (ou num formato que não abrimos)
                 // voltaria da extração como veio e entraria na biblioteca como um jogo que nunca roda.
@@ -390,10 +397,10 @@ class LibraryRepository(
                 part.delete()
                 failed += name to t.userMessage(context)
             }
-        }
+        } }
         // Os arquivos escolhidos juntos são irmãos: um .cue com seus .bin vira um jogo só.
         val siblings = copied.map { it.second.name.lowercase() }.toSet()
-        val referenced = copied.map { it.second }.filter { it.extension.lowercase() in GameFiles.SHEET_EXTENSIONS }
+        val referenced = copied.filter { (system, file) -> file.extension.lowercase().let { it in GameFiles.SHEET_EXTENSIONS && it in system.extensions } }.map { it.second }
             .flatMap { sheet -> GameFiles.referencedFiles(sheet.extension.lowercase(), runCatching { sheet.readText() }.getOrDefault(""), sheet.name) }
             .map { it.lowercase() }.toSet()
         copied.forEach { (system, file) ->

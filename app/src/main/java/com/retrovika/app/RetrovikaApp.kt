@@ -12,6 +12,7 @@ import com.retrovika.app.core.bios.BiosManager
 import com.retrovika.app.core.catalog.CatalogRepository
 import com.retrovika.app.core.cheats.CheatRepository
 import com.retrovika.app.core.share.SharedStates
+import com.retrovika.app.core.catalog.RomsFunSource
 import com.retrovika.app.core.catalog.DownloadManager
 import com.retrovika.app.core.cores.CoreManager
 import com.retrovika.app.core.dat.DatRepository
@@ -24,6 +25,8 @@ import com.retrovika.app.core.gameinfo.GameInfoRepository
 import com.retrovika.app.core.net.WebFetcher
 import com.retrovika.app.core.settings.SettingsRepository
 import com.retrovika.app.core.storage.StoragePaths
+import com.retrovika.app.core.update.AppUpdater
+import com.retrovika.app.remote.RemotePlay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,7 +43,8 @@ class AppContainer(app: Application) {
     val library = LibraryRepository(app, database.games(), paths, settings, scope)
     val cores = CoreManager(app, paths)
     val bios = BiosManager(paths, app.contentResolver)
-    val catalog = CatalogRepository()
+    // O RomsFun tem o próprio WebView: dividir o do Backloggd faria os dois reabrirem o site a cada troca.
+    val catalog = CatalogRepository(RomsFunSource(WebFetcher(app, minGapMs = 400)))
     private val web = WebFetcher(app)
     val gameInfo = GameInfoRepository(BackloggdClient { url -> web.get("https://backloggd.com/", url) })
     val dat = DatRepository(app, database.dats())
@@ -50,7 +54,13 @@ class AppContainer(app: Application) {
     val incoming = MutableStateFlow<Incoming?>(null)
     /** Recebimento de [incoming] em andamento; fica aqui para sobreviver à recriação da Activity. */
     val receive = ReceiveSession()
-    val downloads = DownloadManager(app, scope, paths, library, settings.cached) { catalog.resolve(it) }
+    val updater = AppUpdater(app, scope)
+    val remote = RemotePlay(app)
+    val downloads = DownloadManager(
+        app, scope, paths, library, settings.cached,
+        resolve = { catalog.resolve(it) },
+        link = { entry, variant -> catalog.directLink(entry, variant) },
+    )
 }
 
 class RetrovikaApp : Application(), SingletonImageLoader.Factory {

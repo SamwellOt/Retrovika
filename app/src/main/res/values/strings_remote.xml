@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_tab_remote">Screen &amp; controllers</string>
+    <string name="remote_enable">Play over Wi-Fi</string>
+    <string name="remote_enable_subtitle">Other phones become controllers and a computer or TV shows the game. Everyone on the same network, no app needed.</string>
+    <string name="remote_pad_title">Extra controller</string>
+    <string name="remote_pad_hint">Point another phone camera at the code. It opens a controller in the browser: players 2 to 4.</string>
+    <string name="remote_screen_title">Computer or TV</string>
+    <string name="remote_screen_hint">Open this address in the browser and type the code. A keyboard or controller plugged into it can play too.</string>
+    <string name="remote_code">Code</string>
+    <string name="remote_connected">Connected</string>
+    <string name="remote_this_phone">This phone</string>
+    <string name="remote_screen">Screen</string>
+    <string name="remote_pad">Controller</string>
+    <string name="remote_remove">Remove</string>
+    <string name="remote_nobody">Nobody connected yet.</string>
+    <string name="remote_mute_host">Sound only on the other screen</string>
+    <string name="remote_mute_host_subtitle">Mutes this phone while a computer or TV is showing the game.</string>
+    <string name="remote_paused_hint">The game stays paused while this menu is open.</string>
+    <string name="remote_no_stream">This phone can\'t send the picture (it needs OpenGL ES 3). Controllers still work.</string>
+    <string name="remote_no_network">Connect to a Wi-Fi network (or turn on this phone\'s hotspot) to play over the network.</string>
+    <string name="remote_server_failed">Couldn\'t open the connection on this phone.</string>
+    <string name="remote_encoder_failed">This phone\'s video encoder didn\'t start, so the picture won\'t reach the other screen.</string>
+    <string name="remote_stream_failed">The game picture isn\'t reaching this phone\'s video encoder, so the other screen has no picture. Sound and controllers still work.</string>
+</resources>

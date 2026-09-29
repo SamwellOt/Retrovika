@@ -65,6 +65,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -717,6 +719,20 @@ fun DownloadProgressBar(task: DownloadTask, modifier: Modifier = Modifier) {
             LinearProgressIndicator(progress = { task.progress }, modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
         else -> LinearProgressIndicator(modifier = bar, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
     }
+}
+
+/**
+ * Servidor de arquivos ocupado: "Servidor ocupado · nova tentativa em 4:32" ([short]: "Ocupado · 4:32", para
+ * os cartões estreitos), contando a cada segundo. Null quando o download não está esperando.
+ */
+@Composable
+fun busyWaitText(task: DownloadTask, short: Boolean = false): String? {
+    if (task.retryAt <= 0) return null
+    val now by produceState(System.currentTimeMillis(), task.retryAt) {
+        while (true) { value = System.currentTimeMillis(); delay(1_000) }
+    }
+    val left = ((task.retryAt - now + 999) / 1_000).coerceAtLeast(0)
+    return stringResource(if (short) R.string.downloads_server_busy_short else R.string.downloads_server_busy_wait, "%d:%02d".format(left / 60, left % 60))
 }
 
 /**

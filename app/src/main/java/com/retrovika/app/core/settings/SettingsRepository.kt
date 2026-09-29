@@ -68,6 +68,10 @@ data class AppSettings(
     val translateEverywhere: Boolean = false,
     /** Na primeira vez que um console roda, testa os núcleos dele e escolhe o ideal para o aparelho. */
     val autoBenchmark: Boolean = true,
+    /** Procura uma versão nova do app ao abrir. */
+    val checkUpdates: Boolean = true,
+    /** Versão cujo aviso o usuário fechou na tela inicial: só volta a aparecer para uma mais nova. */
+    val dismissedUpdate: String? = null,
 )
 
 class SettingsRepository(private val context: Context, scope: CoroutineScope) {
@@ -92,6 +96,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val translateEverywhere = booleanPreferencesKey("translate_everywhere")
         val autoBenchmark = booleanPreferencesKey("auto_benchmark")
         fun benchmark(systemId: String) = stringPreferencesKey("bench_$systemId")
+        val checkUpdates = booleanPreferencesKey("check_updates")
+        val dismissedUpdate = stringPreferencesKey("dismissed_update")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
@@ -124,6 +130,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
             translateEverywhere = p[Keys.translateEverywhere] ?: false,
             autoBenchmark = p[Keys.autoBenchmark] ?: true,
+            checkUpdates = p[Keys.checkUpdates] ?: true,
+            dismissedUpdate = p[Keys.dismissedUpdate],
         )
     }
 
@@ -158,12 +166,15 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
     suspend fun setTranslateEverywhere(v: Boolean) = set(Keys.translateEverywhere, v)
     suspend fun setAutoBenchmark(v: Boolean) = set(Keys.autoBenchmark, v)
+    suspend fun setCheckUpdates(v: Boolean) = set(Keys.checkUpdates, v)
+    suspend fun setDismissedUpdate(version: String) = set(Keys.dismissedUpdate, version)
 
     /** Volta controle, vídeo, emulação, interface e downloads aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
     suspend fun resetPreferences() = context.dataStore.edit { p ->
         listOf(
             Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
             Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.translateEverywhere, Keys.autoBenchmark,
+            Keys.checkUpdates,
         ).forEach { p.remove(it) }
     }
 

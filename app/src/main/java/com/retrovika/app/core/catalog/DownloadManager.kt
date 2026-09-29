@@ -55,6 +55,8 @@ data class DownloadTask(
     val bytesTotal: Long = -1,
     /** Velocidade média recente, em bytes por segundo. */
     val speed: Long = 0,
+    /** Servidor ocupado: hora (epoch ms) da próxima tentativa; 0 quando não está esperando. */
+    val retryAt: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
     /** Segundos até terminar, quando dá para estimar. */
@@ -62,8 +64,12 @@ data class DownloadTask(
         if (status == DownloadStatus.DOWNLOADING && bytesTotal > 0 && speed > 0) (bytesTotal - bytesDone).coerceAtLeast(0) / speed else null
 }
 
-/** Chave que liga uma entrada do catálogo aos seus downloads (títulos se repetem entre consoles e fontes). */
-val CatalogEntry.downloadKey: String get() = "$sourceId|$id"
+/**
+ * Chave que liga uma entrada do catálogo aos seus downloads e à página do jogo: a do jogo ([dedupKey], console +
+ * título), para que ela não mude quando a entrada é mesclada com outras páginas do mesmo jogo. Títulos sem
+ * letras nem números usam a própria página.
+ */
+val CatalogEntry.downloadKey: String get() = dedupKey(this) ?: "$sourceId|$id"
 
 class DownloadManager(
     private val context: Context,
@@ -74,6 +80,8 @@ class DownloadManager(
     private val settings: StateFlow<AppSettings>,
     /** Converte a entrada no link final de download (ex.: Internet Archive resolve o arquivo). */
     private val resolve: suspend (CatalogEntry) -> CatalogEntry = { it },
+    /** Pedido final do arquivo da variante, gerado dentro do download (links assinados que expiram, como no RomsFun). */
+    private val link: suspend (CatalogEntry, RomVariant) -> DirectLink = { _, v -> DirectLink(v.downloadUrl) },
 ) {
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -107,7 +115,7 @@ class DownloadManager(
         val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
         launchTask(task) { id ->
             val resolved = resolve(entry)
-            runDownload(id, resolved.downloadUrl, resolved.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
+            runCatalogDownload(id, entry, RomVariant(fileName = resolved.fileName, downloadUrl = resolved.downloadUrl), system)
         }
     }
 
@@ -116,8 +124,27 @@ class DownloadManager(
         val system = Systems.byId(entry.systemId) ?: return
         if (isActive(entry)) return
         val task = DownloadTask(title = entry.title, systemId = system.id, coverUrl = entry.coverUrl, entryKey = entry.downloadKey)
-        launchTask(task) { id ->
-            runDownload(id, variant.downloadUrl, variant.fileName, system, entry.title, entry.coverUrl, entry.developer, entry.tags.joinToString(" · ").ifBlank { null }, refererOf(entry))
+        launchTask(task) { id -> runCatalogDownload(id, entry, variant, system) }
+    }
+
+    private suspend fun runCatalogDownload(taskId: String, entry: CatalogEntry, variant: RomVariant, system: GameSystem) {
+        var refreshes = 0
+        while (true) {
+            val direct = link(entry, variant)
+            var waited = false
+            try {
+                runDownload(
+                    taskId, direct.url, direct.fileName ?: variant.fileName, system, entry.title, entry.coverUrl, entry.developer,
+                    entry.tags.joinToString(" · ").ifBlank { null }, refererOf(variant.origin ?: entry) + direct.headers, ipv6 = direct.ipv6,
+                    onWaited = { waited = true },
+                )
+                return
+            } catch (e: LocalizedException) {
+                // Depois de minutos esperando o servidor ocupado, a liberação da verificação (cf_clearance) do servidor
+                // de arquivos já venceu e ele recusa com 403: gera o link de novo (o que refaz a verificação) e continua.
+                if (!waited || refreshes++ >= MAX_LINK_REFRESHES || !isRefusal(e)) throw e
+                update(taskId) { it.copy(retryAt = 0, bytesDone = 0, bytesTotal = -1, progress = 0f) }
+            }
         }
     }
 
@@ -174,10 +201,10 @@ class DownloadManager(
                 // Concluído não se refaz: soltar o pedido libera a entrada, os cookies e os cabeçalhos guardados.
                 work.remove(id)
             } catch (t: kotlinx.coroutines.CancellationException) {
-                update(id) { it.copy(status = DownloadStatus.CANCELED, speed = 0) }
+                update(id) { it.copy(status = DownloadStatus.CANCELED, speed = 0, retryAt = 0) }
                 throw t
             } catch (t: Throwable) {
-                update(id) { it.copy(status = DownloadStatus.FAILED, error = t.userMessage(context), speed = 0) }
+                update(id) { it.copy(status = DownloadStatus.FAILED, error = t.userMessage(context), speed = 0, retryAt = 0) }
             } finally {
                 if (holdsSlot) releaseSlot()
             }
@@ -230,6 +257,8 @@ class DownloadManager(
         cookiesFor: ((String) -> String?)? = null,
         /** O nome veio do fim do link, não da fonte: o do servidor (Content-Disposition, URL final) é melhor. */
         serverName: Boolean = false,
+        ipv6: Boolean? = null,
+        onWaited: () -> Unit = {},
     ) {
         val dir = paths.romsFor(system.id)
         val target = File(dir, FileNames.safe(fileName))
@@ -239,7 +268,10 @@ class DownloadManager(
         var saved: File? = null
         val file = try {
             // keepExisting: outro jogo com o mesmo nome de arquivo (dois "rom.gb") não é apagado.
-            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, onSaved = { saved = it }, onBytes = { read, total ->
+            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), onSaved = { saved = it }, onWait = { until ->
+                if (until > 0) onWaited()
+                update(taskId) { it.copy(retryAt = until, speed = 0) }
+            }, onBytes = { read, total ->
                 val now = System.nanoTime()
                 val elapsed = (now - lastTime) / 1e9
                 val instant = if (elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L
@@ -331,5 +363,12 @@ class DownloadManager(
     companion object {
         val ACTIVE = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.EXTRACTING)
         val RETRYABLE = setOf(DownloadStatus.FAILED, DownloadStatus.CANCELED)
+        private const val MAX_LINK_REFRESHES = 2
+        /** Recusas que um link novo resolve: sessão/verificação vencida (403) ou link expirado. */
+        /** Link vencido ou recusado (403/410), o que um link novo resolve; 404, 500 etc. não valem outra rodada. */
+        private fun isRefusal(e: LocalizedException): Boolean = e.messageRes == R.string.download_forbidden ||
+            (e.messageRes == R.string.download_http_error && e.args.firstOrNull() in REFUSED_CODES)
+
+        private val REFUSED_CODES = setOf(403, 410)
     }
 }

@@ -56,6 +56,29 @@ class ArchivesTest {
     }
 
     @Test
+    fun `nao apaga outro jogo com o mesmo nome nem deixa temporario`() {
+        val dest = tmp.newFolder("roms")
+        File(dest, "Jogo.bin").writeText("antigo")
+        val out = Archives.extract(zip("jogo.zip", mapOf("Jogo.bin" to "novo")), dest, setOf("Jogo.bin"))
+        // Conteúdo diferente: o antigo fica, o novo vai para a subpasta com o nome do compactado.
+        assertEquals("antigo", File(dest, "Jogo.bin").readText())
+        assertEquals(File(dest, "jogo/Jogo.bin"), out.getValue("Jogo.bin"))
+        assertEquals("novo", out.getValue("Jogo.bin").readText())
+        assertTrue(dest.walkTopDown().none { it.name.endsWith(Archives.PART_SUFFIX) })
+    }
+
+    @Test
+    fun `falha no meio nao estraga arquivo que ja existia`() {
+        val dest = tmp.newFolder("roms")
+        File(dest, "Jogo.bin").writeText("antigo")
+        // A segunda entrada escaparia da pasta ("zip slip"): a extração falha depois de gravar a primeira.
+        val archive = zip("jogo.zip", mapOf("Jogo.bin" to "novo", "../fora.bin" to "x"))
+        assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("Jogo.bin", "../fora.bin")) }
+        assertEquals("antigo", File(dest, "Jogo.bin").readText())
+        assertEquals(listOf("Jogo.bin"), dest.list()!!.toList())
+    }
+
+    @Test
     fun `mantem subpastas de discos citadas pelo m3u`() {
         val archive = zip(
             "multi.zip",
@@ -130,5 +153,21 @@ class ArchivesTest {
     fun `lista entradas com tamanho`() {
         val archive = zip("rom.zip", mapOf("pasta/" to "", "rom.gba" to "12345"))
         assertEquals(listOf(Archives.Entry("rom.gba", 5)), Archives.entries(archive))
+    }
+
+    @Test
+    fun `zip com senha e detectado e extraido com a senha`() {
+        val file = File(tmp.root, "protegido.zip")
+        val rom = tmp.newFile("Jogo (USA).nds").apply { writeText("conteudo da rom") }
+        val params = net.lingala.zip4j.model.ZipParameters().apply {
+            isEncryptFiles = true
+            encryptionMethod = net.lingala.zip4j.model.enums.EncryptionMethod.ZIP_STANDARD
+        }
+        net.lingala.zip4j.ZipFile(file, "romsfun-romspure".toCharArray()).use { it.addFile(rom, params) }
+
+        assertTrue(Archives.needsPassword(file))
+        assertFalse(Archives.needsPassword(zip("aberto.zip", mapOf("a.nds" to "x"))))
+        val out = Archives.extract(file, tmp.newFolder("saida"), setOf("Jogo (USA).nds"), "romsfun-romspure")
+        assertEquals("conteudo da rom", out.getValue("Jogo (USA).nds").readText())
     }
 }

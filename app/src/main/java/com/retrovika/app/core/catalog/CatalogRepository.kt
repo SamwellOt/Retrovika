@@ -1,5 +1,6 @@
 package com.retrovika.app.core.catalog
 
+import com.retrovika.app.core.gameinfo.SourceDetails
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -7,10 +8,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-class CatalogRepository {
-    // A ordem aqui é a dos filtros no Explorar e a do rodízio em "Todas as fontes".
-    val sources: List<CatalogSource> = listOf(
+/**
+ * [romsFun] é opcional porque depende de um WebView: os testes da JVM montam o repositório sem ele.
+ */
+class CatalogRepository(romsFun: RomsFunSource? = null) {
+    // A ordem aqui é a dos filtros no Explorar, a do rodízio em "Todas as fontes" e a de preferência
+    // quando o mesmo jogo aparece em duas fontes (veja [mergeDuplicates]).
+    val sources: List<CatalogSource> = listOfNotNull(
         CdRomanceSource(),
+        romsFun,
         HomebrewHubSource(),
         InternetArchiveSource(),
     )
@@ -31,7 +37,9 @@ class CatalogRepository {
     }
 
     /** [CatalogSource.search] com cache das páginas recentes. */
-    suspend fun search(source: CatalogSource, query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
+    suspend fun search(
+        source: CatalogSource, query: String, systemId: String?, page: Int, kind: String?, genre: Genre?,
+    ): CatalogPage {
         val key = PageKey(source.id, query.trim(), systemId, page, kind, genre)
         val now = System.currentTimeMillis()
         synchronized(pageCache) { pageCache[key] }?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return it.page }
@@ -46,8 +54,23 @@ class CatalogRepository {
     /** Resolve o link final de download pela fonte que originou a entrada. */
     suspend fun resolve(entry: CatalogEntry): CatalogEntry = source(entry.sourceId).resolve(entry)
 
-    /** Ficha do jogo pela fonte que originou a entrada (para a página do jogo). */
-    suspend fun details(entry: CatalogEntry) = source(entry.sourceId).details(entry)
+    /**
+     * Ficha do jogo para a página do jogo, com a página que a deu: a da fonte preferida e, se ela falhar,
+     * a das outras páginas mescladas na entrada, na ordem.
+     */
+    suspend fun details(entry: CatalogEntry): Pair<CatalogEntry, SourceDetails> {
+        var failure: Throwable? = null
+        for (member in entry.members) {
+            try {
+                return member to source(member.sourceId).details(member)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                if (failure == null) failure = t
+            }
+        }
+        throw failure ?: IllegalStateException(entry.id)
+    }
 
     /**
      * Entradas abertas na página do jogo, pela [downloadKey]: a rota leva só a chave, e a entrada
@@ -61,8 +84,26 @@ class CatalogRepository {
 
     fun opened(key: String): CatalogEntry? = synchronized(opened) { opened[key] }
 
-    /** Arquivos baixáveis de uma entrada (para escolher qual ROM baixar). */
-    suspend fun variants(entry: CatalogEntry): List<RomVariant> = source(entry.sourceId).variants(entry)
+    /**
+     * Arquivos baixáveis de uma entrada (para escolher qual ROM baixar): os de todas as páginas mescladas nela,
+     * pedidos ao mesmo tempo, cada um marcado com a página de origem. Uma fonte que falha não esconde as
+     * outras; só se todas falharem o erro (o da fonte preferida) sobe.
+     */
+    suspend fun variants(entry: CatalogEntry): List<RomVariant> = coroutineScope {
+        val results = entry.members.map { member ->
+            async { runCatching { source(member.sourceId).variants(member).map { it.copy(origin = member) } } }
+        }.awaitAll()
+        results.forEach { r -> r.exceptionOrNull()?.let { if (it is CancellationException) throw it } }
+        val found = results.mapNotNull { it.getOrNull() }
+        if (found.isEmpty()) throw results.first().exceptionOrNull()!!
+        found.flatten().distinctBy { it.downloadUrl }
+    }
+
+    /** Pedido final do arquivo da variante, gerado na hora do download pela fonte da página que o oferece. */
+    suspend fun directLink(entry: CatalogEntry, variant: RomVariant): DirectLink {
+        val from = variant.origin ?: entry
+        return source(from.sourceId).directLink(from, variant)
+    }
 
     /**
      * Busca o mesmo título em todas as fontes aplicáveis ao mesmo tempo e mescla os
@@ -74,11 +115,14 @@ class CatalogRepository {
         systemId: String?,
         page: Int,
         genre: Genre? = null,
+        /** Limita a busca a estas fontes (o grupo "Roms" do Explorar); `null` busca em todas. */
+        only: Collection<String>? = null,
         /** Resultado parcial a cada fonte que responde: a tela não espera o site mais lento. */
         onPartial: (CatalogPage) -> Unit = {},
     ): CatalogPage = coroutineScope {
         val applicable = sources.filter { src ->
             when {
+                only != null && src.id !in only -> false
                 src.requiresSystem && systemId == null -> false
                 systemId != null -> systemId in src.systems
                 else -> true
@@ -143,13 +187,41 @@ class CatalogRepository {
         }
     }
 
+    /** Junta as páginas de várias fontes, intercaladas, cada uma na ordem dela (não há um critério comum entre os sites). */
     private fun merge(pages: List<CatalogPage>, page: Int) = CatalogPage(
-        entries = interleave(pages.map { it.entries }),
+        entries = mergeDuplicates(interleave(pages.map { it.entries })),
         page = page,
         totalPages = pages.maxOfOrNull { it.totalPages } ?: 1,
         totalResults = pages.sumOf { it.totalResults },
         approximate = pages.any { it.approximate },
     )
+
+    /**
+     * Junta num cartão só as páginas do mesmo jogo (mesmo console e título, [dedupKey]): de fontes diferentes
+     * (CDRomance e RomsFun) ou repetidas na mesma fonte (o RomsFun tem "Resident Evil 4" e "Resident Evil 4
+     * (Biohazard 4)"). O cartão fica na posição da primeira que apareceu; a principal é a da fonte que vem
+     * antes em [sources] (o RomsFun depende de um WebView e tem limite de downloads), e as outras vão para
+     * [CatalogEntry.alternates], de onde a página do jogo tira os arquivos de todas. Aplicar de novo sobre a
+     * lista com páginas novas dá o mesmo resultado que aplicar tudo de uma vez.
+     */
+    fun mergeDuplicates(entries: List<CatalogEntry>): List<CatalogEntry> {
+        val rank = sources.withIndex().associate { (i, s) -> s.id to i }
+        val groups = LinkedHashMap<Any, MutableList<CatalogEntry>>()
+        entries.forEach { e ->
+            val key: Any = dedupKey(e) ?: (e.sourceId to e.id)
+            groups.getOrPut(key) { ArrayList() }.addAll(e.members)
+        }
+        return groups.values.map { group ->
+            val members = group.distinctBy { it.sourceId to it.id }.map { it.copy(alternates = emptyList()) }
+                .sortedBy { rank[it.sourceId] ?: Int.MAX_VALUE }
+            val main = members.first()
+            main.copy(
+                coverUrl = main.coverUrl ?: members.firstNotNullOfOrNull { it.coverUrl },
+                developer = main.developer ?: members.firstNotNullOfOrNull { it.developer },
+                alternates = members.drop(1),
+            )
+        }
+    }
 
     /** Intercala listas em rodízio: 1ª de cada fonte, depois 2ª de cada, e assim por diante. */
     private fun interleave(lists: List<List<CatalogEntry>>): List<CatalogEntry> {
@@ -174,3 +246,23 @@ class CatalogRepository {
         const val CACHE_TTL_MS = 5 * 60 * 1000L
     }
 }
+
+/**
+ * Título sem região, pontuação e caixa: "Pokémon: X (USA)" e "pokemon x" viram a mesma chave.
+ * Letras de outros alfabetos (japonês, cirílico) ficam; um título sem nenhuma letra ou número dá null
+ * e não é comparado, senão todos eles virariam o mesmo jogo.
+ */
+internal fun dedupKey(e: CatalogEntry): String? {
+    val base = java.text.Normalizer.normalize(e.title.substringBefore(" (").substringBefore(" ["), java.text.Normalizer.Form.NFD)
+        .replace(DIACRITICS, "")
+        .lowercase()
+        // "God of War DVD5": o RomsFun publica a cópia comprimida (DVD de camada única) numa página à parte.
+        .replace(DISC_LAYER_SUFFIX, "")
+        .replace(NON_ALNUM, "")
+    return if (base.isEmpty()) null else e.systemId + "|" + base
+}
+
+// Compiladas uma vez: a chave é calculada para cada cartão a cada página que chega.
+private val DIACRITICS = Regex("\\p{M}+")
+private val DISC_LAYER_SUFFIX = Regex("\\s+dvd[59]$")
+private val NON_ALNUM = Regex("[^\\p{L}\\p{N}]+")

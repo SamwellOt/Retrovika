@@ -205,8 +205,9 @@ class WikiClient {
         fun names(prop: String) = itemIds(claims, prop).mapNotNull { labels[it] }.distinct()
 
         val igdb = claims[IGDB]?.jsonArray?.firstNotNullOfOrNull { value(it)?.jsonPrimitive?.contentOrNull }
+        val hltb = string(claims, HLTB)
         val links = buildList {
-            string(claims, HLTB)?.let { add(ExternalLink("HowLongToBeat", "https://howlongtobeat.com/game/$it")) }
+            hltb?.let { add(ExternalLink("HowLongToBeat", "https://howlongtobeat.com/game/$it")) }
             (string(claims, MOBYGAMES)?.let { "https://www.mobygames.com/game/$it" }
                 ?: string(claims, MOBYGAMES_OLD)?.let { "https://www.mobygames.com/game/$it" })
                 ?.let { add(ExternalLink("MobyGames", it)) }
@@ -240,6 +241,7 @@ class WikiClient {
             scores = scores.mapNotNull { (score, reviewer) -> labels[reviewer]?.let { ReviewScore(score, it) } }.distinctBy { it.reviewer },
             links = links,
             igdbSlug = igdb,
+            hltbId = hltb,
         )
     }
 
@@ -287,7 +289,7 @@ class WikiClient {
             precision == 10 -> "${date[1]}-${date[2]}"
             else -> date[1]
         }
-    }.minOrNull()
+    }.minByOrNull { it.padEnd(10, '~') }  // Só o ano ("1994") não pode vencer uma data completa do mesmo ano.
 
     private fun value(claim: JsonElement): JsonElement? =
         claim.jsonObject["mainsnak"]?.jsonObject?.get("datavalue")?.jsonObject?.get("value")

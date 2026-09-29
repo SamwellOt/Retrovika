@@ -88,12 +88,6 @@ class BackloggdClientTest {
         assertEquals(listOf("Nintendo Entertainment Analysis & Development", "Nintendo"), info.companies)
         assertEquals(listOf("Adventure", "Platform"), info.genres)
         assertEquals(listOf("Wii U", "Nintendo 64"), info.platforms)
-        assertEquals("99K", info.plays)
-        assertEquals("1.9K", info.playing)
-        assertEquals("11K", info.lists)
-        assertEquals("20h", info.timeAverage)
-        assertEquals("11h", info.timeToFinish)
-        assertNull(info.timeToMaster)
         assertEquals("https://images.igdb.com/igdb/image/upload/t_1080p_2x/sc8e2k.webp", info.backdropUrl)
         assertEquals("https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co721v.jpg", info.coverUrl)
         assertEquals("https://www.igdb.com/games/super-mario-64", info.igdbUrl)
@@ -131,5 +125,35 @@ class BackloggdClientTest {
         assertEquals("Primeiro parágrafo da review.\n\nSegundo parágrafo.", review.text)
         assertEquals(38, review.likes)
         assertEquals("https://backloggd.com/u/ggxxbb/review/5316552/", review.url)
+    }
+
+    @Test
+    fun `jogo sem resumo nao usa o slogan do site como descricao`() {
+        val html = """<html><head><meta property="og:description" content="Keep a virtual backlog of your video game collection, then rate and review the ones you've played to share with your friends!"></head>
+            <body><div id="game-profile"><h1>Hajime no Ippo: The Fighting! Portable - Victorious Spirits</h1></div></body></html>"""
+        assertNull(client.parseGame(html, "hajime-no-ippo-the-fighting-portable-victorious-spirits").description)
+    }
+
+    @Test
+    fun `ordena sugestoes com o titulo identico antes e descarta outros jogos da serie`() {
+        // Autocompletar real de "hajime no ippo" (setembro de 2026).
+        val suggestions = listOf(
+            BackloggdClient.Suggestion("hajime-no-ippo-the-fighting--1", "Hajime no Ippo: The Fighting!", 2002),
+            BackloggdClient.Suggestion("hajime-no-ippo-the-fighting-2-victorious-road", "Hajime no Ippo: The Fighting! 2 - Victorious Road", 2004),
+            BackloggdClient.Suggestion("hajime-no-ippo-the-fighting-portable-victorious-spirits", "Hajime no Ippo: The Fighting! Portable - Victorious Spirits", 2007),
+            BackloggdClient.Suggestion("hajime-no-ippo-the-fighting-ds", "Hajime no Ippo: The Fighting! DS", 2008),
+        )
+        val ranked = client.rank("Hajime no Ippo Portable - Victorious Spirits", suggestions)
+        assertEquals(listOf("hajime-no-ippo-the-fighting-portable-victorious-spirits"), ranked.map { it.suggestion.slug })
+
+        val chrono = listOf(
+            BackloggdClient.Suggestion("chrono-trigger--1", "Chrono Trigger", 2008),
+            BackloggdClient.Suggestion("chrono-trigger-jets-edition", "Chrono Trigger Jets Edition", 1996),
+            BackloggdClient.Suggestion("chrono-trigger", "Chrono Trigger", 1995),
+        )
+        assertEquals(
+            listOf("chrono-trigger", "chrono-trigger--1", "chrono-trigger-jets-edition"),
+            client.rank("Chrono Trigger", chrono).map { it.suggestion.slug },
+        )
     }
 }

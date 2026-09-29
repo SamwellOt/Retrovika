@@ -60,6 +60,7 @@ import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.input.MotionSources
 import com.retrovika.app.emulation.input.PadProfile
 import com.retrovika.app.emulation.input.PadListener
+import com.retrovika.app.remote.RemoteGame
 import com.retrovika.app.ui.theme.RetrovikaTheme
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
@@ -178,6 +179,8 @@ class GameActivity : ComponentActivity() {
     private var cheats: CheatSession? = null
     private var settings = AppSettings()
     private var retroView: GLRetroView? = null
+    /** O GLRetroView ligado ao jogo pela rede; continua aqui depois do "Sair" zerar o [retroView]. */
+    private var remoteView: GLRetroView? = null
     private var sessionStart = 0L
     private var activityResumed = false
 
@@ -186,10 +189,10 @@ class GameActivity : ComponentActivity() {
      * sair do jogo gravaria a tela de boot por cima do salvamento automático e o progresso se perderia.
      */
     private var autoSaveReady = false
-
     /**
-     * O núcleo já carregou o jogo (o primeiro quadro foi desenhado). Antes disso a SRAM ainda é a do boot,
-     * ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
+     * Primeiro quadro desenhado: o núcleo terminou de carregar o jogo. Antes disso a thread de emulação está
+     * presa no carregamento (pedir a SRAM por ela travaria a thread principal até ele acabar), e a SRAM ainda
+     * é a do boot, ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
      */
     private var gameLoaded = false
 
@@ -395,6 +398,8 @@ class GameActivity : ComponentActivity() {
         emulationOwner.registry.addObserver(view)
         observe(view)
         ui = EmulationUi.Running(view)
+        remoteView = view
+        app.remote.attach(view, RemoteGame(game.title, system.name, system.accent, system.layout), ::physicalControllerPorts)
         updateEmulationState()
         view.requestFocus()
     }
@@ -600,6 +605,9 @@ class GameActivity : ComponentActivity() {
                 toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
             } else if (settings.autoLoad) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
+                // Menu aberto ou app em segundo plano durante a leitura: a thread de emulação está parada (sem
+                // contexto GL) e o estado só é aplicado quando o jogo voltar a rodar.
+                while (saved != null && retroView === view && !emulationRunning()) delay(100)
                 // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
                 if (retroView !== view) return@launch
                 saved?.let { data ->
@@ -626,11 +634,15 @@ class GameActivity : ComponentActivity() {
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
-            val vibrator = rumbleVibrator ?: return@launch
+            val vibrator = rumbleVibrator
             // O núcleo só avisa quando a força muda: a vibração dura até chegar força zero (ou o jogo pausar),
             // não um pulso curto por aviso, que fazia o Rumble Pak parar em 60 ms.
             view.getRumbleEvents().collect { e ->
                 val strength = maxOf(e.strengthStrong, e.strengthWeak)
+                // Jogador de um controle pela rede: vibra o celular dele, não este.
+                if (app.remote.rumble(e.port, strength)) return@collect
+                // Os outros jogadores (controle físico, teclado da TV) não fazem vibrar o celular do jogador 1.
+                if (vibrator == null || e.port != 0) return@collect
                 if (strength > 0f) vibrator.vibrate(VibrationEffect.createOneShot(RUMBLE_MAX_MS, (strength * 255).toInt().coerceIn(1, 255)))
                 else vibrator.cancel()
             }
@@ -705,6 +717,10 @@ class GameActivity : ComponentActivity() {
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
         benchOwner?.registry?.currentState = Lifecycle.State.DESTROYED
         retroView = null
+        remoteView?.let { app.remote.detach(it) }
+        remoteView = null
+        // Trocar de jogo recria a Activity e o servidor segue (os controles reconectam); sair do jogo o desliga.
+        if (isFinishing) app.remote.stop()
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
         super.onDestroy()
@@ -724,6 +740,7 @@ class GameActivity : ComponentActivity() {
             rumbleVibrator?.cancel()
         }
         emulationOwner.registry.currentState = target
+        if (ui is EmulationUi.Running) app.remote.setPaused(!running)
     }
 
     private fun flushPlayTime() {
@@ -1073,12 +1090,13 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun openMenu() {
-        if (menuOpen || menuOpening) return
+        // Falha e tela de erro primeiro: um menuOpening preso não pode impedir o Voltar de sair.
         val view = retroView
         // Tela de erro: o núcleo já foi criado, então sair passa por exit() (que o destrói na hora);
         // um finish() simples o deixaria para o onDestroy, que poderia destruir o núcleo do próximo jogo.
         if (view == null) { finish(); return }
         if (ui !is EmulationUi.Running) { menuActions.exit(); return }
+        if (menuOpen || menuOpening) return
         // Salvamento automático sendo carregado: pausar agora carregaria o estado sem contexto GL
         // e deixaria o menu com a cópia da tela de início. Leva só um instante.
         if (gameLoaded && !autoSaveReady) return
@@ -1089,6 +1107,9 @@ class GameActivity : ComponentActivity() {
         // Captura a tela antes de pausar: vira a miniatura dos save states.
         captureFrame(view) { bmp, full ->
             lifecycleScope.launch {
+                // O app foi para segundo plano durante a captura: a thread de emulação já parou, e serializar
+                // nela sem contexto GL derruba os núcleos de GPU. O onPause já guardou o que precisava.
+                if (!emulationRunning()) { menuOpening = false; return@launch }
                 // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
                 // é ele que o menu grava nos slots e no salvamento automático.
                 val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
@@ -1178,6 +1199,11 @@ class GameActivity : ComponentActivity() {
             (src and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
             ((src and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD && event.device?.isVirtual == false)
     }
+
+    /** Portas dos controles físicos além do primeiro: os controles pela rede não podem cair nelas. */
+    private fun physicalControllerPorts(): Set<Int> = InputDevice.getDeviceIds().toList().mapNotNull { id ->
+        InputDevice.getDevice(id)?.takeIf { isPhysicalController(it) }?.controllerNumber?.takeIf { it > 1 }?.minus(1)
+    }.toSet()
 
     private fun detectController(): Boolean = InputDevice.getDeviceIds().any { id -> isPhysicalController(InputDevice.getDevice(id)) }
 

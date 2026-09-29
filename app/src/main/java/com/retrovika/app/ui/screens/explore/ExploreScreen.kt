@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.screens.explore
 
+import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.pressScale
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
@@ -23,6 +24,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
@@ -58,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -147,6 +151,10 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
     // A página e o fim do carregamento também são chaves: depois de páginas vazias (filtro sem
     // resultado nelas) a lista não cresce, e sem isso a rolagem nunca pedia a próxima.
     LaunchedEffect(nearEnd, state.entries.size, state.page, state.loading) { if (nearEnd && !state.loading) vm.loadMore() }
+    // Os cartões já vistos não mudam de lugar quando um site mais lento responde (ver ExploreViewModel.stable).
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }.collect(vm::onSeen)
+    }
 
     Box(Modifier.fillMaxSize()) {
     LazyVerticalGrid(
@@ -174,7 +182,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                 if (vm.sources.size > 1) {
                     FilterSection(stringResource(R.string.explore_filter_source)) {
                         vm.sources.forEach { src ->
-                            SelectChip(src.nameRes?.let { stringResource(it) } ?: src.name, state.sourceId == src.id, onClick = { vm.setSource(src.id) })
+                            SelectChip(src.label(), state.sourceId == src.id, onClick = { vm.setSource(src.id) })
                         }
                     }
                 }
@@ -261,11 +269,13 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
             }
         }
 
-        items(state.entries, key = { it.sourceId + it.id }, contentType = { "entry" }) { entry ->
+        // downloadKey: o mesmo cartão continua com a mesma chave quando uma fonte preferida chega depois e
+        // vira a entrada principal (sourceId + id mudaria, e a grade trataria como outro cartão).
+        items(state.entries, key = { it.downloadKey }, contentType = { "entry" }) { entry ->
             val task = downloadsByEntry[entry.downloadKey]
             CatalogCard(
                 entry, task,
-                sourceLabel = if (state.aggregated) vm.sourceName(entry.sourceId) else null,
+                sourceLabels = if (state.sourceId == ALL_SOURCES) vm.sourceLabels(entry).map { it.label() } else emptyList(),
                 onOpen = { onOpenGame(context.container.catalog.open(entry)) },
                 onDownload = { vm.requestDownload(entry) },
                 onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } },
@@ -295,7 +305,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
         }
     }
 
-    prompt?.let { VariantPickerSheet(it, onPick = vm::confirmVariant, onDismiss = vm::dismissPrompt) }
+    prompt?.let { VariantPickerSheet(it, sourceName = vm::sourceName, onPick = vm::confirmVariant, onDismiss = vm::dismissPrompt) }
     }
 }
 
@@ -360,7 +370,7 @@ internal val Genre.accent: Color
 private val CardShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: String?, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
+private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: List<String>, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
     val system = Systems.byId(entry.systemId)
     val genre = remember(entry.tags) { Genre.of(entry.tags).firstOrNull() }
     val source = remember { MutableInteractionSource() }
@@ -378,7 +388,12 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                 entry.title, system, entry.coverUrl,
                 Modifier.fillMaxWidth().aspectRatio(10f / 9f), corner = 0.dp,
             )
-            sourceLabel?.let { CoverTag(it, Palette.TextPrimary, Modifier.align(Alignment.TopStart)) }
+            // Um jogo mesclado de várias fontes mostra uma etiqueta por fonte, empilhadas.
+            if (sourceLabels.isNotEmpty()) {
+                Column(Modifier.align(Alignment.TopStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    sourceLabels.forEach { CoverTag(it, Palette.TextPrimary) }
+                }
+            }
             genre?.let { g ->
                 Icon(
                     g.icon, stringResource(g.label), tint = g.accent,
@@ -407,8 +422,9 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabel: S
                             DownloadStatus.QUEUED -> R.string.downloads_queued
                             else -> R.string.explore_downloading
                         }
-                        Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
+                        val busy = busyWaitText(task, short = true)
+                        Text(busy ?: stringResource(label), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (busy == null && task.status == DownloadStatus.DOWNLOADING && task.progress >= 0f) Text("${(task.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
                     }
                     Spacer(Modifier.height(6.dp))
                     DownloadProgressBar(task)
@@ -438,7 +454,6 @@ private fun CoverTag(text: String, color: Color, modifier: Modifier = Modifier) 
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         modifier = modifier
-            .padding(8.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Palette.Ink.copy(alpha = 0.75f))
             .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -472,25 +487,34 @@ private fun SkeletonCard() {
 @Composable
 internal fun VariantPickerSheet(
     prompt: VariantPrompt,
+    sourceName: (String) -> String?,
     onPick: (CatalogEntry, RomVariant) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(), containerColor = Palette.Surface) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Text(prompt.entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(stringResource(R.string.explore_pick_rom), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
-            Spacer(Modifier.height(12.dp))
-            when (prompt) {
-                is VariantPrompt.Loading -> Column(Modifier.fillMaxWidth()) {
-                    repeat(3) {
-                        Box(Modifier.fillMaxWidth().height(52.dp).padding(vertical = 6.dp).shimmer(RoundedCornerShape(12.dp)))
-                    }
+        // Lista preguiçosa, não Column: jogos com dezenas de versões passavam da altura da tela, as de baixo
+        // ficavam inalcançáveis e o arrasto só puxava a folha. A LazyColumn rola e cede o gesto à folha no topo.
+        LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+            item(contentType = "header") {
+                Column {
+                    Text(prompt.entry.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.explore_pick_rom), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
+                    Spacer(Modifier.height(12.dp))
                 }
-                is VariantPrompt.Failed -> Text(
-                    stringResource(R.string.explore_variants_failed),
-                    color = Palette.TextSecondary, modifier = Modifier.padding(vertical = 12.dp),
-                )
-                is VariantPrompt.Ready -> prompt.variants.forEachIndexed { index, variant ->
+            }
+            when (prompt) {
+                is VariantPrompt.Loading -> items(3, contentType = { "skeleton" }) {
+                    Box(Modifier.fillMaxWidth().height(52.dp).padding(vertical = 6.dp).shimmer(RoundedCornerShape(12.dp)))
+                }
+                is VariantPrompt.Failed -> item(contentType = "message") {
+                    Text(
+                        stringResource(R.string.explore_variants_failed),
+                        color = Palette.TextSecondary, modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
+                is VariantPrompt.Ready -> {
+                val sources = prompt.variants.variantSources()
+                itemsIndexed(prompt.variants, contentType = { _, _ -> "variant" }) { index, variant ->
                     if (index > 0) HorizontalDivider(color = Palette.Outline)
                     Row(
                         Modifier
@@ -502,7 +526,10 @@ internal fun VariantPickerSheet(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(variant.label, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(variant.region?.let { regionLabel(it) }, variant.sizeBytes?.takeIf { it > 0 }?.formatBytes(), variant.note)
+                            val meta = listOfNotNull(
+                                variant.region?.let { regionLabel(it) }, variant.sizeBytes?.takeIf { it > 0 }?.formatBytes(), variant.note,
+                                variant.sourceLabel(sources, sourceName),
+                            )
                             if (meta.isNotEmpty()) {
                                 Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
                             }
@@ -511,7 +538,19 @@ internal fun VariantPickerSheet(
                         Icon(Icons.Rounded.Download, stringResource(R.string.common_download), Modifier.size(20.dp), tint = Palette.Cyan)
                     }
                 }
+                }
             }
         }
     }
 }
+
+/** Fontes dos arquivos de uma lista: com mais de uma, cada arquivo diz de onde vem. */
+@Composable
+private fun SourceInfo.label(): String = nameRes?.let { stringResource(it) } ?: name
+
+internal fun List<RomVariant>.variantSources(): Set<String> = mapNotNullTo(LinkedHashSet()) { it.origin?.sourceId }
+
+/** "via RomsFun", só quando a lista mistura fontes. */
+@Composable
+internal fun RomVariant.sourceLabel(sources: Set<String>, sourceName: (String) -> String?): String? =
+    origin?.sourceId?.takeIf { sources.size > 1 }?.let(sourceName)?.let { stringResource(R.string.cgame_via, it) }

@@ -17,6 +17,8 @@
 
 package com.swordfish.libretrodroid;
 
+import android.view.Surface;
+
 import java.util.List;
 
 public class LibretroDroid {
@@ -150,4 +152,8 @@ public class LibretroDroid {
     public static native long netplayFrame();
     public static native long getRunCount();
     public static native double getContentFps();
+    public static native void setCaptureSurface(Surface surface, int width, int height);
+    public static native void setAudioCapture(boolean enabled);
+    public static native int readAudioCapture(short[] buffer);
+    public static native int getAudioSampleRate();
 }

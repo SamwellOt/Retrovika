@@ -32,6 +32,7 @@
 #include "log.h"
 #include "core.h"
 #include "audio.h"
+#include "capture.h"
 #include "video.h"
 #include "renderers/renderer.h"
 #include "fpssync.h"
@@ -144,6 +145,10 @@ public:
 
     void setAudioEnabled(bool enabled);
 
+    Capture& getCapture() { return capture; }
+    /** Taxa real das amostras que o núcleo entrega (já com o ajuste ao refresh da tela). */
+    int getAudioSampleRate() const { return audioSampleRate; }
+
     void setShaderConfig(ShaderManager::Config shaderConfig);
 
     void resetGlobalVariables();
@@ -200,6 +205,8 @@ private:
     std::unique_ptr<Video> video;
     std::unique_ptr<FPSSync> fpsSync;
     std::unique_ptr<Input> input;
+    // Protege [input]: pause/resume o trocam na thread principal enquanto eventos chegam pela thread GL.
+    std::mutex inputLock;
     std::unique_ptr<Rumble> rumble;
     std::unique_ptr<Netplay> netplay;
     std::atomic<uint64_t> runCount {0};
@@ -207,6 +214,9 @@ private:
     std::atomic<int64_t> netplayState {-1};
     std::atomic<uint32_t> netplayFrameCount {0};
     double contentFps = 60.0;
+
+    Capture capture;
+    int audioSampleRate = 0;
 };
 
 } //namespace libretrodroid

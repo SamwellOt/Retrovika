@@ -75,6 +75,18 @@ public:
 
     void renderFrame();
 
+    /** Houve quadro novo na janela desde a última chamada (o repetido não é redesenhado). */
+    bool takeFrameRendered();
+
+    /**
+     * Copia a área do jogo da janela (superfície atual) para uma textura própria. Depois, com a superfície
+     * do encoder atual, [drawCapture] desenha essa cópia nela. Duas cópias comuns em vez de ler de uma
+     * superfície e escrever em outra: no ANGLE essa leitura cruzada saía na escala da superfície errada.
+     * Exigem GLES 3 (glBlitFramebuffer).
+     */
+    bool copyForeground();
+    void drawCapture(int targetWidth, int targetHeight);
+
 private:
     void drawFrame();
 
@@ -106,6 +118,12 @@ private:
     std::optional<ShaderManager::Config> loadedShaderType = std::nullopt;
 
     bool isDirty = false;
+    bool frameRendered = false;
+
+    GLuint captureFramebuffer = 0;
+    GLuint captureTexture = 0;
+    int captureWidth = 0;
+    int captureHeight = 0;
     bool skipDuplicateFrames = false;
     bool hardwareAccelerated = false;
 

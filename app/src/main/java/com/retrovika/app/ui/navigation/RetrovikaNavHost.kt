@@ -169,7 +169,10 @@ fun RetrovikaNavHost() {
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
     // de todas as pastas a cada vez deixava o menu lento. Roda no escopo do app: se a Activity for
     // recriada no meio da varredura, ela não é cancelada (e a flag já marcada impediria refazê-la).
-    LaunchedEffect(Unit) { app.scope.launch { app.library.rescanOnStartup() } }
+    LaunchedEffect(Unit) {
+        app.scope.launch { app.library.rescanOnStartup() }
+        app.scope.launch { app.updater.checkOnStartup(app.settings.current().checkUpdates) }
+    }
 
     Scaffold(
         containerColor = Palette.Ink,

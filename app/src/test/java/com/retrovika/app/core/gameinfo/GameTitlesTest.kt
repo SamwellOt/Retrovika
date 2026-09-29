@@ -68,6 +68,32 @@ class GameTitlesTest {
     }
 
     @Test
+    fun `aceita titulo da base com palavras que o site de rom omitiu`() {
+        val rom = "Hajime no Ippo Portable - Victorious Spirits"
+        assertEquals(2, GameTitles.extraWords(rom, "Hajime no Ippo: The Fighting! Portable - Victorious Spirits"))
+        assertEquals(0, GameTitles.extraWords("Pokemon Red", "Pokémon Red"))
+        // Falta uma palavra do título da ROM: é outro jogo.
+        assertEquals(null, GameTitles.extraWords(rom, "Hajime no Ippo: The Fighting! 2 - Victorious Road"))
+        // Sobra só o número ou o numeral da sequência.
+        assertEquals(null, GameTitles.extraWords("Tekken", "Tekken 2"))
+        assertEquals(null, GameTitles.extraWords("Final Fantasy Tactics", "Final Fantasy Tactics II"))
+        assertEquals(null, GameTitles.extraWords("Super Mario Bros", "Super Mario Bros 3"))
+        // Título de uma palavra só aceita o idêntico.
+        assertEquals(null, GameTitles.extraWords("Tetris", "Tetris Plus"))
+        assertEquals(null, GameTitles.extraWords("Mega Man", "Mega Man X Command Mission Special Edition"))
+    }
+
+    @Test
+    fun `buscas pelo nome inteiro depois pelos pedacos`() {
+        assertEquals(
+            listOf("Hajime no Ippo Portable - Victorious Spirits", "Victorious Spirits", "Hajime no Ippo"),
+            GameTitles.searchQueries("Hajime no Ippo Portable - Victorious Spirits"),
+        )
+        assertEquals(listOf("Chrono Trigger"), GameTitles.searchQueries("Chrono Trigger"))
+        assertEquals(listOf("Super Mario World 2: Yoshi's Island", "Yoshi's Island", "Super Mario World"), GameTitles.searchQueries("Super Mario World 2: Yoshi's Island"))
+    }
+
+    @Test
     fun `reconhece a plataforma do console pelo slug ou pelo nome`() {
         assertTrue(Platforms.matches("snes", listOf("sfam"), emptyList()))
         assertTrue(Platforms.matches("psx", emptyList(), listOf("PlayStation")))

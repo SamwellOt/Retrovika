@@ -69,16 +69,6 @@ data class BackloggdInfo(
     val rating: Double?,
     val ratingCount: Int?,
     val histogram: List<Int>,
-    val plays: String?,
-    val playing: String?,
-    val backlogs: String?,
-    val wishlists: String?,
-    val lists: String?,
-    val reviewCount: String?,
-    val likes: String?,
-    val timeAverage: String?,
-    val timeToFinish: String?,
-    val timeToMaster: String?,
     val igdbUrl: String?,
     val reviews: List<BackloggdReview> = emptyList(),
     /** O pedido das reviews falhou: o resto vale, mas não fica no cache (a próxima visita tenta de novo). */
@@ -122,4 +112,6 @@ data class WikiInfo(
     val links: List<ExternalLink>,
     /** Slug do jogo no IGDB, que o Backloggd também usa. */
     val igdbSlug: String?,
+    /** ID do jogo no HowLongToBeat (P2816), de onde vêm os tempos de jogo. */
+    val hltbId: String? = null,
 )

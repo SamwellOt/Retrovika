@@ -46,6 +46,8 @@
     <!-- Fontes do catálogo -->
     <string name="catalog_all_sources">All sources</string>
     <string name="catalog_all_sources_description">Searches every site for the same title at once and shows where you can download it.</string>
+    <string name="catalog_roms">Roms</string>
+    <string name="catalog_roms_description">ROMs and ISOs of commercial games from several sites at once (CDRomance and RomsFun). The site of each file shows up when you download it.</string>
     <string name="catalog_homebrewhub_description">Thousands of free indie games for GB, GBC, GBA and NES.</string>
     <string name="catalog_archive_description">Software hosted on archive.org.</string>
     <string name="catalog_cdromance_description">Large collection of ROMs and ISOs for many consoles, with direct downloads.</string>
@@ -88,4 +90,12 @@
     <string name="explore_info_toggle">About this source</string>
     <string name="explore_waiting_slow">The sites that already answered have no games for this filter. Still waiting for the slower ones (the Internet Archive can take a few seconds)…</string>
     <string name="explore_open_game">Open game page</string>
+
+    <string name="catalog_romsfun_description">Huge collection, including consoles CDRomance lacks (3DS, Wii, arcade, 3DO, Amiga, MSX…). Pages load through a hidden browser because of the site\'s protection.</string>
+    <string name="web_check_blocked">%s asked for a verification that couldn\'t be passed automatically. Open the site in the in-app browser and try again.</string>
+    <string name="romsfun_link_failed">RomsFun didn\'t generate the download link: %s</string>
+    <string name="romsfun_link_invalid">The download server refused the link (RomsFun limits downloads per connection). Wait a few minutes and try again.</string>
+    <string name="download_server_busy">The download server is busy right now. Try again in a few minutes.</string>
+    <string name="download_archive_password">%s is password-protected and the known password didn\'t work</string>
+    <string name="romsfun_only_cia">This game is only available as .cia (a format for installing on a real 3DS), which the 3DS core can\'t run.</string>
 </resources>

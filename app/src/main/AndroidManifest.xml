@@ -3,10 +3,16 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Jogar pela rede: trava o Wi-Fi no modo de baixa latência enquanto o servidor está ligado (RemotePlay). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Núcleos sem a VFS do libretro (Play!, bsnes…) precisam do caminho real dos jogos de pastas vinculadas.
          Só é pedida quando um desses jogos é aberto (StorageAccess). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Atualização pelo próprio app (AppUpdater): instala o APK da release nova do GitHub. A segunda
+         deixa o Android 12+ atualizar sem confirmação quando a versão instalada veio do próprio app. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -87,5 +93,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
             android:resizeableActivity="true"
             android:theme="@style/Theme.Retrovika.Game" />
+
+        <receiver android:name=".core.update.UpdateInstallReceiver" android:exported="false" />
     </application>
 </manifest>

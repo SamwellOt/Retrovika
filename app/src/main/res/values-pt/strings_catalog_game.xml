@@ -46,20 +46,23 @@
     <string name="cgame_fact_added">Adicionado em</string>
     <string name="cgame_fact_license">Licença</string>
     <string name="cgame_community">Comunidade Backloggd</string>
-    <string name="cgame_community_subtitle">Notas e atividade dos jogadores do Backloggd</string>
+    <string name="cgame_community_subtitle">Notas e reviews dos jogadores do Backloggd</string>
     <string name="cgame_avg_rating">Nota média</string>
     <string name="cgame_distribution">Como os jogadores avaliaram</string>
-    <string name="cgame_stat_plays">Jogaram</string>
-    <string name="cgame_stat_playing">Jogando</string>
-    <string name="cgame_stat_backlogs">No backlog</string>
-    <string name="cgame_stat_wishlists">Desejos</string>
-    <string name="cgame_stat_lists">Listas</string>
-    <string name="cgame_stat_reviews">Reviews</string>
-    <string name="cgame_stat_likes">Curtidas</string>
     <string name="cgame_time">Tempo de jogo</string>
-    <string name="cgame_time_average">Média</string>
-    <string name="cgame_time_finish">Para terminar</string>
-    <string name="cgame_time_master" formatted="false">Para 100%</string>
+    <string name="cgame_time_subtitle">Quanto os jogadores levaram, segundo o HowLongToBeat</string>
+    <string name="cgame_hltb_main">História principal</string>
+    <string name="cgame_hltb_extras">História + extras</string>
+    <string name="cgame_hltb_completionist" formatted="false">Completista (100%)</string>
+    <string name="cgame_hltb_all">Todos os estilos</string>
+    <string name="cgame_hltb_speedrun">Speedrun</string>
+    <string name="cgame_hltb_hours">%1$s h</string>
+    <string name="cgame_hltb_minutes">%1$d min</string>
+    <plurals name="cgame_hltb_players">
+        <item quantity="one">%1$s jogador</item>
+        <item quantity="other">%1$s jogadores</item>
+    </plurals>
+    <string name="cgame_open_hltb">Abrir no HowLongToBeat</string>
     <string name="cgame_reviews">Reviews dos jogadores</string>
     <string name="cgame_review_likes">%d curtidas</string>
     <string name="cgame_more_reviews">Mais reviews</string>

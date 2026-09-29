@@ -16,6 +16,7 @@
  */
 
 #include <jni.h>
+#include <android/native_window_jni.h>
 
 #include <EGL/egl.h>
 
@@ -170,6 +171,45 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRelaxed
     jboolean relaxed
 ) {
     Environment::getInstance().setRelaxedGlesVersion(relaxed);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setCaptureSurface(
+    JNIEnv* env,
+    jclass obj,
+    jobject surface,
+    jint width,
+    jint height
+) {
+    ANativeWindow* window = surface != nullptr ? ANativeWindow_fromSurface(env, surface) : nullptr;
+    LibretroDroid::getInstance().getCapture().setWindow(window, width, height);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAudioCapture(
+    JNIEnv* env,
+    jclass obj,
+    jboolean enabled
+) {
+    LibretroDroid::getInstance().getCapture().setAudioEnabled(enabled);
+}
+
+JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_readAudioCapture(
+    JNIEnv* env,
+    jclass obj,
+    jshortArray buffer
+) {
+    jsize length = env->GetArrayLength(buffer);
+    jshort* data = env->GetShortArrayElements(buffer, nullptr);
+    if (data == nullptr) return 0;
+    size_t count = LibretroDroid::getInstance().getCapture().readAudio(data, length);
+    env->ReleaseShortArrayElements(buffer, data, 0);
+    return (jint) count;
+}
+
+JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getAudioSampleRate(
+    JNIEnv* env,
+    jclass obj
+) {
+    return LibretroDroid::getInstance().getAudioSampleRate();
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setControllerType(

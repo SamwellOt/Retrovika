@@ -63,10 +63,8 @@ class GameInfoNetworkTest {
         assertTrue(chrono.rating!! in 3.5..5.0)
         assertTrue(chrono.ratingCount!! > 1000)
         assertEquals(10, chrono.histogram.size)
-        assertNotNull(chrono.plays)
-        assertNotNull(chrono.timeToFinish)
         assertTrue("sem reviews", chrono.reviews.isNotEmpty())
-        println("  ${chrono.rating} (${chrono.ratingCount}) · ${chrono.plays} jogaram · ${chrono.timeToFinish} · ${chrono.reviews.size} reviews · ${chrono.platforms}")
+        println("  ${chrono.rating} (${chrono.ratingCount}) · ${chrono.reviews.size} reviews · ${chrono.platforms}")
 
         val mario = timed("Backloggd · Super Mario 64 (N64)") { client.find("Super Mario 64 (USA)", "n64") }
         assertEquals("super-mario-64", mario?.slug)
@@ -75,6 +73,10 @@ class GameInfoNetworkTest {
         val psx = timed("Backloggd · Crash Bandicoot (PS1)") { client.find("Crash Bandicoot", "psx") }
         assertNotNull("Crash Bandicoot de PS1 não encontrado", psx)
         println("  ${psx!!.slug} · ${psx.rating} · ${psx.platforms}")
+
+        // Nenhum "Sonic the Hedgehog 2" saiu no PS1 (o CDRomance o lista lá): fica o original.
+        val sonic = timed("Backloggd · Sonic the Hedgehog 2 (fora do console)") { client.find("Sonic The Hedgehog 2", "psx") }
+        assertEquals("sonic-the-hedgehog-2", sonic?.slug)
 
         val none = timed("Backloggd · título inexistente") { client.find("Jogo Que Nao Existe Xyzzy", "gba") }
         assertEquals(null, none)
@@ -117,6 +119,18 @@ class GameInfoNetworkTest {
         val jp = timed("Nome em inglês · Tokimeki Memorial") { wiki.otherTitle("Tokimeki Memorial (Japan)") }
         println("  $jp")
         assertTrue("$jp", jp == null || GameTitles.same(jp.title, "Tokimeki Memorial"))
+    }
+
+    @Test
+    fun `howlongtobeat traz os tempos pelo id do wikidata`() = runBlocking {
+        val wiki = WikiClient()
+        val mario = timed("Wikidata · Super Mario 64 (ID do HLTB)") { wiki.find("Super Mario 64", "en", igdbSlug = "super-mario-64") }
+        val id = mario?.hltbId
+        assertNotNull("Wikidata sem o ID do HowLongToBeat", id)
+        val info = timed("HowLongToBeat · Super Mario 64") { HowLongToBeatClient().game(id!!) }
+        assertNotNull("página do HowLongToBeat sem tempos", info)
+        assertTrue(info!!.times.any { it.kind == HltbTime.Kind.MAIN && it.seconds > 3600 && it.count > 100 })
+        println("  " + info.times.joinToString(" · ") { "${it.kind} ${it.seconds / 3600.0}h (${it.count})" })
     }
 
     @Test

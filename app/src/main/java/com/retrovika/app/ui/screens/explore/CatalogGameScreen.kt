@@ -33,11 +33,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.automirrored.rounded.ViewList
-import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.Business
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
@@ -56,7 +56,6 @@ import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Numbers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Star
@@ -66,7 +65,6 @@ import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Today
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VideogameAsset
-import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -117,6 +116,8 @@ import com.retrovika.app.core.catalog.RomVariant
 import com.retrovika.app.core.catalog.downloadKey
 import com.retrovika.app.core.catalog.regionOf
 import com.retrovika.app.core.gameinfo.BackloggdInfo
+import com.retrovika.app.core.gameinfo.HltbInfo
+import com.retrovika.app.core.gameinfo.HltbTime
 import com.retrovika.app.core.gameinfo.BackloggdReview
 import com.retrovika.app.core.gameinfo.ExternalLink
 import com.retrovika.app.core.gameinfo.ReviewScore
@@ -129,6 +130,7 @@ import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
+import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.GameCover
 import com.retrovika.app.ui.components.GhostButton
@@ -175,7 +177,10 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     val tasks by app.downloads.tasks.collectAsStateWithLifecycle()
     val task = remember(tasks, entryKey) { tasks.firstOrNull { it.entryKey == entry.downloadKey } }
     val system = Systems.byId(entry.systemId)
-    val sourceName = remember(entry.sourceId) { app.catalog.source(entry.sourceId).name }
+    // A ficha (notas, descrição, downloads) é de uma fonte; os arquivos podem vir de todas as mescladas na entrada.
+    val sourceName = remember(state.detailsSourceId) { app.catalog.source(state.detailsSourceId).name }
+    val sourceNames = remember(entry) { entry.sourceIds.map { app.catalog.source(it).name } }
+    val nameOf = remember { { id: String -> app.catalog.sources.firstOrNull { it.id == id }?.name } }
     var viewer by remember { mutableStateOf<Int?>(null) }
 
     val backloggd = state.backloggd.value
@@ -194,7 +199,7 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
                 ScoresRow(state, sourceName, locale)
             }
             item(key = "download", contentType = "download") {
-                DownloadPanel(state, task, sourceName, onDownload = vm::download, onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } }, onOpenDownloads = onOpenDownloads)
+                DownloadPanel(state, task, sourceNames.joinToString(" & "), onDownload = vm::download, onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } }, onOpenDownloads = onOpenDownloads)
             }
             item(key = "pills", contentType = "pills") { QuickFacts(source, state.sizes, locale) }
             item(key = "about", contentType = "about") { About(state, sourceName) }
@@ -205,8 +210,11 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
             item(key = "community", contentType = "community") {
                 Community(state.backloggd, entry.title, locale, onOpen = { CatalogGameFormat.openUrl(context, it) })
             }
-            item(key = "files", contentType = "files") { Files(state, onDownload = vm::download) }
-            item(key = "links", contentType = "links") { Links(state, sourceName, onOpen = { CatalogGameFormat.openUrl(context, it) }) }
+            item(key = "playtime", contentType = "playtime") {
+                PlayTime(state.hltb, locale, onOpen = { CatalogGameFormat.openUrl(context, it) })
+            }
+            item(key = "files", contentType = "files") { Files(state, nameOf, onDownload = vm::download) }
+            item(key = "links", contentType = "links") { Links(state, sourceName, nameOf, onOpen = { CatalogGameFormat.openUrl(context, it) }) }
             item(key = "footer", contentType = "footer") {
                 Text(
                     stringResource(R.string.cgame_attribution),
@@ -232,7 +240,7 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     }
 
     viewer?.let { start -> ScreenshotViewer(screenshots, start, onDismiss = { viewer = null }) }
-    prompt?.let { VariantPickerSheet(it, onPick = { _, v -> vm.download(v) }, onDismiss = vm::dismissPrompt) }
+    prompt?.let { VariantPickerSheet(it, sourceName = nameOf, onPick = { _, v -> vm.download(v) }, onDismiss = vm::dismissPrompt) }
 }
 
 // ---------------------------------------------------------------- cabeçalho
@@ -459,7 +467,9 @@ private fun DownloadPanel(
         when (task?.status) {
             DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.EXTRACTING -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val busy = busyWaitText(task)
                     val label = when {
+                        busy != null -> busy
                         task.status == DownloadStatus.QUEUED -> stringResource(R.string.cgame_queued)
                         task.status == DownloadStatus.EXTRACTING -> stringResource(R.string.cgame_extracting)
                         task.progress >= 0f -> stringResource(R.string.cgame_downloading, (task.progress * 100).toInt())
@@ -811,42 +821,6 @@ private fun CommunityContent(info: BackloggdInfo, locale: Locale, onOpen: (Strin
             }
         }
 
-        // Atividade
-        val stats = listOfNotNull(
-            info.plays?.let { Triple(it, R.string.cgame_stat_plays, Icons.Rounded.SportsEsports) },
-            info.playing?.let { Triple(it, R.string.cgame_stat_playing, Icons.Rounded.PlayArrow) },
-            info.backlogs?.let { Triple(it, R.string.cgame_stat_backlogs, Icons.AutoMirrored.Rounded.ViewList) },
-            info.wishlists?.let { Triple(it, R.string.cgame_stat_wishlists, Icons.Rounded.Whatshot) },
-            info.lists?.let { Triple(it, R.string.cgame_stat_lists, Icons.Rounded.Collections) },
-            info.reviewCount?.let { Triple(it, R.string.cgame_stat_reviews, Icons.Rounded.Star) },
-            info.likes?.let { Triple(it, R.string.cgame_stat_likes, Icons.Rounded.Favorite) },
-        )
-        if (stats.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 4) {
-                stats.forEach { (value, label, icon) -> StatTile(value, stringResource(label), icon, Modifier.weight(1f)) }
-            }
-        }
-
-        // Tempo de jogo
-        val times = listOfNotNull(
-            info.timeAverage?.let { Triple(it, R.string.cgame_time_average, Icons.Rounded.Timer) },
-            info.timeToFinish?.let { Triple(it, R.string.cgame_time_finish, Icons.Rounded.Flag) },
-            info.timeToMaster?.let { Triple(it, R.string.cgame_time_master, Icons.Rounded.EmojiEvents) },
-        )
-        if (times.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Schedule, null, tint = Palette.Sun, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.cgame_time), style = MaterialTheme.typography.titleSmall)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                times.forEach { (value, label, icon) -> TimeTile(value, stringResource(label), icon, Modifier.weight(1f)) }
-            }
-        }
-
         // Reviews
         if (info.reviews.isNotEmpty()) {
             var showAll by rememberSaveable { mutableStateOf(false) }
@@ -868,21 +842,7 @@ private fun CommunityContent(info: BackloggdInfo, locale: Locale, onOpen: (Strin
 }
 
 @Composable
-private fun StatTile(value: String, label: String, icon: ImageVector, modifier: Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(Palette.SurfaceHigh).border(1.dp, Palette.Outline.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 10.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(icon, null, tint = Palette.Cyan, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun TimeTile(value: String, label: String, icon: ImageVector, modifier: Modifier) {
+private fun TimeTile(value: String, label: String, players: String, icon: ImageVector, modifier: Modifier) {
     Column(
         modifier.clip(RoundedCornerShape(16.dp))
             .background(Brush.verticalGradient(listOf(Palette.Sun.copy(alpha = 0.14f), Palette.SurfaceHigh)))
@@ -891,9 +851,54 @@ private fun TimeTile(value: String, label: String, icon: ImageVector, modifier: 
     ) {
         Icon(icon, null, tint = Palette.Sun, modifier = Modifier.size(16.dp))
         Spacer(Modifier.height(6.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(players, style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/**
+ * Tempos do HowLongToBeat: história principal, com extras, 100%, todos os estilos e speedrun, cada um com
+ * quantos jogadores registraram. Só aparece quando o Wikidata liga o jogo a uma página de lá.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlayTime(part: Part<HltbInfo?>, locale: Locale, onOpen: (String) -> Unit) {
+    val info = part.value ?: return
+    Column(Modifier.padding(top = 30.dp)) {
+        SectionHeader(stringResource(R.string.cgame_time))
+        Text(
+            stringResource(R.string.cgame_time_subtitle), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+            modifier = Modifier.padding(horizontal = Gutter, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Column(Modifier.padding(horizontal = Gutter)) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 2) {
+                info.times.forEach { time ->
+                    val (label, icon) = when (time.kind) {
+                        HltbTime.Kind.MAIN -> R.string.cgame_hltb_main to Icons.Rounded.Flag
+                        HltbTime.Kind.EXTRAS -> R.string.cgame_hltb_extras to Icons.Rounded.Explore
+                        HltbTime.Kind.COMPLETIONIST -> R.string.cgame_hltb_completionist to Icons.Rounded.EmojiEvents
+                        HltbTime.Kind.ALL_STYLES -> R.string.cgame_hltb_all to Icons.Rounded.Timer
+                        HltbTime.Kind.SPEEDRUN -> R.string.cgame_hltb_speedrun to Icons.Rounded.Bolt
+                    }
+                    val players = pluralStringResource(R.plurals.cgame_hltb_players, time.count.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), CatalogGameFormat.compact(time.count, locale))
+                    TimeTile(hltbDuration(time.seconds, locale), stringResource(label), players, icon, Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            GhostButton(stringResource(R.string.cgame_open_hltb), { onOpen(info.url) }, Modifier.fillMaxWidth(), icon = Icons.AutoMirrored.Rounded.OpenInNew, tint = Palette.Sun)
+        }
+    }
+}
+
+/** Como o HowLongToBeat mostra: minutos abaixo de 1 h, depois horas arredondadas para a meia hora ("10½ h"). */
+@Composable
+private fun hltbDuration(seconds: Long, locale: Locale): String {
+    if (seconds < 3600) return stringResource(R.string.cgame_hltb_minutes, ((seconds + 30) / 60).toInt().coerceAtLeast(1))
+    val halves = (seconds + 900) / 1800
+    val whole = CatalogGameFormat.integer(halves / 2, locale)
+    return stringResource(R.string.cgame_hltb_hours, if (halves % 2 == 1L) "$whole½" else whole)
 }
 
 @Composable
@@ -939,7 +944,7 @@ private fun ReviewCard(review: BackloggdReview, locale: Locale, onOpen: (String)
 // ---------------------------------------------------------------- arquivos e links
 
 @Composable
-private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
+private fun Files(state: CatalogGameState, sourceName: (String) -> String?, onDownload: (RomVariant) -> Unit) {
     val part = state.variants
     // Um arquivo só já está no botão principal; a lista serve para escolher entre versões.
     if (part is Part.Ready && part.value.size <= 1) return
@@ -957,7 +962,9 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
             when (part) {
                 Part.Loading -> repeat(3) { Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp, vertical = 8.dp).shimmer(RoundedCornerShape(12.dp))) }
                 Part.Failed -> Text(stringResource(R.string.cgame_files_failed), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(14.dp))
-                is Part.Ready -> part.value.forEachIndexed { i, v ->
+                is Part.Ready -> {
+                val sources = part.value.variantSources()
+                part.value.forEachIndexed { i, v ->
                     if (i > 0) HorizontalDivider(color = Palette.Outline.copy(alpha = 0.5f))
                     Row(
                         Modifier.fillMaxWidth().clickable { onDownload(v) }.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -965,12 +972,15 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(v.label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            val meta = listOfNotNull(v.region?.let { regionLabel(it) }, v.sizeBytes?.takeIf { it > 0 }?.formatBytes(), v.note)
+                            val meta = listOfNotNull(
+                                v.region?.let { regionLabel(it) }, v.sizeBytes?.takeIf { it > 0 }?.formatBytes(), v.note, v.sourceLabel(sources, sourceName),
+                            )
                             if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
                         }
                         Spacer(Modifier.width(10.dp))
                         Icon(Icons.Rounded.Download, stringResource(R.string.common_download), tint = Palette.Cyan, modifier = Modifier.size(20.dp))
                     }
+                }
                 }
             }
         }
@@ -979,7 +989,7 @@ private fun Files(state: CatalogGameState, onDownload: (RomVariant) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Links(state: CatalogGameState, sourceName: String, onOpen: (String) -> Unit) {
+private fun Links(state: CatalogGameState, sourceName: String, nameOf: (String) -> String?, onOpen: (String) -> Unit) {
     val backloggd = state.backloggd.value
     val wiki = state.wiki.value
     val links = buildList {
@@ -988,6 +998,8 @@ private fun Links(state: CatalogGameState, sourceName: String, onOpen: (String) 
         addAll(wiki?.links.orEmpty())
         if (wiki?.links.orEmpty().none { it.name == "IGDB" }) backloggd?.igdbUrl?.let { add(ExternalLink("IGDB", it)) }
         (state.source.website ?: state.entry.website)?.let { add(ExternalLink(sourceName, it)) }
+        // As outras páginas do mesmo jogo (outra fonte, ou outra página na mesma).
+        state.entry.members.forEach { m -> m.website?.let { url -> nameOf(m.sourceId)?.let { add(ExternalLink(it, url)) } } }
     }.distinctBy { it.url }
     if (links.isEmpty()) return
     Column(Modifier.padding(top = 30.dp)) {

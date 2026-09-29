@@ -188,6 +188,8 @@ int Input::convertAndroidToLibretroKey(int keyCode) const {
 }
 
 void Input::onKeyEvent(unsigned int port, int action, int keyCode) {
+    // Porta vem do controllerNumber do Android: com mais de 4 controles passaria do fim de pads.
+    if (port >= 4) return;
     int retroKeyCode = convertAndroidToLibretroKey(keyCode);
     if (retroKeyCode == UNKNOWN_KEY) {
         return;
@@ -201,6 +203,7 @@ void Input::onKeyEvent(unsigned int port, int action, int keyCode) {
 }
 
 void Input::onMotionEvent(int port, int motionSource, float xAxis, float yAxis) {
+    if (port < 0 || port >= 4) return;
     switch (motionSource) {
         case Input::MOTION_SOURCE_DPAD:
             pads[port].dpadXAxis = (int) round(xAxis);

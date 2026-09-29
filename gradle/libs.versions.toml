@@ -18,9 +18,10 @@ documentfile = "1.1.0"
 ndk = "27.3.13750724"
 jsoup = "1.18.3"
 commonsCompress = "1.27.1"
+zip4j = "2.11.5"
 xz = "1.10"
-junit = "4.13.2"
 zxing = "3.5.3"
+junit = "4.13.2"
 zxingEmbedded = "4.3.0"
 mlkitTextJapanese = "16.0.1"
 mlkitTranslate = "17.0.3"
@@ -52,9 +53,10 @@ kotlinx-serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
+zip4j = { module = "net.lingala.zip4j:zip4j", version.ref = "zip4j" }
 xz = { module = "org.tukaani:xz", version.ref = "xz" }
-junit = { module = "junit:junit", version.ref = "junit" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+junit = { module = "junit:junit", version.ref = "junit" }
 mlkit-text-japanese = { module = "com.google.android.gms:play-services-mlkit-text-recognition-japanese", version.ref = "mlkitTextJapanese" }
 mlkit-translate = { module = "com.google.mlkit:translate", version.ref = "mlkitTranslate" }
 zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingEmbedded" }

@@ -66,6 +66,7 @@ import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
+import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCover
@@ -261,7 +262,7 @@ private fun DownloadRow(task: DownloadTask, onClick: (() -> Unit)?, actions: @Co
 @Composable
 private fun statusLine(task: DownloadTask): String = when (task.status) {
     DownloadStatus.QUEUED -> stringResource(R.string.downloads_queued)
-    DownloadStatus.DOWNLOADING -> {
+    DownloadStatus.DOWNLOADING -> busyWaitText(task) ?: run {
         val amount = when {
             task.bytesTotal > 0 -> stringResource(R.string.downloads_progress, task.bytesDone.formatBytes(), task.bytesTotal.formatBytes())
             task.bytesDone > 0 -> task.bytesDone.formatBytes()

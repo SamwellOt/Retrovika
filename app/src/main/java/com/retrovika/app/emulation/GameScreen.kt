@@ -315,7 +315,8 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
 }
 
 private enum class MenuTab(@StringRes val label: Int) {
-    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CHEATS(R.string.game_tab_cheats), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core)
+    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CHEATS(R.string.game_tab_cheats), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core),
+    REMOTE(R.string.game_tab_remote)
 }
 
 @Composable
@@ -383,6 +384,7 @@ private fun PauseMenu(
                     MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, system?.name.orEmpty(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
                     MenuTab.CHEATS -> menu.cheats()?.let { CheatsTab(it) }
+                    MenuTab.REMOTE -> RemoteTab()
                 }
             }
         }

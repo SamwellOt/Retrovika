@@ -32,7 +32,6 @@ import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.OnLifecycleEvent
 import androidx.lifecycle.coroutineScope
-import com.swordfish.libretrodroid.KtUtils.awaitUninterruptibly
 import com.swordfish.libretrodroid.gamepad.GamepadsManager
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -232,6 +231,28 @@ class GLRetroView(
     fun getRumbleEvents(): Flow<RumbleEvent> {
         return rumbleEventsSubject
     }
+
+    /** A cópia do quadro para outra superfície usa glBlitFramebuffer, que só existe no GLES 3. */
+    val supportsCapture: Boolean get() = openGLESVersion >= 3
+
+    /**
+     * Cada quadro novo também é copiado para [surface] (a entrada de um encoder), no tamanho dado.
+     * Null para de copiar. A troca vale a partir do próximo quadro.
+     */
+    fun setCaptureSurface(surface: android.view.Surface?, width: Int, height: Int) {
+        LibretroDroid.setCaptureSurface(surface, width, height)
+    }
+
+    /** Liga a cópia do áudio do núcleo, lida com [readCapturedAudio]. */
+    fun setAudioCapture(enabled: Boolean) {
+        LibretroDroid.setAudioCapture(enabled)
+    }
+
+    /** Amostras estéreo intercaladas; devolve quantas foram copiadas para [buffer]. */
+    fun readCapturedAudio(buffer: ShortArray): Int = LibretroDroid.readAudioCapture(buffer)
+
+    /** Taxa das amostras de [readCapturedAudio]; 0 antes de o jogo carregar. */
+    val audioSampleRate: Int get() = LibretroDroid.getAudioSampleRate()
 
     fun getControllers(): Array<Array<Controller>> {
         return LibretroDroid.getControllers()
@@ -479,11 +500,11 @@ class GLRetroView(
         }
 
         val latch = CountDownLatch(1)
-        var result: Any? = null
+        var result: T? = null
         var error: Throwable? = null
         queueEvent {
-            // Uma exceção solta derrubaria a thread GL e a espera abaixo nunca terminaria:
-            // ela é devolvida a quem chamou, que já trata a falha (runCatching).
+            // O erro (ex.: RetroException de um estado incompatível) volta para quem chamou: lançado aqui,
+            // derrubaria a thread GL e o latch nunca seria liberado.
             try {
                 result = block()
             } catch (t: Throwable) {
@@ -493,11 +514,32 @@ class GLRetroView(
             }
         }
 
-        latch.awaitUninterruptibly()
+        // A thread GL pode terminar (superfície destruída) com o pedido ainda na fila: sem prazo, quem
+        // espera ficaria parado para sempre.
+        if (!latch.awaitUninterruptibly(EMULATION_THREAD_TIMEOUT_MS)) {
+            throw RetroException(LibretroDroid.ERROR_GENERIC)
+        }
         error?.let { throw it }
-        // T pode ser anulável (a partida em rede devolve nulo quando o núcleo não gera estado).
         @Suppress("UNCHECKED_CAST")
         return result as T
+    }
+
+    private fun CountDownLatch.awaitUninterruptibly(timeoutMs: Long): Boolean {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        var interrupted = false
+        try {
+            while (true) {
+                val left = deadline - System.nanoTime()
+                if (left <= 0) return count == 0L
+                try {
+                    return await(left, java.util.concurrent.TimeUnit.NANOSECONDS)
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt()
+        }
     }
 
     private fun buildShader(config: ShaderConfig): GLRetroShader {
@@ -598,6 +640,9 @@ class GLRetroView(
 
     companion object {
         private val TAG_LOG = GLRetroView::class.java.simpleName
+
+        /** Espera máxima por um pedido na thread de emulação (estados grandes de PS2/GameCube levam segundos). */
+        private const val EMULATION_THREAD_TIMEOUT_MS = 20_000L
 
         const val MOTION_SOURCE_DPAD = LibretroDroid.MOTION_SOURCE_DPAD
         const val MOTION_SOURCE_ANALOG_LEFT = LibretroDroid.MOTION_SOURCE_ANALOG_LEFT
