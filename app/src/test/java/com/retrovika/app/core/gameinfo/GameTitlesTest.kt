@@ -43,6 +43,9 @@ class GameTitlesTest {
         // Um nome que só aparece dentro de outro não vale: a continuação não é o jogo pedido.
         val sequel = "Doraemon 3 (Japanese: ドラえもん3, Hepburn: Doraemon Surī) is a sequel to Doraemon."
         assertFalse(GameTitles.knownAs(sequel).any { GameTitles.romajiKey(it) == "doraemon" })
+        val wikitext = "''Flower, Sun, and Rain''{{efn|{{Nihongo|Japanese|花と太陽と雨と|Hana to Taiyō to Ame to}}}} is an [[adventure game]]"
+        assertTrue("Hana to Taiyō to Ame to" in GameTitles.wikiNames(wikitext))
+        assertTrue(GameTitles.wikiNames("{{nihongo foot|''X''|エックス|Ekkusu|lead=yes}}").containsAll(listOf("X", "Ekkusu")))
         // "or" só é rótulo como palavra inteira.
         assertEquals(listOf("Orochi"), GameTitles.knownAs("X (Orochi) is"))
     }

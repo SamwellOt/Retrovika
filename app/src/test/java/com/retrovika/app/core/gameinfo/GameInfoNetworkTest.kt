@@ -109,6 +109,9 @@ class GameInfoNetworkTest {
                 runCatching { wiki.searchArticles(query) }.onFailure { println("    erro: $it") }.getOrNull()?.forEach { a ->
                     val romaji = a.redirects.filter { "hana" in it.lowercase() || "taiy" in it.lowercase() }
                     println("    ${a.title} · ${a.description} · ${a.item} · redirecionamentos=$romaji · ${a.intro.take(160).replace('\n', ' ')}")
+                    if ("game" in a.description) {
+                        println("      wikitexto: ${runCatching { GameTitles.wikiNames(wiki.leadWikitext(a.title)) }.getOrElse { it.toString() }}")
+                    }
                 }
             }
         }

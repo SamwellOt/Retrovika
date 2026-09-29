@@ -59,6 +59,24 @@ object GameTitles {
         return parts.map { it.replace(label, "").trim() }.filter { it.isNotBlank() }.toList()
     }
 
+    /**
+     * Nomes em japonês e romanizados que o código de um artigo da Wikipedia declara nas predefinições
+     * de idioma: `{{Nihongo|''Flower, Sun, and Rain''|花と太陽と雨と|Hana to Taiyō to Ame to}}`,
+     * `{{Nihongo foot|…}}`, `{{lang|ja-Latn|…}}`, `{{transl|ja|…}}`.
+     */
+    fun wikiNames(wikitext: String): List<String> =
+        wikiTemplate.findAll(wikitext).flatMap { m ->
+            m.groupValues[1].split('|').asSequence()
+                .filterNot { namedParam.containsMatchIn(it) }
+                .map { it.replace(wikiLink, "$1").replace("'''", "").replace("''", "").trim() }
+                .filter { it.isNotBlank() && !langCode.matches(it) }
+        }.toList()
+
+    private val wikiTemplate = Regex("""\{\{\s*(?:nihongo\w*(?:\s+foot)?|lang|langx|transl)\s*\|([^{}]*)}}""", RegexOption.IGNORE_CASE)
+    private val namedParam = Regex("""^\s*[\w-]+\s*=""")
+    private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)]]""")
+    private val langCode = Regex("""ja(?:-\w+)?""", RegexOption.IGNORE_CASE)
+
     private val label = Regex(
         """^\s*(?:(?:Japanese|Revised Hepburn|Hepburn|romanized|lit\.?|also known as|known as|or)(?![a-z])\s*:?\s*)+""",
         RegexOption.IGNORE_CASE,

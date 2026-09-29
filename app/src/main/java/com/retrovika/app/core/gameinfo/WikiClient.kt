@@ -53,19 +53,38 @@ class WikiClient {
         // Busca pela frase exata (sem aspas, "to", "ame" e "hana" trazem listas e cantoras antes do
         // jogo). A Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda tentativa
         // usa a forma sem vogais longas.
+        val checked = HashMap<String, Boolean>()
+        suspend fun hasName(article: Article): Boolean = checked[article.title] ?: run {
+            val quick = article.redirects + GameTitles.knownAs(article.intro.take(INTRO_CHARS))
+            // A romanização costuma estar numa nota de rodapé ({{Nihongo}} dentro de {{efn}}), que o
+            // resumo não traz: então lê o código da abertura do artigo.
+            val found = quick.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted } ||
+                runCatching { GameTitles.wikiNames(leadWikitext(article.title)) }.getOrDefault(emptyList())
+                    .any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }
+            checked[article.title] = found
+            found
+        }
         for (query in searchQueries(clean)) {
-            val page = searchArticles(query).firstOrNull { p ->
+            val games = searchArticles(query).filter { p ->
                 val description = p.description.lowercase()
-                val isGame = ("game" in description || "video game" in p.intro.lowercase()) && "series" !in description
-                val names = p.redirects + GameTitles.knownAs(p.intro.take(INTRO_CHARS))
-                isGame && names.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }
-            } ?: continue
+                ("game" in description || "video game" in p.intro.lowercase()) && "series" !in description
+            }
+            val page = games.take(MAX_CHECKED).firstOrNull { hasName(it) } ?: continue
             val name = GameTitles.clean(page.title)
             if (GameTitles.same(name, clean)) return null
             val igdb = page.item?.let { runCatching { igdbOf(it) }.getOrNull() }
             return OtherTitle(name, page.item, igdb)
         }
         return null
+    }
+
+    /** O código (wikitexto) da abertura do artigo, com as notas de rodapé dela. */
+    internal suspend fun leadWikitext(title: String): String {
+        val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
+            "action" to "parse", "page" to title, "prop" to "wikitext", "section" to "0",
+            "format" to "json", "formatversion" to "2",
+        ))
+        return json(url)["parse"]?.jsonObject?.get("wikitext")?.jsonPrimitive?.contentOrNull.orEmpty()
     }
 
     internal fun searchQueries(clean: String): List<String> {
@@ -279,5 +298,8 @@ class WikiClient {
 
         /** Quanto da abertura do artigo conta para achar o título (a primeira frase, com folga). */
         const val INTRO_CHARS = 600
+
+        /** Quantos artigos de jogo de cada busca têm o código da abertura lido. */
+        const val MAX_CHECKED = 2
     }
 }
