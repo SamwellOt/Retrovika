@@ -26,6 +26,16 @@ CASES = [
     ("Doraemon", None),
     ("Tobal 2", None),
     ("Sutte Hakkun", None),
+    ("Mother 2 - Gyiyg no Gyakushuu", "EarthBound"),
+    ("Kiki Kaikai - Nazo no Kuro Manto", "Pocky & Rocky"),
+    ("Densetsu no Stafy", "The Legendary Starfy"),
+    ("Chrono Trigger", None),
+    ("Seiken Densetsu 2", "Secret of Mana"),
+    ("Final Fantasy V", None),
+    ("Shin Megami Tensei", None),
+    ("Kirby no Kirakira Kids", "Kirby's Star Stacker"),
+    ("Pocket Monsters Aka", "Pokémon Red and Blue"),
+    ("Kaitou Saint Tail", None),
 ]
 
 
@@ -121,7 +131,43 @@ def wd_entities(t):
     return None
 
 
-STRATEGIES = [("wp-frase", w_phrase), ("wp-redirect", w_redirect), ("wp-nearmatch", w_nearmatch),
+def wd_strict(t):
+    """Proposta: wbsearchentities, só casamento inteiro (rótulo ou apelido) e item de jogo, não série."""
+    want = romaji(t)
+    for q in variants(t):
+        r = get("https://www.wikidata.org/w/api.php?" + urllib.parse.urlencode({
+            "action": "wbsearchentities", "search": q, "language": "en", "type": "item", "limit": "7",
+            "format": "json"}))
+        for h in r.get("search", []):
+            d = h.get("description", "").lower()
+            if "game" not in d or "series" in d or "franchise" in d:
+                continue
+            if romaji(h.get("match", {}).get("text", "")) == want:
+                return f"{h.get('label')} ({h['id']}, {h.get('description')})"
+    return None
+
+
+def romaji(s):
+    k = key(s)
+    for a, b in [("ou", "o"), ("oo", "o"), ("uu", "u"), ("aa", "a")]:
+        k = k.replace(a, b)
+    return k
+
+
+def w_snippet(t):
+    """Busca por frase com o trecho em volta do nome, para ver o contexto."""
+    out = []
+    for q in dict.fromkeys([key(t), romaji(t)]):
+        r = wp({"list": "search", "srsearch": f'"{q}"', "srlimit": "3", "srprop": "snippet"})
+        for h in r.get("query", {}).get("search", []):
+            snip = re.sub(r"<[^>]+>", "", h["snippet"]).replace("\n", " ")
+            out.append(f"{h['title']}: …{snip[:170]}…")
+        if out:
+            break
+    return " || ".join(out) or None
+
+
+STRATEGIES = [("wd-estrito", wd_strict), ("wp-frase", w_phrase), ("wp-redirect", w_redirect), ("wp-nearmatch", w_nearmatch),
               ("wd-busca", wd_search), ("wd-entities", wd_entities)]
 
 score = {name: [0, 0, 0] for name, _ in STRATEGIES}  # certo, errado, nada
@@ -142,6 +188,13 @@ for title, expected in CASES:
             ok = found is not None and key(name_found) == key(expected)
         score[name][0 if ok else (1 if found else 2)] += 1
         print(f"  {name:13} {ms:5} ms  {'OK ' if ok else '-- '} {got}")
+
+print("\nTRECHOS da busca por frase:")
+for title, expected in CASES:
+    try:
+        print(f"  {title[:30]:30} {w_snippet(title)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  {title[:30]:30} ERRO {e}")
 
 print("\nPLACAR (certo / errado / nada):")
 for name, (a, b, c) in score.items():
