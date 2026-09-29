@@ -18,7 +18,7 @@ class GameInfoRepository(
     /**
      * O jogo no Backloggd, ou nulo quando não há um jogo de mesmo nome no console. O título original
      * vem primeiro (há jogos que só existem com o nome japonês, no site de ROM e no Backloggd); só
-     * quando ele não acha nada, tenta o nome em inglês que a Wikipedia dá ao jogo.
+     * quando ele não acha nada, tenta o nome em inglês e o slug do IGDB pelo Wikidata/Wikipedia.
      */
     suspend fun backloggd(title: String, systemId: String): BackloggdInfo? =
         cached(backloggdCache, "$systemId|${GameTitles.key(title)}") {
@@ -26,7 +26,7 @@ class GameInfoRepository(
         }
 
     /**
-     * O nome em inglês pela Wikipedia. Falha dela vale como "sem outro nome", mas o cancelamento (a
+     * O nome em inglês pelo Wikidata/Wikipedia. Falha deles vale como "sem outro nome", mas o cancelamento (a
      * página fechou) segue adiante: senão viraria um "não encontrado" guardado no cache.
      */
     private suspend fun otherTitle(title: String): WikiClient.OtherTitle? = try {

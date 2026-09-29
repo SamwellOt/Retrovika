@@ -70,7 +70,7 @@ class BackloggdClient(
                 ?.let { return it }
         }
         val clean = GameTitles.clean(title).ifBlank { return null }
-        val candidates = suggestions(clean).filter { GameTitles.same(it.title, clean) }
+        val candidates = suggestions(clean).filter { GameTitles.sameRomaji(it.title, clean) }
             .sortedWith(compareBy(nullsLast<Int>()) { it.year })
         if (candidates.isEmpty()) return null
         if (!Platforms.knows(systemId)) return if (candidates.size == 1) game(candidates.first().slug) else null

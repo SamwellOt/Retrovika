@@ -33,6 +33,37 @@ class GameTitlesTest {
         assertEquals("hana to taiyo to ame to", GameTitles.romajiKey("Hana to Taiyoo to Ame to"))
         assertEquals("ryu ga gotoku", GameTitles.romajiKey("Ryuu ga Gotoku"))
         assertEquals(GameTitles.romajiKey("Shinpan"), GameTitles.romajiKey("Shimpan"))
+        assertTrue(GameTitles.sameRomaji("Ganbare Goemon - Yuki Hime Kyuushutsu Emaki", "Ganbare Goemon: Yukihime Kyūshutsu Emaki"))
+        assertFalse(GameTitles.sameRomaji("Rockman X", "Rockman X4"))
+    }
+
+    @Test
+    fun `gera as grafias de busca do romaji`() {
+        assertEquals(
+            listOf("Mother 2 - Gyiyg no Gyakushuu", "Mother 2 - Gyiyg no Gyakushū", "Mother 2: Gyiyg no Gyakushuu", "Mother 2: Gyiyg no Gyakushū"),
+            GameTitles.romajiVariants("Mother 2 - Gyiyg no Gyakushuu"),
+        )
+        assertEquals(listOf("Tobal 2"), GameTitles.romajiVariants("Tobal 2"))
+    }
+
+    @Test
+    fun `reconhece o nome japones no trecho da busca`() {
+        val m = { s: String -> "<span class=\"searchmatch\">$s</span>" }
+        assertTrue(WikiClient.namesJapaneseTitle("also known by its Japanese title ${m("Seiken")} ${m("Densetsu")} ${m("3")}, is a"))
+        assertTrue(WikiClient.namesJapaneseTitle("(Japanese: 花と太陽と雨と, Hepburn: ${m("Hana")} ${m("to")} ${m("Taiyō")} ${m("to")} ${m("Ame")} ${m("to")}) is"))
+        // O nome continua: é outro jogo.
+        assertFalse(WikiClient.namesJapaneseTitle("known in Japan as ${m("Rockman")} ${m("X")} DiVE, was a 2020 mobile game"))
+        // Sem menção ao Japão por perto.
+        assertFalse(WikiClient.namesJapaneseTitle("It is a spinoff of the ${m("Akumajou")} ${m("Dracula")} series."))
+    }
+
+    @Test
+    fun `so descricao de jogo conta como jogo`() {
+        assertTrue(WikiClient.isGameDescription("1993 video game"))
+        assertTrue(WikiClient.isGameDescription("1997 Satellaview game"))
+        assertFalse(WikiClient.isGameDescription("video game series"))
+        assertFalse(WikiClient.isGameDescription("Japanese video game company"))
+        assertFalse(WikiClient.isGameDescription(null))
     }
 
     @Test

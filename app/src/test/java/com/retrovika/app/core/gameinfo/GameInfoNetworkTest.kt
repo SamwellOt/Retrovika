@@ -101,12 +101,22 @@ class GameInfoNetworkTest {
     @Test
     fun `titulo japones romanizado acha o nome em ingles`() = runBlocking {
         val wiki = WikiClient()
-        val other = timed("Wikipedia · Hana to Taiyou to Ame to") { wiki.otherTitle("Hana to Taiyou to Ame to (Japan)") }
-        println("  $other")
-        assertNotNull("nome em inglês não encontrado", other)
-        assertTrue(other!!.title, GameTitles.same(other.title, "Flower, Sun, and Rain"))
-        // O mesmo nome nos dois lados não é "outro título".
-        assertEquals(null, wiki.otherTitle("Chrono Trigger (USA)"))
+        // Um caso de cada fonte: apelido no Wikidata, redirecionamento e busca pela frase na Wikipedia.
+        val cases = listOf(
+            "Bokujou Monogatari (Japan)" to "Harvest Moon",
+            "Rockman X (Japan)" to "Mega Man X",
+            "Kirby no Kirakira Kids (Japan)" to "Kirby's Star Stacker",
+            "Hana to Taiyou to Ame to (Japan)" to "Flower, Sun, and Rain",
+        )
+        for ((rom, english) in cases) {
+            val other = timed("Nome em inglês · $rom") { wiki.otherTitle(rom) }
+            println("  $other")
+            assertTrue("$rom -> $other", other != null && GameTitles.same(other.title, english))
+        }
+        // Jogo que só existe com o nome japonês: não vira outro jogo.
+        val jp = timed("Nome em inglês · Tokimeki Memorial") { wiki.otherTitle("Tokimeki Memorial (Japan)") }
+        println("  $jp")
+        assertTrue("$jp", jp == null || GameTitles.same(jp.title, "Tokimeki Memorial"))
     }
 
     @Test

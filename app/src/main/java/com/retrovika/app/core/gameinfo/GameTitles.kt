@@ -47,6 +47,24 @@ object GameTitles {
             .replace(Regex("""m(?=[bmp])"""), "n")
             // A partícula を aparece como "wo" ou "o".
             .replace(Regex("""\bwo\b"""), "o")
+
+    /**
+     * Grafias com que buscar um título romanizado: como veio, em Hepburn com mácron ("Taiyou" vira
+     * "Taiyō", como a Wikipedia escreve) e com ": " no lugar de " - " ("Mother 2 - Gyiyg…" vira
+     * "Mother 2: Gyiyg…").
+     */
+    fun romajiVariants(title: String): List<String> {
+        fun hepburn(s: String) = s.replace("ou", "ō").replace("oo", "ō").replace("uu", "ū").replace("Ou", "Ō").replace("Uu", "Ū")
+        val colon = title.replace(" - ", ": ")
+        return listOf(title, hepburn(title), colon, hepburn(colon)).distinct()
+    }
+
+    /**
+     * Mesmo título para os dois jeitos de romanizar e de separar palavras: "Yuki Hime Kyuushutsu" e
+     * "Yukihime Kyūshutsu" são iguais.
+     */
+    fun sameRomaji(a: String, b: String): Boolean =
+        romajiKey(a).replace(" ", "") == romajiKey(b).replace(" ", "")
 }
 
 /**

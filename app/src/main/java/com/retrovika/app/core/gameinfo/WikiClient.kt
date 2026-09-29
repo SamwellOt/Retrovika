@@ -12,6 +12,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.jsoup.parser.Parser
 
 /**
  * Wikidata + Wikipedia: ficha técnica do jogo (publicadora, série, direção, trilha sonora,
@@ -20,6 +21,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class WikiClient {
     private val wikidata = "https://www.wikidata.org/w/api.php"
+    private val wikipedia = "https://en.wikipedia.org/w/api.php"
     private val headers = mapOf("User-Agent" to "Retrovika/0.2 (Android; https://github.com/SamwellOt/Retrovika)")
 
     /**
@@ -34,52 +36,98 @@ class WikiClient {
         return entity(id, lang)
     }
 
-    /** Como a Wikipedia em inglês chama o jogo: título, item do Wikidata e slug do IGDB (= Backloggd). */
+    /** Outro nome do jogo, com o item do Wikidata e o slug do IGDB (= Backloggd) quando há. */
     data class OtherTitle(val title: String, val item: String?, val igdbSlug: String?)
 
     /**
      * O nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título japonês
-     * romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). Busca a frase exata na
-     * Wikipedia em inglês, que só devolve artigos em que ela aparece, e fica com o primeiro artigo de
-     * jogo. Nulo quando não acha ou quando o nome é o mesmo.
+     * romanizado ("Bokujou Monogatari" é "Harvest Moon"; "Hana to Taiyou to Ame to", "Flower, Sun, and
+     * Rain"). Três fontes, da mais segura para a menos, comparadas contra títulos reais no workflow
+     * `catalog-speed` (`english_title_probe.py`):
+     * 1. Wikidata: os nomes japoneses ficam como apelidos do item do jogo, que também traz o slug do
+     *    IGDB. Só vale o apelido ou rótulo inteiro, não o começo ("Rockman X" não é "Rockman X4").
+     * 2. Wikipedia: título ou redirecionamento exato ("Seiken Densetsu 3" leva a "Trials of Mana").
+     * 3. Wikipedia, busca pela frase: só quando o trecho mostra o nome inteiro logo depois de "known in
+     *    Japan as", "Japanese title", "Hepburn:"… A busca solta pegava a continuação ou o derivado
+     *    ("Rockman X" virava "Mega Man X DiVE").
+     * Nulo quando nada disso acha outro nome nem o slug do IGDB.
      */
     suspend fun otherTitle(title: String): OtherTitle? {
         val clean = GameTitles.clean(title).ifBlank { return null }
-        if (GameTitles.key(clean).length < 4) return null
-        // A Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda busca usa a
-        // forma sem vogais longas.
-        val queries = listOf(GameTitles.key(clean), GameTitles.romajiKey(clean)).distinct()
-        for (query in queries) {
-            val page = searchArticles("\"$query\"").firstOrNull { it.isGame() } ?: continue
-            val name = GameTitles.clean(page.title)
-            if (GameTitles.same(name, clean)) return null
-            val igdb = page.item?.let { runCatching { igdbOf(it) }.getOrNull() }
-            return OtherTitle(name, page.item, igdb)
+        val wanted = GameTitles.romajiKey(clean)
+        if (wanted.length < 4) return null
+        val variants = GameTitles.romajiVariants(clean)
+        fun useful(o: OtherTitle?) = o?.takeIf { !GameTitles.same(it.title, clean) || it.igdbSlug != null }
+        return useful(byAlias(variants, wanted))
+            ?: useful(byRedirect(variants))
+            ?: useful(byPhrase(clean, wanted))
+    }
+
+    /** Item de jogo do Wikidata cujo rótulo ou apelido é o título pedido. */
+    private suspend fun byAlias(variants: List<String>, wanted: String): OtherTitle? {
+        for (query in variants) {
+            val url = Urls.withQuery(wikidata, listOf(
+                "action" to "wbsearchentities", "search" to query, "language" to "en", "type" to "item",
+                "limit" to "7", "format" to "json",
+            ))
+            val hit = json(url)["search"]?.jsonArray.orEmpty().map { it.jsonObject }.firstOrNull { item ->
+                val matched = item["match"]?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                isGameDescription(item["description"]?.jsonPrimitive?.contentOrNull) && GameTitles.romajiKey(matched) == wanted
+            } ?: continue
+            val id = hit["id"]?.jsonPrimitive?.contentOrNull ?: continue
+            val label = hit["label"]?.jsonPrimitive?.contentOrNull ?: continue
+            return OtherTitle(label, id, runCatching { igdbOf(id) }.getOrNull())
         }
         return null
     }
 
-    private class Article(val title: String, val description: String, val item: String?)
+    /** Artigo de jogo da Wikipedia com esse título, ou para onde esse título redireciona. */
+    private suspend fun byRedirect(variants: List<String>): OtherTitle? {
+        val pages = pages(listOf("titles" to variants.joinToString("|"), "redirects" to "1"))
+        val page = pages.firstOrNull { it.isGame } ?: return null
+        return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
+    }
 
-    /** Artigo sobre um jogo ("2001 video game"); empresas, listas e séries ("… video game company") não. */
-    private fun Article.isGame(): Boolean = description.trim().lowercase().endsWith("game")
-
-    /** Busca na Wikipedia em inglês; cada resultado vem com a descrição curta e o item do Wikidata. */
-    private suspend fun searchArticles(query: String): List<Article> {
-        val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
-            "action" to "query", "generator" to "search", "gsrsearch" to query, "gsrnamespace" to "0",
-            "gsrlimit" to "5", "prop" to "description|pageprops", "ppprop" to "wikibase_item",
-            "format" to "json", "formatversion" to "2",
-        ))
-        val pages = json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
-        // A lista não vem na ordem da busca: "index" é a posição do resultado.
-        return pages.sortedBy { it["index"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: Int.MAX_VALUE }.mapNotNull { p ->
-            Article(
-                title = p["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
-                description = p["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
-            )
+    /** Busca pela frase e aceita o artigo de jogo cujo trecho apresenta o nome como título japonês. */
+    private suspend fun byPhrase(clean: String, wanted: String): OtherTitle? {
+        // A busca tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda usa a forma sem
+        // vogais longas.
+        for (query in listOf(GameTitles.key(clean), wanted).distinct()) {
+            val url = Urls.withQuery(wikipedia, listOf(
+                "action" to "query", "list" to "search", "srsearch" to "\"$query\"", "srnamespace" to "0",
+                "srlimit" to "5", "srprop" to "snippet", "format" to "json", "formatversion" to "2",
+            ))
+            val hits = json(url)["query"]?.jsonObject?.get("search")?.jsonArray.orEmpty().map { it.jsonObject }
+                .mapNotNull { h ->
+                    val t = h["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    t to h["snippet"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                }
+                .filter { (_, snippet) -> namesJapaneseTitle(snippet) }
+            if (hits.isEmpty()) continue
+            val byTitle = pages(listOf("titles" to hits.joinToString("|") { it.first })).associateBy { it.title }
+            val page = hits.firstNotNullOfOrNull { (t, _) -> byTitle[t]?.takeIf { it.isGame } } ?: continue
+            return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
         }
+        return null
+    }
+
+    private class Page(val title: String, val isGame: Boolean, val item: String?)
+
+    /** Páginas da Wikipedia em inglês com a descrição curta e o item do Wikidata. */
+    private suspend fun pages(params: List<Pair<String, String>>): List<Page> {
+        val url = Urls.withQuery(wikipedia, listOf(
+            "action" to "query", "prop" to "description|pageprops", "ppprop" to "wikibase_item",
+            "format" to "json", "formatversion" to "2",
+        ) + params)
+        return json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
+            .filter { it["missing"] == null }
+            .mapNotNull { p ->
+                Page(
+                    title = p["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
+                    isGame = isGameDescription(p["description"]?.jsonPrimitive?.contentOrNull),
+                    item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
+                )
+            }
     }
 
     private suspend fun igdbOf(item: String): String? {
@@ -237,7 +285,29 @@ class WikiClient {
 
     private suspend fun json(url: String): JsonObject = Http.json.parseToJsonElement(Http.getString(url, headers)).jsonObject
 
-    private companion object {
+    internal companion object {
+        /** Descrição curta de um jogo ("1993 video game"); séries, empresas e listas ficam de fora. */
+        fun isGameDescription(description: String?): Boolean {
+            val d = description.orEmpty().trim().lowercase()
+            return "game" in d && listOf("series", "franchise", "company", "developer", "publisher", "list").none { it in d }
+        }
+
+        private val cue = Regex("""japan|japanese|hepburn|known as|titled|released as""", RegexOption.IGNORE_CASE)
+        private val boundary = Regex("""^\s*(?:[,.;:)(\[—–]|$|(?:is|was|in|for)\b)""")
+        private val match = Regex("""(?:<span class="searchmatch">[^<]*</span>[\s\-:–—]*)+""")
+        private val tag = Regex("""<[^>]+>""")
+
+        /**
+         * O trecho de resultado da busca (HTML, com o nome achado em `searchmatch`) apresenta o nome
+         * inteiro como título japonês: "known in Japan as <nome>, …", "(…, Hepburn: <nome>)". Um nome
+         * que continua ("Rockman X DiVE") ou sem menção ao Japão por perto não vale.
+         */
+        fun namesJapaneseTitle(snippet: String): Boolean = match.findAll(snippet).any { m ->
+            val before = Parser.unescapeEntities(snippet.substring(0, m.range.first).replace(tag, ""), false).takeLast(60)
+            val after = Parser.unescapeEntities(snippet.substring(m.range.last + 1).replace(tag, ""), false)
+            cue.containsMatchIn(before) && boundary.containsMatchIn(after)
+        }
+
         const val DEVELOPER = "P178"
         const val PUBLISHER = "P123"
         const val GENRE = "P136"
