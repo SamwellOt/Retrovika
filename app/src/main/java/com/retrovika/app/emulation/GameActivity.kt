@@ -42,6 +42,13 @@ import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.share.LanTransfer
+import com.retrovika.app.core.cores.CoreBenchmark
+import com.retrovika.app.core.cores.CoreSpeed
+import com.retrovika.app.core.cores.SystemBenchmark
+import com.retrovika.app.core.net.Http
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.withTimeoutOrNull
 import com.retrovika.app.core.settings.uiLanguage
 import com.retrovika.app.core.translate.LiveTranslator
 import com.retrovika.app.core.share.RetrovikaLink
@@ -74,6 +81,8 @@ sealed interface EmulationUi {
     data class Preparing(val message: String, val progress: Float?) : EmulationUi
     data class Running(val view: GLRetroView) : EmulationUi
     data class Failed(val title: String, val message: String, val action: FailAction? = null) : EmulationUi
+    /** Teste dos núcleos na primeira vez do console: [view] é o núcleo sendo medido (nulo entre um e outro). */
+    data class Benchmarking(val view: GLRetroView?, val cores: List<CoreInfo>, val current: Int, val results: List<CoreSpeed>) : EmulationUi
 }
 
 /** Botão extra da tela de falha, para o que o usuário pode resolver na hora (ex.: conceder uma permissão). */
@@ -89,10 +98,16 @@ class GameActivity : ComponentActivity() {
      * Ciclo de vida exclusivo do emulador: acompanha o da Activity, mas fica em STARTED
      * (pausado) enquanto o menu está aberto. É assim que pausamos o LibretroDroid com segurança.
      */
-    private val emulationOwner = object : LifecycleOwner {
+    private val emulationOwner = EmulationOwner()
+
+    private class EmulationOwner : LifecycleOwner {
         val registry = LifecycleRegistry(this)
         override val lifecycle: Lifecycle get() = registry
     }
+
+    /** Ciclo de vida do núcleo em teste: um por núcleo, destruído ao fim da medição. */
+    private var benchOwner: EmulationOwner? = null
+    @Volatile private var benchSkip = false
 
     private var ui by mutableStateOf<EmulationUi>(EmulationUi.Preparing("", null))
     private var menuOpen by mutableStateOf(false)
@@ -255,8 +270,8 @@ class GameActivity : ComponentActivity() {
         guestSession = pendingStateFile != null
         // O estado só abre no núcleo que o gerou: quem enviou diz qual é.
         val sharedCore = intent.getStringExtra(EXTRA_CORE_ID)?.takeIf { id -> system.cores.any { it.id == id } }
-        val coreId = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
-        core = system.core(coreId)
+        val userCore = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
+        core = system.core(userCore ?: app.settings.effectiveCoreFor(system.id).first())
         val padCore = system.id
         val gameId = game.id
         // O controle próprio do jogo, quando existe, vence o do console.
@@ -273,7 +288,28 @@ class GameActivity : ComponentActivity() {
         // na volta, em vez de o perfil antigo da memória ser gravado de novo na próxima mudança.
         lifecycleScope.launch { padFlow.collect { (forGame, profile) -> if (!padDirty) { padForGame = forGame; padProfile = profile } } }
 
-        // 1. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
+        // 1. BIOS obrigatórias (cada item pode ter alternativas: basta uma delas).
+        val missing = app.bios.missingRequired(system)
+        if (missing.isNotEmpty()) {
+            return fail(
+                getString(R.string.game_bios_required),
+                getString(R.string.game_bios_required_message) + "\n\n" +
+                    missing.joinToString("\n") { options ->
+                        options.singleOrNull()?.let { "• ${it.fileName} — ${getString(it.description)}" }
+                            ?: getString(R.string.game_bios_one_of, options.joinToString { it.fileName })
+                    },
+            )
+        }
+
+        // 2. Primeira vez do console neste aparelho, sem núcleo escolhido: testa os núcleos e fica com o ideal.
+        if (userCore == null && !guestSession && settings.autoBenchmark && app.settings.benchmark(system.id).first() == null) {
+            benchmarkCandidates().takeIf { it.size > 1 }?.let { candidates ->
+                val chosen = runBenchmark(candidates) ?: return
+                core = system.core(chosen)
+            }
+        }
+
+        // 3. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
             ui = EmulationUi.Preparing(getString(R.string.game_installing_core, core.displayName), 0f)
             val progressJob = lifecycleScope.launch {
@@ -299,22 +335,8 @@ class GameActivity : ComponentActivity() {
             }
         }
 
-        // 2. BIOS obrigatórias (cada item pode ter alternativas: basta uma delas).
-        val missing = app.bios.missingRequired(system)
-        if (missing.isNotEmpty()) {
-            return fail(
-                getString(R.string.game_bios_required),
-                getString(R.string.game_bios_required_message) + "\n\n" +
-                    missing.joinToString("\n") { options ->
-                        options.singleOrNull()?.let { "• ${it.fileName} — ${getString(it.description)}" }
-                            ?: getString(R.string.game_bios_one_of, options.joinToString { it.fileName })
-                    },
-            )
-        }
-
-        // 3. Opções: padrões otimizados + preset escolhido + ajustes manuais do usuário.
-        val preset = app.settings.presetFor(system.id).first()
-        val options = core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id)
+        // 4. Opções: padrões otimizados + preset escolhido + ajustes manuais do usuário.
+        val options = optionsFor(core)
 
         ui = EmulationUi.Preparing(getString(R.string.game_starting, game.title), null)
         val sram = withContext(Dispatchers.IO) { states.sramFile().takeIf { it.exists() }?.readBytes() }
@@ -326,37 +348,21 @@ class GameActivity : ComponentActivity() {
 
         val data = GLRetroViewData(this).apply {
             coreFilePath = corePath
-            val realFile = if (game.isContentUri) withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } else null
-            if (realFile != null) {
-                // Com acesso aos arquivos, o núcleo recebe o caminho real: funciona até nos que não usam a VFS.
-                gameFilePath = realFile.path
-            } else if (game.isContentUri && core.needsRealPath) {
-                awaitingFileAccess = true
-                return fail(
-                    getString(R.string.game_needs_file_access),
-                    getString(R.string.game_needs_file_access_message, core.displayName),
-                    FailAction(getString(R.string.game_allow_file_access)) { startActivity(StorageAccess.settingsIntent(this@GameActivity)) },
-                )
-            } else if (game.isContentUri) {
-                // IPC com o provedor SAF: fora da thread principal.
-                gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
-                    if (it is kotlinx.coroutines.CancellationException) throw it
-                    return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
+            when (setGameSource(this, core)) {
+                GameSource.Ok -> Unit
+                GameSource.NeedsFileAccess -> {
+                    awaitingFileAccess = true
+                    return fail(
+                        getString(R.string.game_needs_file_access),
+                        getString(R.string.game_needs_file_access_message, core.displayName),
+                        FailAction(getString(R.string.game_allow_file_access)) { startActivity(StorageAccess.settingsIntent(this@GameActivity)) },
+                    )
                 }
-            } else {
-                if (!File(game.uri).exists()) return fail(getString(R.string.game_file_not_found), game.uri)
-                gameFilePath = game.uri
+                GameSource.Inaccessible -> return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
+                GameSource.NotFound -> return fail(getString(R.string.game_file_not_found), game.uri)
             }
-            systemDirectory = app.paths.system.absolutePath
-            savesDirectory = app.paths.savesFor(system.id).absolutePath
-            variables = options.map { Variable(it.key, it.value) }.toTypedArray()
+            configure(this, core, options)
             saveRAMState = sram
-            shader = settings.shader.toShaderConfig()
-            preferLowLatencyAudio = settings.lowLatencyAudio
-            rumbleEventsEnabled = true
-            relaxedGlesVersion = core.relaxedGlesVersion
-            // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
-            core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
         }
 
         // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
@@ -373,6 +379,154 @@ class GameActivity : ComponentActivity() {
         updateEmulationState()
         view.requestFocus()
     }
+
+    private enum class GameSource { Ok, NeedsFileAccess, Inaccessible, NotFound }
+
+    /** Aponta [data] para o arquivo do jogo: caminho real quando dá, senão os arquivos virtuais do SAF. */
+    private suspend fun setGameSource(data: GLRetroViewData, core: CoreInfo): GameSource {
+        val realFile = if (game.isContentUri) withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } else null
+        when {
+            // Com acesso aos arquivos, o núcleo recebe o caminho real: funciona até nos que não usam a VFS.
+            realFile != null -> data.gameFilePath = realFile.path
+            game.isContentUri && core.needsRealPath -> return GameSource.NeedsFileAccess
+            game.isContentUri -> {
+                // IPC com o provedor SAF: fora da thread principal. Descritores novos a cada carga (o núcleo fica com eles).
+                data.gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    return GameSource.Inaccessible
+                }
+            }
+            else -> {
+                if (!File(game.uri).exists()) return GameSource.NotFound
+                data.gameFilePath = game.uri
+            }
+        }
+        return GameSource.Ok
+    }
+
+    private suspend fun optionsFor(core: CoreInfo): Map<String, String> {
+        val preset = app.settings.presetFor(system.id).first()
+        return core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id)
+    }
+
+    private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>) = data.apply {
+        systemDirectory = app.paths.system.absolutePath
+        savesDirectory = app.paths.savesFor(system.id).absolutePath
+        variables = options.map { Variable(it.key, it.value) }.toTypedArray()
+        shader = settings.shader.toShaderConfig()
+        preferLowLatencyAudio = settings.lowLatencyAudio
+        rumbleEventsEnabled = true
+        relaxedGlesVersion = core.relaxedGlesVersion
+        // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
+        core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
+    }
+
+    // region Teste dos núcleos
+
+    @kotlinx.serialization.Serializable
+    private data class BenchProgress(val results: List<CoreSpeed>, val running: String?)
+
+    /** Núcleos que entram no teste: os estáveis que conseguem abrir este arquivo. */
+    private suspend fun benchmarkCandidates(): List<CoreInfo> {
+        val realPath = !game.isContentUri || withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } != null
+        return system.cores.filter { !it.experimental && (realPath || !it.needsRealPath) }
+    }
+
+    /**
+     * Roda cada núcleo com este jogo por alguns segundos, sem som e sem o limite de velocidade, e fica com
+     * o mais fiel que roda com folga ([CoreBenchmark.choose]). O progresso vai para um arquivo antes de cada
+     * núcleo: se um deles derrubar o app, na próxima abertura ele conta como falho e o teste continua.
+     * Nulo quando a Activity está fechando.
+     */
+    private suspend fun runBenchmark(candidates: List<CoreInfo>): String? {
+        val marker = File(filesDir, "benchmark_${system.id}.json")
+        val previous = runCatching { Http.json.decodeFromString(BenchProgress.serializer(), marker.readText()) }.getOrNull()
+        val results = previous?.results.orEmpty().toMutableList()
+        previous?.running?.let { crashed -> if (results.none { it.coreId == crashed }) results += CoreSpeed(crashed, null) }
+        benchSkip = false
+        for ((i, c) in candidates.withIndex()) {
+            if (benchSkip) break
+            if (results.any { it.coreId == c.id }) continue
+            withContext(Dispatchers.IO) { runCatching { marker.writeText(Http.json.encodeToString(BenchProgress.serializer(), BenchProgress(results, c.id))) } }
+            val speed = measure(c, candidates, i, results)
+            if (isFinishing) return null
+            if (!benchSkip) results += CoreSpeed(c.id, speed)
+        }
+        withContext(Dispatchers.IO) { marker.delete() }
+        val chosen = if (benchSkip) system.defaultCore.id else CoreBenchmark.choose(candidates.map { it.id }, results)
+        app.settings.setBenchmark(
+            system.id,
+            SystemBenchmark(results, chosen, "${Build.MANUFACTURER} ${Build.MODEL}", System.currentTimeMillis(), skipped = benchSkip),
+        )
+        if (!benchSkip) {
+            val speed = results.firstOrNull { it.coreId == chosen }?.speed
+            toast = getString(R.string.bench_chosen, system.core(chosen).displayName, speed?.let { (it * 100).toInt() } ?: 0)
+        }
+        ui = EmulationUi.Preparing(getString(R.string.game_loading), null)
+        return chosen
+    }
+
+    /** Velocidade de [core] com este jogo, ou nulo se ele não instalou, não abriu o jogo ou deu erro. */
+    private suspend fun measure(core: CoreInfo, cores: List<CoreInfo>, index: Int, results: List<CoreSpeed>): Float? {
+        ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+        val path = try {
+            app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: app.cores.install(core)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            return null
+        }
+        val data = GLRetroViewData(this).apply { coreFilePath = path }
+        if (setGameSource(data, core) != GameSource.Ok) return null
+        configure(data, core, optionsFor(core))
+        data.rumbleEventsEnabled = false
+        runCatching { android.system.Os.setenv("EXTERNAL_STORAGE", app.paths.savesFor(system.id).absolutePath, true) }
+        if (isFinishing || benchSkip) return null
+
+        val owner = EmulationOwner()
+        val view = GLRetroView(this, data)
+        owner.registry.currentState = Lifecycle.State.CREATED
+        owner.registry.addObserver(view)
+        // O create do LibretroDroid liga o som: desliga logo depois, antes do primeiro quadro.
+        view.audioEnabled = false
+        benchOwner = owner
+        ui = EmulationUi.Benchmarking(view, cores, index, results.toList())
+        updateEmulationState()
+        try {
+            val started = withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) {
+                merge(
+                    view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().map { true },
+                    view.getGLRetroErrors().map { false },
+                ).first()
+            }
+            if (started != true) return null
+            view.audioEnabled = false
+            view.frameSpeed = CoreBenchmark.FRAME_SPEED
+            delay(BENCH_WARMUP_MS)
+            // Mede só o tempo com o app na frente: se ele for para o fundo, a contagem espera.
+            var frames = 0L
+            var millis = 0L
+            while (millis < BENCH_MEASURE_MS && !benchSkip && !isFinishing) {
+                val r0 = view.runCount()
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                delay(BENCH_SAMPLE_MS)
+                if (activityResumed && benchOwner === owner) {
+                    frames += view.runCount() - r0
+                    millis += android.os.SystemClock.elapsedRealtime() - t0
+                }
+            }
+            if (benchSkip) return null
+            return CoreBenchmark.speed(frames, millis, view.contentFps())
+        } finally {
+            owner.registry.currentState = Lifecycle.State.DESTROYED
+            benchOwner = null
+            // Tira a view da tela (a thread GL termina) antes de o próximo núcleo criar o dele.
+            ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+            delay(BENCH_TEARDOWN_MS)
+        }
+    }
+
+    // endregion
 
     private fun observe(view: GLRetroView) {
         lifecycleScope.launch {
@@ -499,6 +653,7 @@ class GameActivity : ComponentActivity() {
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
+        benchOwner?.registry?.currentState = Lifecycle.State.DESTROYED
         retroView = null
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
@@ -506,6 +661,8 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun updateEmulationState() {
+        // O núcleo em teste só roda com o app na frente (a medição desconta o tempo parado).
+        benchOwner?.registry?.let { if (it.currentState != Lifecycle.State.DESTROYED) it.currentState = if (activityResumed) Lifecycle.State.RESUMED else Lifecycle.State.STARTED }
         if (emulationOwner.registry.currentState == Lifecycle.State.DESTROYED) return
         val running = activityResumed && !menuOpen && translation == null && ui is EmulationUi.Running
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
@@ -712,6 +869,8 @@ class GameActivity : ComponentActivity() {
             translation = null
             updateEmulationState()
         }
+
+        override fun skipBenchmark() { benchSkip = true }
 
         override fun closeShare() {
             sharing?.server?.close()
@@ -953,6 +1112,11 @@ class GameActivity : ComponentActivity() {
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
+        private const val BENCH_LOAD_TIMEOUT_MS = 25_000L
+        private const val BENCH_WARMUP_MS = 1_500L
+        private const val BENCH_MEASURE_MS = 4_000L
+        private const val BENCH_SAMPLE_MS = 250L
+        private const val BENCH_TEARDOWN_MS = 350L
         /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */
         private const val MAX_PORTS = 4
         private val RETROPAD_KEYS = listOf(
@@ -1006,6 +1170,7 @@ interface MenuActions {
     fun shareAsFile()
     fun shareAsQr()
     fun closeShare()
+    fun skipBenchmark()
     fun translation(): TranslationUi?
     fun canTranslate(): Boolean
     fun translate()

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Teste automático dos núcleos na primeira vez de cada console. -->
+<resources>
+    <string name="bench_kicker">Primeira vez de %1$s neste aparelho</string>
+    <string name="bench_title">Procurando o melhor núcleo</string>
+    <string name="bench_message">Cada núcleo roda este jogo por alguns segundos, acelerado e sem som. O mais fiel que roda com folga no seu aparelho vira o padrão. Núcleos ainda não instalados são baixados.</string>
+    <string name="bench_speed">%1$d%%</string>
+    <string name="bench_failed">Não rodou</string>
+    <string name="bench_skip">Pular e usar o padrão</string>
+    <string name="bench_chosen">%1$s escolhido para este aparelho (%2$d%% da velocidade)</string>
+    <string name="bench_system_result">Escolhido pelo teste neste aparelho: %1$s, %2$d%% da velocidade.</string>
+    <string name="bench_system_overridden">A sua escolha acima vale mais.</string>
+    <string name="bench_system_skipped">Teste dos núcleos pulado: vale o padrão.</string>
+    <string name="bench_again">Testar de novo</string>
+    <string name="settings_auto_benchmark">Testar os núcleos sozinho</string>
+    <string name="settings_auto_benchmark_subtitle">Na primeira vez de cada console, mede os núcleos dele neste aparelho e escolhe o mais fiel que roda liso</string>
+</resources>

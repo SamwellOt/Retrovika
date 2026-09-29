@@ -45,6 +45,8 @@
 #include "renderers/es2/imagerendereres2.h"
 #include "renderers/es3/imagerendereres3.h"
 #include "utils/rect.h"
+#include "netplay.h"
+#include <atomic>
 
 namespace libretrodroid {
 
@@ -108,6 +110,17 @@ public:
 
     void refreshAspectRatio();
     float getAspectRatio();
+
+    // Partida em rede local (Retrovika): ver netplay.h.
+    void startNetplay(int fd, unsigned localPort, unsigned delayFrames, unsigned epoch);
+    void stopNetplay();
+    /** -1 sem partida; -2 conexão perdida; senão, há quantos ms a entrada do outro está atrasada. */
+    int64_t netplayStatus() const;
+    uint32_t netplayFrame() const;
+
+    // Teste de desempenho dos núcleos (Retrovika): quadros emulados e a taxa nativa do jogo.
+    uint64_t getRunCount() const { return runCount.load(); }
+    double getContentFps() const { return contentFps; }
 
     bool requiresVideoRefresh() const;
     void clearRequiresVideoRefresh();
@@ -184,6 +197,12 @@ private:
     std::unique_ptr<FPSSync> fpsSync;
     std::unique_ptr<Input> input;
     std::unique_ptr<Rumble> rumble;
+    std::unique_ptr<Netplay> netplay;
+    std::atomic<uint64_t> runCount {0};
+    // Lidos de outras threads sem o coreLock (a emulação o segura durante todo o quadro).
+    std::atomic<int64_t> netplayState {-1};
+    std::atomic<uint32_t> netplayFrameCount {0};
+    double contentFps = 60.0;
 };
 
 } //namespace libretrodroid

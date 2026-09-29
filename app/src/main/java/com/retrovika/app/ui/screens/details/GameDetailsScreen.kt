@@ -171,7 +171,7 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
             )
             if (system != null) {
                 // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
-                val preferred by remember(system.id) { app.settings.coreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
+                val preferred by remember(system.id) { app.settings.effectiveCoreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
                 preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
             }
             Spacer(Modifier.height(16.dp))

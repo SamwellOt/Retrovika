@@ -131,6 +131,7 @@ fun GameScreen(
         when (state) {
             is EmulationUi.Preparing -> PreparingView(state, game, system)
             is EmulationUi.Failed -> FailedView(state, onExit = menu::exit)
+            is EmulationUi.Benchmarking -> BenchmarkView(state, system, onSkip = menu::skipBenchmark)
             is EmulationUi.Running -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 val portrait = maxHeight > maxWidth
                 val padShown = showPad && system != null && padProfile.visible

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Speed
 import com.retrovika.app.R
 import com.retrovika.app.core.settings.AppLanguage
 import com.retrovika.app.core.settings.Languages
@@ -266,6 +267,8 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.FastForward, Palette.Orange, stringResource(R.string.settings_fast_forward), listOf(2, 3, 4, 6), s.fastForwardSpeed, { "${it}×" }) { scope.launch { repo.setFastForwardSpeed(it) } }
             RowDivider()
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
+            RowDivider()
+            SwitchRow(Icons.Rounded.Speed, Palette.Sun, stringResource(R.string.settings_auto_benchmark), stringResource(R.string.settings_auto_benchmark_subtitle), s.autoBenchmark) { scope.launch { repo.setAutoBenchmark(it) } }
             RowDivider()
             SwitchRow(Icons.Rounded.Translate, Palette.Cyan, stringResource(R.string.settings_translate_everywhere), stringResource(R.string.settings_translate_everywhere_subtitle), s.translateEverywhere) { scope.launch { repo.setTranslateEverywhere(it) } }
         }

@@ -230,6 +230,29 @@ class GLRetroView(
         }
     }
 
+    /**
+     * Começa a partida em rede no soquete [fd] (já conectado; passa a ser do LibretroDroid, que o fecha).
+     * Na thread de emulação, entre dois quadros, logo depois do estado inicial ser carregado.
+     */
+    fun startNetplay(fd: Int, localPort: Int, delayFrames: Int, epoch: Int, useEmulationThread: Boolean = true) {
+        runOnEmulationThread(useEmulationThread) { LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch) }
+    }
+
+    fun stopNetplay(useEmulationThread: Boolean = true) {
+        runOnEmulationThread(useEmulationThread) { LibretroDroid.stopNetplay() }
+    }
+
+    /** -1 sem partida; -2 conexão perdida; senão, há quantos ms a entrada do outro está atrasada. */
+    fun netplayStatus(): Long = LibretroDroid.netplayStatus()
+
+    fun netplayFrame(): Long = LibretroDroid.netplayFrame()
+
+    /** Quadros emulados desde que o jogo carregou (teste de desempenho). */
+    fun runCount(): Long = LibretroDroid.getRunCount()
+
+    /** Quadros por segundo nativos do jogo (60 no NTSC, 50 no PAL…). */
+    fun contentFps(): Double = LibretroDroid.getContentFps()
+
     fun getAvailableDisks(useEmulationThread: Boolean = true): Int {
         return runOnEmulationThread(useEmulationThread) { LibretroDroid.availableDisks() }
     }

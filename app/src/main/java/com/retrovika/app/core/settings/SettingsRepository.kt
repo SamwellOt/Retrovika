@@ -14,6 +14,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
+import com.retrovika.app.core.cores.SystemBenchmark
 import com.retrovika.app.emulation.input.PadProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,8 @@ data class AppSettings(
     val gameSort: GameSort = GameSort.TITLE,
     /** Botão de tradução ao vivo em todos os jogos; sem isso, só nos japoneses. */
     val translateEverywhere: Boolean = false,
+    /** Na primeira vez que um console roda, testa os núcleos dele e escolhe o ideal para o aparelho. */
+    val autoBenchmark: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context, scope: CoroutineScope) {
@@ -87,6 +90,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val coverSize = stringPreferencesKey("cover_size")
         val gameSort = stringPreferencesKey("game_sort")
         val translateEverywhere = booleanPreferencesKey("translate_everywhere")
+        val autoBenchmark = booleanPreferencesKey("auto_benchmark")
+        fun benchmark(systemId: String) = stringPreferencesKey("bench_$systemId")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
@@ -118,6 +123,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
             translateEverywhere = p[Keys.translateEverywhere] ?: false,
+            autoBenchmark = p[Keys.autoBenchmark] ?: true,
         )
     }
 
@@ -151,16 +157,31 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
     suspend fun setTranslateEverywhere(v: Boolean) = set(Keys.translateEverywhere, v)
+    suspend fun setAutoBenchmark(v: Boolean) = set(Keys.autoBenchmark, v)
 
     /** Volta controle, vídeo, emulação, interface e downloads aos padrões; pastas, jogos ocultos e núcleos escolhidos ficam como estão. */
     suspend fun resetPreferences() = context.dataStore.edit { p ->
         listOf(
             Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
-            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.translateEverywhere,
+            Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.translateEverywhere, Keys.autoBenchmark,
         ).forEach { p.remove(it) }
     }
 
     fun coreFor(systemId: String): Flow<String?> = data.map { it[Keys.core(systemId)] }
+
+    /** O núcleo que vai rodar o console: o escolhido pelo usuário; senão, o do teste automático; senão, nulo (o padrão). */
+    fun effectiveCoreFor(systemId: String): Flow<String?> = data.map { p ->
+        p[Keys.core(systemId)] ?: p[Keys.benchmark(systemId)]?.let(::decodeBenchmark)?.takeIf { !it.skipped }?.chosen
+    }
+
+    fun benchmark(systemId: String): Flow<SystemBenchmark?> = data.map { p -> p[Keys.benchmark(systemId)]?.let(::decodeBenchmark) }
+
+    suspend fun setBenchmark(systemId: String, result: SystemBenchmark?) = context.dataStore.edit { p ->
+        if (result == null) p.remove(Keys.benchmark(systemId))
+        else p[Keys.benchmark(systemId)] = Http.json.encodeToString(SystemBenchmark.serializer(), result)
+    }
+
+    private fun decodeBenchmark(raw: String): SystemBenchmark? = runCatching { Http.json.decodeFromString(SystemBenchmark.serializer(), raw) }.getOrNull()
     suspend fun setCore(systemId: String, coreId: String) = set(Keys.core(systemId), coreId)
 
     fun presetFor(systemId: String): Flow<Preset> = data.map { p ->

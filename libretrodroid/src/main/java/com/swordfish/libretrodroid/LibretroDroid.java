@@ -142,4 +142,12 @@ public class LibretroDroid {
     public static native void setControllerType(int port, int type);
 
     public static native void setRelaxedGlesVersion(boolean relaxed);
+
+    // Retrovika: partida em rede local (netplay.h) e teste de desempenho dos núcleos.
+    public static native void startNetplay(int fd, int localPort, int delayFrames, int epoch);
+    public static native void stopNetplay();
+    public static native long netplayStatus();
+    public static native long netplayFrame();
+    public static native long getRunCount();
+    public static native double getContentFps();
 }

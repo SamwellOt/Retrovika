@@ -443,6 +443,8 @@ void LibretroDroid::destroy() {
     video = nullptr;
     core = nullptr;
     rumble = nullptr;
+    netplay = nullptr;
+    netplayState = -1;
     fpsSync = nullptr;
     audio = nullptr;
 
@@ -482,12 +484,25 @@ void LibretroDroid::step() {
 
     auto& frameTime = Environment::getInstance().getFrameTimeCallback();
     for (size_t i = 0; i < frames * frameSpeed; i++) {
+        // Em rede, o quadro só roda com a entrada dos dois lados; sem a do outro, fica para o próximo desenho.
+        if (netplay && !netplay->prepareFrame(input.get())) {
+            break;
+        }
         // Each retro_run is one frame of emulated time, so the reference duration is the right delta
         // (fast-forward runs more frames, not longer ones).
         if (frameTime.callback != nullptr) {
             frameTime.callback(frameTime.reference);
         }
         core->retro_run();
+        runCount++;
+        if (netplay) {
+            netplay->frameDone();
+        }
+    }
+
+    if (netplay) {
+        netplayState = netplay->isBroken() ? -2 : netplay->stalledMillis();
+        netplayFrameCount = netplay->currentFrame();
     }
 
     if (video && !video->rendersInVideoCallback()) {
@@ -582,10 +597,34 @@ int16_t LibretroDroid::handleSetInputState(
     unsigned int index,
     unsigned int id
 ) {
+    if (netplay) {
+        return netplay->getInputState(port, device, index, id);
+    }
     if (input) {
         return input->getInputState(port, device, index, id);
     }
     return 0;
+}
+
+void LibretroDroid::startNetplay(int fd, unsigned localPort, unsigned delayFrames, unsigned epoch) {
+    std::lock_guard<std::mutex> lock(coreLock);
+    netplay = std::make_unique<Netplay>(fd, localPort, delayFrames, (uint8_t) epoch);
+    netplayState = 0;
+    netplayFrameCount = 0;
+}
+
+void LibretroDroid::stopNetplay() {
+    std::lock_guard<std::mutex> lock(coreLock);
+    netplay = nullptr;
+    netplayState = -1;
+}
+
+int64_t LibretroDroid::netplayStatus() const {
+    return netplayState.load();
+}
+
+uint32_t LibretroDroid::netplayFrame() const {
+    return netplayFrameCount.load();
 }
 
 uintptr_t LibretroDroid::handleGetCurrentFrameBuffer() {
@@ -637,6 +676,8 @@ void LibretroDroid::afterGameLoad() {
     core->retro_get_system_av_info(&system_av_info);
 
     fpsSync = std::make_unique<FPSSync>(system_av_info.timing.fps, screenRefreshRate);
+    contentFps = system_av_info.timing.fps > 0 ? system_av_info.timing.fps : 60.0;
+    runCount = 0;
 
     double inputSampleRate = system_av_info.timing.sample_rate * fpsSync->getTimeStretchFactor();
 

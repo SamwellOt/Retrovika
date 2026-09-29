@@ -135,7 +135,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
         }
     }
 
-    val core = system.core(selectedCore)
+    val bench by remember(systemId) { app.settings.benchmark(systemId) }.collectAsStateWithLifecycle(null)
+    // Sem escolha do usuário, vale o núcleo do teste automático (quando houve teste).
+    val core = system.core(selectedCore?.ifEmpty { bench?.takeIf { !it.skipped }?.chosen })
     val language = remember { context.uiLanguage() }
     // Só a contagem: a tela de versões refaz os grupos com os detalhes.
     val repeated = remember(all, language) { Versions.groups(all, language).size }
@@ -233,6 +235,21 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                         modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp),
                     )
+                    bench?.let { b ->
+                        Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (b.skipped) stringResource(R.string.bench_system_skipped)
+                                else stringResource(
+                                    R.string.bench_system_result, system.core(b.chosen).displayName,
+                                    ((b.speedOf(b.chosen) ?: 0f) * 100).toInt(),
+                                ) + if (selectedCore?.isNotEmpty() == true) " " + stringResource(R.string.bench_system_overridden) else "",
+                                style = MaterialTheme.typography.labelSmall, color = Palette.Cyan, modifier = Modifier.weight(1f),
+                            )
+                            androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.setBenchmark(system.id, null) } }) {
+                                Text(stringResource(R.string.bench_again), style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
 
                     if (core.presets.isNotEmpty()) {
                         HorizontalDivider(Modifier.padding(vertical = 14.dp), color = Palette.Outline.copy(alpha = 0.5f))

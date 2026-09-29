@@ -617,6 +617,52 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setViewpor
     LibretroDroid::getInstance().setViewport(Rect(x, y, width, height));
 }
 
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_startNetplay(
+    JNIEnv* env,
+    jclass obj,
+    jint fd,
+    jint localPort,
+    jint delayFrames,
+    jint epoch
+) {
+    LibretroDroid::getInstance().startNetplay(fd, localPort, delayFrames, epoch);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_stopNetplay(
+    JNIEnv* env,
+    jclass obj
+) {
+    LibretroDroid::getInstance().stopNetplay();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_netplayStatus(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().netplayStatus();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_netplayFrame(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().netplayFrame();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getRunCount(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().getRunCount();
+}
+
+JNIEXPORT jdouble JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentFps(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jdouble) LibretroDroid::getInstance().getContentFps();
+}
+
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_refreshAspectRatio(
     JNIEnv* env,
     jclass obj
