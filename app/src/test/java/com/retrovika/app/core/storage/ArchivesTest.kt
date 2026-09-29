@@ -91,13 +91,39 @@ class ArchivesTest {
     }
 
     @Test
-    fun `sucesso substitui a rom que ja existia`() {
-        val archive = zip("bom.zip", mapOf("a.bin" to "novo"))
+    fun `mesmo arquivo extraido de novo substitui sem duplicar`() {
+        val archive = zip("bom.zip", mapOf("a.bin" to "igual"))
         val dest = tmp.newFolder("roms4")
-        File(dest, "a.bin").writeText("antigo")
+        File(dest, "a.bin").writeText("igual")
         val out = Archives.extract(archive, dest, setOf("a.bin"))
-        assertEquals("novo", out.getValue("a.bin").readText())
+        assertEquals(File(dest, "a.bin"), out.getValue("a.bin"))
         assertEquals(listOf("a.bin"), dest.list().orEmpty().toList())
+    }
+
+    @Test
+    fun `outro jogo com o mesmo nome vai inteiro para uma subpasta`() {
+        val archive = zip("Outro Jogo.zip", mapOf("jogo.cue" to "FILE \"jogo.bin\" BINARY", "jogo.bin" to "faixa nova"))
+        val dest = tmp.newFolder("roms5")
+        val oldCue = File(dest, "jogo.cue").apply { writeText("FILE \"jogo.bin\" BINARY") }
+        val oldBin = File(dest, "jogo.bin").apply { writeText("faixa antiga") }
+        val out = Archives.extract(archive, dest, setOf("jogo.cue", "jogo.bin"))
+        // O jogo que já estava lá fica intacto; o novo vai junto (cue e bin) para "Outro Jogo/".
+        assertEquals("faixa antiga", oldBin.readText())
+        assertTrue(oldCue.exists())
+        assertEquals(File(dest, "Outro Jogo/jogo.bin"), out.getValue("jogo.bin"))
+        assertEquals(File(dest, "Outro Jogo/jogo.cue"), out.getValue("jogo.cue"))
+        assertEquals("faixa nova", out.getValue("jogo.bin").readText())
+        assertTrue(dest.walkTopDown().none { it.name.endsWith(Archives.PART_SUFFIX) })
+    }
+
+    @Test
+    fun `subpasta ocupada ganha numero`() {
+        val archive = zip("X.zip", mapOf("a.bin" to "novo"))
+        val dest = tmp.newFolder("roms6")
+        File(dest, "a.bin").writeText("antigo")
+        File(dest, "X").mkdirs()
+        val out = Archives.extract(archive, dest, setOf("a.bin"))
+        assertEquals(File(dest, "X (2)/a.bin"), out.getValue("a.bin"))
     }
 
     @Test

@@ -95,11 +95,11 @@ class DownloadManager(
     private val slotFreed = MutableStateFlow(0L)
 
     /**
-     * Limpa os .part deixados por downloads interrompidos (app encerrado à força, aparelho reiniciado).
-     * Roda uma vez ao criar o gerenciador; cada download espera por ela antes de começar, para a
-     * limpeza nunca apagar o temporário de um download em andamento.
+     * Limpa os .part deixados por downloads, importações e extrações interrompidos (app encerrado à
+     * força, aparelho reiniciado). Roda uma vez ao criar o gerenciador; cada download espera por ela
+     * antes de começar, para a limpeza nunca apagar o temporário de um download em andamento.
      */
-    private val sweep: Job = scope.launch(Dispatchers.IO) { runCatching { Http.sweepStaleParts(paths.roms) } }
+    private val sweep: Job = scope.launch(Dispatchers.IO) { runCatching { library.sweepStaleParts() } }
 
     fun enqueue(entry: CatalogEntry) {
         val system = Systems.byId(entry.systemId) ?: return

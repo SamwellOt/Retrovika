@@ -10,6 +10,7 @@
  * arquivos. Blocos com mais de um codificador (BCJ2, filtros) ou métodos fora de Copy/LZMA/LZMA2
  * devolvem SZ7_UNSUPPORTED, e o lado Java volta para o commons-compress.
  */
+#include <errno.h>
 #include <jni.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,7 @@
 #define SZ7_DATA 3
 #define SZ7_WRITE 4
 #define SZ7_OPEN 5
+#define SZ7_NO_SPACE 6
 
 #define k_Copy 0
 #define k_LZMA2 0x21
@@ -38,6 +40,14 @@
 #define IN_BUF_SIZE ((size_t)1 << 18)
 #define OUT_BUF_SIZE ((size_t)1 << 20)
 #define LOOK_BUF_SIZE ((size_t)1 << 18)
+
+/* Falha de gravação: disco cheio (ou cota) tem código próprio, para o Kotlin mostrar o motivo certo. */
+static int write_error(void) {
+#ifdef EDQUOT
+    if (errno == EDQUOT) return SZ7_NO_SPACE;
+#endif
+    return errno == ENOSPC ? SZ7_NO_SPACE : SZ7_WRITE;
+}
 
 /* ---- ILookInStream sobre FILE*, só para o SzArEx_Open ler o cabeçalho ---- */
 
@@ -124,7 +134,7 @@ static int sink_next(Sink *s) {
     const char *path = s->targets[s->index];
     if (path) {
         s->out = fopen(path, "wb");
-        if (!s->out) return SZ7_WRITE;
+        if (!s->out) return write_error();
     }
     return SZ7_OK;
 }
@@ -132,8 +142,9 @@ static int sink_next(Sink *s) {
 static int sink_finish_file(Sink *s) {
     if (s->out) {
         int failed = fclose(s->out) != 0;
+        int err = failed ? write_error() : SZ7_OK;
         s->out = NULL;
-        if (failed) return SZ7_WRITE;
+        if (failed) return err;
         if (SzBitWithVals_Check(&s->db->CRCs, s->index) && CRC_GET_DIGEST(s->crc) != s->db->CRCs.Vals[s->index])
             return SZ7_DATA;
     }
@@ -151,7 +162,7 @@ static int sink_write(Sink *s, const Byte *data, size_t size) {
         }
         size_t chunk = size < s->remaining ? size : (size_t)s->remaining;
         if (s->out) {
-            if (fwrite(data, 1, chunk, s->out) != chunk) return SZ7_WRITE;
+            if (fwrite(data, 1, chunk, s->out) != chunk) return write_error();
             s->crc = CrcUpdate(s->crc, data, chunk);
         }
         s->remaining -= chunk;
@@ -407,7 +418,7 @@ Java_com_retrovika_app_core_storage_SevenZipNative_extract(JNIEnv *env, jclass c
     for (UInt32 i = 0; r == SZ7_OK && i < n; i++) {
         if (targets[i] && !SzArEx_IsDir(&a.db, i) && a.db.FileToFolder[i] == (UInt32)-1) {
             FILE *out = fopen(targets[i], "wb");
-            if (!out || fclose(out) != 0) r = SZ7_WRITE;
+            if (!out || fclose(out) != 0) r = write_error();
         }
     }
     for (UInt32 f = 0; r == SZ7_OK && f < a.db.db.NumFolders; f++) r = decode_folder(&a, f, wanted);

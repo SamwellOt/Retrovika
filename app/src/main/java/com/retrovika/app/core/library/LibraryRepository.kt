@@ -118,6 +118,29 @@ class LibraryRepository(
 
     /** Roda [block] (extração para `roms/` e o cadastro do resultado) sem uma varredura no meio. */
     suspend fun <T> writingRoms(block: suspend () -> T): T = filesLock.withLock { block() }
+
+    private val partsSwept = AtomicBoolean(false)
+
+    /**
+     * Apaga os temporários ".part" que sobraram em `roms/` (downloads, importações e extrações
+     * interrompidos pelo app encerrado à força ou pelo aparelho reiniciado: nenhum finally rodou).
+     * Uma vez por processo, com a trava das extrações; downloads e importações esperam por ela antes
+     * de criar o próprio temporário, então ela nunca apaga o de um trabalho em andamento.
+     */
+    suspend fun sweepStaleParts() {
+        if (partsSwept.get()) return
+        filesLock.withLock {
+            if (partsSwept.get()) return
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    paths.roms.walkTopDown().maxDepth(6)
+                        .filter { it.isFile && it.name.endsWith(Archives.PART_SUFFIX) }
+                        .forEach { it.delete() }
+                }
+            }
+            partsSwept.set(true)
+        }
+    }
     @Volatile private var rescanPending = false
 
     /**
@@ -334,6 +357,8 @@ class LibraryRepository(
         val unknown = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
         val copied = mutableListOf<Pair<GameSystem, File>>()
+        // Antes de criar o primeiro .part: a limpeza da abertura do app não pode apagá-lo no meio da cópia.
+        sweepStaleParts()
         uris.forEach { uri ->
             val name = FileNames.safe(runCatching { displayName(uri) }.getOrNull() ?: uri.lastPathSegment ?: return@forEach)
             val system = forcedSystem ?: RomNaming.resolveSystem(name, emptyList())

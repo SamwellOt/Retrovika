@@ -16,6 +16,8 @@ internal object SevenZipNative {
     const val DATA = 3
     const val WRITE = 4
     const val OPEN = 5
+    /** Gravação falhou por falta de espaço (ENOSPC/EDQUOT). */
+    const val NO_SPACE = 6
 
     /** Falso nos testes de JVM e se a biblioteca não carregar: aí fica tudo com o commons-compress. */
     val available: Boolean = runCatching { System.loadLibrary("retrovika7z") }.isSuccess

@@ -183,65 +183,21 @@ object Http {
     private val PAGE_EXTENSIONS = setOf("php", "html", "htm", "asp", "aspx", "jsp", "cgi")
 
     /**
-     * Apaga os temporários de download ("dl-*.part") que sobraram nas subpastas de [root]: um app
-     * encerrado à força (ou o aparelho reiniciado) no meio de um download não passa pelo finally que
-     * os apagaria. Só pode rodar antes de qualquer download começar.
-     */
-    fun sweepStaleParts(root: File) {
-        root.listFiles()?.forEach { dir ->
-            if (!dir.isDirectory) return@forEach
-            dir.listFiles()?.forEach { f ->
-                if (f.isFile && f.name.startsWith(PART_PREFIX) && f.name.endsWith(PART_SUFFIX)) f.delete()
-            }
-        }
-    }
-
-    /**
      * [wanted] se ele ainda não existe ou já tem exatamente o conteúdo baixado (o mesmo arquivo baixado
      * de novo: substitui sem duplicar). Senão, o primeiro "nome (N).ext" livre, para não apagar outro
      * jogo que só tem o mesmo nome (dois "rom.gb" de jogos diferentes, por exemplo).
      */
     private fun freeName(wanted: File, downloaded: File): File {
-        if (!wanted.exists() || sameContent(wanted, downloaded)) return wanted
+        if (!wanted.exists() || FileNames.sameContent(wanted, downloaded)) return wanted
         val dir = wanted.parentFile
         val base = wanted.name.substringBeforeLast('.')
         val ext = wanted.name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
         var n = 2
         while (true) {
             val candidate = File(dir, "$base ($n)$ext")
-            if (!candidate.exists() || sameContent(candidate, downloaded)) return candidate
+            if (!candidate.exists() || FileNames.sameContent(candidate, downloaded)) return candidate
             n++
         }
-    }
-
-    private fun sameContent(a: File, b: File): Boolean {
-        if (!a.isFile || a.length() != b.length()) return false
-        val bx = ByteArray(64 * 1024)
-        val by = ByteArray(64 * 1024)
-        var same = true
-        a.inputStream().use { x ->
-            b.inputStream().use { y ->
-                while (same) {
-                    val nx = x.fill(bx)
-                    val ny = y.fill(by)
-                    if (nx != ny) same = false
-                    else if (nx <= 0) break
-                    else for (i in 0 until nx) if (bx[i] != by[i]) { same = false; break }
-                }
-            }
-        }
-        return same
-    }
-
-    /** Lê até encher [buf] (ou chegar ao fim); devolve quantos bytes leu. */
-    private fun java.io.InputStream.fill(buf: ByteArray): Int {
-        var total = 0
-        while (total < buf.size) {
-            val n = read(buf, total, buf.size - total)
-            if (n < 0) break
-            total += n
-        }
-        return total
     }
 
     /**

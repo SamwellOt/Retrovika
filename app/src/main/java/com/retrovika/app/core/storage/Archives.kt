@@ -54,6 +54,11 @@ object Archives {
      *
      * Cada entrada é gravada num temporário ([PART_SUFFIX]) ao lado do destino e só troca de nome
      * depois que tudo deu certo: uma falha no meio não trunca uma ROM que já estava lá.
+     *
+     * Se algum destino já existe com outro conteúdo (outro jogo que só tem o mesmo nome, como dois
+     * "rom.gb"), nada é substituído: o conjunto inteiro vai para uma subpasta nova com o nome do
+     * compactado. Inteiro, e não só o arquivo repetido, porque um .cue/.m3u cita as faixas pelo nome.
+     * O mesmo arquivo extraído de novo (conteúdo igual) continua substituindo o antigo.
      */
     fun extract(archive: File, destDir: File, names: Set<String>): Map<String, File> {
         destDir.mkdirs()
@@ -107,14 +112,34 @@ object Archives {
                 }
                 null -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
             }
+            // Outro jogo com o mesmo nome: o conjunto vai para uma subpasta própria em vez de apagá-lo.
+            val clash = parts.any { (file, part) -> file.exists() && !FileNames.sameContent(file, part) }
+            val finalOf: Map<File, File> = if (!clash) parts.keys.associateWith { it } else {
+                val dir = freeDir(destDir, FileNames.safe(archive.nameWithoutExtension))
+                parts.keys.associateWith { File(dir, it.relativeTo(destDir).path) }
+            }
+            // Atualizado antes de mover: numa falha, o catch apaga os destinos novos (nunca os que já existiam).
+            out.replaceAll { _, file -> finalOf.getValue(file) }
             // Tudo gravado: só agora os temporários tomam o lugar dos destinos.
-            for ((file, part) in parts) commit(part, file)
+            for ((file, part) in parts) {
+                val dest = finalOf.getValue(file)
+                dest.parentFile?.mkdirs()
+                commit(part, dest)
+            }
         } catch (t: Throwable) {
             parts.values.forEach { it.delete() }
             out.values.filterNot { it in preexisting }.forEach { it.delete() }
             throw t
         }
         return out
+    }
+
+    /** Primeira subpasta livre de [parent] chamada [base], "[base] (2)", "[base] (3)"… */
+    private fun freeDir(parent: File, base: String): File {
+        var dir = File(parent, base)
+        var n = 2
+        while (dir.exists()) dir = File(parent, "$base (${n++})")
+        return dir
     }
 
     /** Troca [file] por [part]. No Linux o rename substitui o destino; se não, apaga e tenta de novo. */
@@ -153,6 +178,7 @@ object Archives {
             // Nem na memória nativa coube: o RomExtractor transforma isso na mensagem de memória.
             SevenZipNative.MEMORY -> throw OutOfMemoryError("7z: ${archive.name}")
             SevenZipNative.DATA -> throw LocalizedException(R.string.download_archive_corrupt, archive.name)
+            SevenZipNative.NO_SPACE -> throw LocalizedException(R.string.common_error_no_space)
             else -> throw LocalizedException(R.string.download_extract_failed, archive.name)
         }
     }
