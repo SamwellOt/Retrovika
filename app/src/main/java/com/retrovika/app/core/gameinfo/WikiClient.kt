@@ -2,6 +2,7 @@ package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.Urls
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
@@ -28,7 +29,7 @@ class WikiClient {
     suspend fun find(title: String, lang: String, igdbSlug: String? = null): WikiInfo? {
         val id = igdbSlug?.let { runCatching { byIgdb(it) }.getOrNull() }
             ?: GameTitles.clean(title).takeIf { it.isNotBlank() }?.let { byTitle(it) }
-            ?: runCatching { otherTitle(title)?.item }.getOrNull()
+            ?: try { otherTitle(title)?.item } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
             ?: return null
         return entity(id, lang)
     }
@@ -40,8 +41,9 @@ class WikiClient {
      * Acha o nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título
      * japonês romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). O artigo da Wikipedia
      * em inglês cita a romanização logo na abertura ("Hepburn: Hana to Taiyō to Ame to"); só vale um
-     * artigo de jogo cujo começo traz o título pedido, para não pegar a continuação ou a série que o
-     * menciona. Nulo quando não acha ou quando o nome é o mesmo.
+     * artigo de jogo em que o título pedido é um desses outros nomes inteiro, não só uma parte do
+     * texto: "Doraemon" não pode virar um "Doraemon 3" que cita o primeiro. Nulo quando não acha ou
+     * quando o nome é o mesmo.
      */
     suspend fun otherTitle(title: String): OtherTitle? {
         val clean = GameTitles.clean(title).ifBlank { return null }
@@ -52,7 +54,7 @@ class WikiClient {
         for (query in listOf(clean, wanted).distinctBy { it.lowercase() }) {
             val page = searchArticles(query).firstOrNull { p ->
                 val isGame = "game" in p.description.lowercase() || "video game" in p.intro.lowercase()
-                isGame && " $wanted " in " ${GameTitles.romajiKey(p.intro.take(INTRO_CHARS))} "
+                isGame && GameTitles.knownAs(p.intro.take(INTRO_CHARS)).any { GameTitles.romajiKey(it) == wanted }
             } ?: continue
             val name = GameTitles.clean(page.title)
             if (GameTitles.same(name, clean)) return null
@@ -263,6 +265,6 @@ class WikiClient {
         const val METACRITIC_OLD = "P1712"
 
         /** Quanto da abertura do artigo conta para achar o título (a primeira frase, com folga). */
-        const val INTRO_CHARS = 400
+        const val INTRO_CHARS = 600
     }
 }

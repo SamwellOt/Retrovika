@@ -62,7 +62,13 @@ class BackloggdClient(
      * idêntico e único serve, para não mostrar a nota de outro jogo.
      */
     suspend fun find(title: String, systemId: String, igdbSlug: String? = null): BackloggdInfo? {
-        igdbSlug?.let { slug -> runCatching { game(slug) }.getOrNull()?.let { return it } }
+        // O slug vem do Wikidata, que pode apontar outra versão (a de outro console): só vale se o
+        // console bate; senão segue pela busca por título, que escolhe entre as versões.
+        igdbSlug?.let { slug ->
+            runCatching { game(slug) }.getOrNull()
+                ?.takeIf { !Platforms.knows(systemId) || Platforms.matches(systemId, emptyList(), it.platforms) }
+                ?.let { return it }
+        }
         val clean = GameTitles.clean(title).ifBlank { return null }
         val candidates = suggestions(clean).filter { GameTitles.same(it.title, clean) }
             .sortedWith(compareBy(nullsLast<Int>()) { it.year })

@@ -1,5 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
+import kotlinx.coroutines.CancellationException
+
 /**
  * Busca e guarda por alguns minutos as informações externas de um jogo (Backloggd e Wikipedia):
  * voltar para uma página já aberta mostra tudo na hora, sem repetir os pedidos.
@@ -20,10 +22,20 @@ class GameInfoRepository(
      */
     suspend fun backloggd(title: String, systemId: String): BackloggdInfo? =
         cached(backloggdCache, "$systemId|${GameTitles.key(title)}") {
-            backloggd.find(title, systemId) ?: runCatching { wiki.otherTitle(title) }.getOrNull()?.let { other ->
-                backloggd.find(other.title, systemId, other.igdbSlug)
-            }
+            backloggd.find(title, systemId) ?: otherTitle(title)?.let { backloggd.find(it.title, systemId, it.igdbSlug) }
         }
+
+    /**
+     * O nome em inglês pela Wikipedia. Falha dela vale como "sem outro nome", mas o cancelamento (a
+     * página fechou) segue adiante: senão viraria um "não encontrado" guardado no cache.
+     */
+    private suspend fun otherTitle(title: String): WikiClient.OtherTitle? = try {
+        wiki.otherTitle(title)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
 
     /** O jogo na Wikipedia/Wikidata; [igdbSlug] (do Backloggd) acha o item exato. */
     suspend fun wiki(title: String, lang: String, igdbSlug: String?): WikiInfo? =

@@ -43,6 +43,26 @@ object GameTitles {
      */
     fun romajiKey(title: String): String =
         key(title).replace("ou", "o").replace("oo", "o").replace("uu", "u").replace("aa", "a")
+            // Hepburn tradicional escreve "m" antes de b/m/p ("Shimpan"); o romaji de teclado, "n".
+            .replace(Regex("""m(?=[bmp])"""), "n")
+            // A partícula を aparece como "wo" ou "o".
+            .replace(Regex("""\bwo\b"""), "o")
+
+    /**
+     * Outros nomes que a abertura de um artigo da Wikipedia dá ao jogo: as partes dos parênteses
+     * ("(Japanese: 花と太陽と雨と, Hepburn: Hana to Taiyō to Ame to)") sem o rótulo, e o que vem depois
+     * de "known in Japan as".
+     */
+    fun knownAs(intro: String): List<String> {
+        val parts = Regex("""\(([^()]*)\)""").findAll(intro).flatMap { it.groupValues[1].split(',', ';') } +
+            Regex("""in Japan as\s+([^,;.(]+)""", RegexOption.IGNORE_CASE).findAll(intro).map { it.groupValues[1] }
+        return parts.map { it.replace(label, "").trim() }.filter { it.isNotBlank() }.toList()
+    }
+
+    private val label = Regex(
+        """^\s*(?:(?:Japanese|Revised Hepburn|Hepburn|romanized|lit\.?|also known as|known as|or)(?![a-z])\s*:?\s*)+""",
+        RegexOption.IGNORE_CASE,
+    )
 }
 
 /**

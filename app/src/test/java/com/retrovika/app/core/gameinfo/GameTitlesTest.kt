@@ -32,6 +32,19 @@ class GameTitlesTest {
         assertEquals(GameTitles.romajiKey("Hana to Taiyou to Ame to"), GameTitles.romajiKey("Hana to Taiyō to Ame to"))
         assertEquals("hana to taiyo to ame to", GameTitles.romajiKey("Hana to Taiyoo to Ame to"))
         assertEquals("ryu ga gotoku", GameTitles.romajiKey("Ryuu ga Gotoku"))
+        assertEquals(GameTitles.romajiKey("Shinpan"), GameTitles.romajiKey("Shimpan"))
+    }
+
+    @Test
+    fun `le os outros nomes da abertura do artigo`() {
+        val lead = "Flower, Sun, and Rain (Japanese: 花と太陽と雨と, Hepburn: Hana to Taiyō to Ame to) is a 2001 adventure game."
+        assertTrue("Hana to Taiyō to Ame to" in GameTitles.knownAs(lead))
+        assertTrue("Ganbare Goemon" in GameTitles.knownAs("Mystical Ninja, known in Japan as Ganbare Goemon (がんばれゴエモン), is"))
+        // Um nome que só aparece dentro de outro não vale: a continuação não é o jogo pedido.
+        val sequel = "Doraemon 3 (Japanese: ドラえもん3, Hepburn: Doraemon Surī) is a sequel to Doraemon."
+        assertFalse(GameTitles.knownAs(sequel).any { GameTitles.romajiKey(it) == "doraemon" })
+        // "or" só é rótulo como palavra inteira.
+        assertEquals(listOf("Orochi"), GameTitles.knownAs("X (Orochi) is"))
     }
 
     @Test
