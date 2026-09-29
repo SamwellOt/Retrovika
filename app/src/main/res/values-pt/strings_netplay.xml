@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Partida em rede local (dois jogadores, dois celulares). -->
+<resources>
+    <string name="netplay_kicker">Jogar em dupla</string>
+    <string name="netplay_menu_title">Jogar junto (rede local)</string>
+    <string name="netplay_menu_subtitle">Um segundo celular no mesmo Wi-Fi entra como jogador 2 lendo um QR code. Os dois precisam do mesmo jogo na biblioteca.</string>
+    <string name="netplay_menu_playing">Partida em andamento. Pausar aqui pausa o outro jogador também.</string>
+    <string name="netplay_host">Convidar o jogador 2</string>
+    <string name="netplay_resync">Ressincronizar</string>
+    <string name="netplay_leave">Sair da partida</string>
+    <string name="netplay_host_title">Leia para jogar junto</string>
+    <string name="netplay_host_hint">No outro celular: abra o Retrovika, toque no botão de QR no topo do Início e aponte para este código. Mesmo Wi-Fi (ou um no roteador do outro), mesmo jogo na biblioteca.</string>
+    <string name="netplay_waiting_guest">Esperando o jogador 2…</string>
+    <string name="netplay_connecting">Conectando…</string>
+    <string name="netplay_connecting_hint">Mandando o jogo para o outro celular. Os dois começam exatamente do mesmo momento.</string>
+    <string name="netplay_joining">Entrando em %1$s…</string>
+    <string name="netplay_connected_host">O jogador 2 entrou! Divirtam-se.</string>
+    <string name="netplay_connected_guest">Conectado: você é o jogador 2.</string>
+    <string name="netplay_player_n">J%1$d · rede local</string>
+    <string name="netplay_waiting_other">Esperando o outro jogador…</string>
+    <string name="netplay_other_left">O outro jogador saiu. O jogo continua aqui.</string>
+    <string name="netplay_lost">Conexão perdida. O jogo continua aqui.</string>
+    <string name="netplay_failed">Não deu para começar a partida.</string>
+    <string name="netplay_join_failed">Não deu para falar com o outro celular. Confira se os dois estão no mesmo Wi-Fi e se o QR code ainda está na tela lá.</string>
+    <string name="netplay_missing_game">Você não tem este jogo na biblioteca. É preciso: %1$s (%2$s)</string>
+    <string name="netplay_no_network">Nenhuma rede local encontrada. Conecte ao Wi-Fi ou ligue o roteador do celular.</string>
+    <string name="netplay_unavailable">Indisponível durante a partida em rede.</string>
+</resources>

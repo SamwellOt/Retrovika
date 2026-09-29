@@ -42,6 +42,7 @@ import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.share.LanTransfer
+import com.retrovika.app.core.share.StatePackage
 import com.retrovika.app.core.cores.CoreBenchmark
 import com.retrovika.app.core.cores.CoreSpeed
 import com.retrovika.app.core.cores.SystemBenchmark
@@ -164,6 +165,12 @@ class GameActivity : ComponentActivity() {
     /** Criado só quando alguém traduz: os clientes do ML Kit ficam fora dos jogos que não usam. */
     private var translator: LiveTranslator? = null
     private var translateJob: kotlinx.coroutines.Job? = null
+    /** Partida em rede local (anfitrião ou convidado). */
+    private val netplay by lazy {
+        NetplayController(lifecycleScope, { retroView }, ::resumeForNetplay) { res -> toast = getString(res) }
+    }
+    /** Convidado de uma partida em rede: endereço, porta e token do anfitrião, vindos do QR code. */
+    private var netGuest: Triple<String, Int, String>? = null
     /** Estado sendo compartilhado a partir do menu. */
     private var sharing by mutableStateOf<ShareSheet?>(null)
     private lateinit var states: SaveStates
@@ -248,7 +255,9 @@ class GameActivity : ComponentActivity() {
         // Compara com o pedido atual, não com o jogo carregado: durante a preparação ele ainda não
         // existe, e um toque duplo em "Jogar" reiniciava a instalação do núcleo.
         // Mesmo jogo, sem estado recebido: é só um toque duplo em "Jogar".
-        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1) && intent.getStringExtra(EXTRA_STATE_FILE) == null) return
+        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1) && intent.getStringExtra(EXTRA_STATE_FILE) == null &&
+            intent.getStringExtra(EXTRA_NET_HOST) == null) return
+        netplay.end()
         persist(auto = settings.autoSave)
         setIntent(intent)
         recreate()
@@ -267,7 +276,11 @@ class GameActivity : ComponentActivity() {
         }
 
         pendingStateFile = intent.getStringExtra(EXTRA_STATE_FILE)?.let(::File)?.takeIf { it.exists() }
-        guestSession = pendingStateFile != null
+        netGuest = intent.getStringExtra(EXTRA_NET_HOST)?.let { h ->
+            val token = intent.getStringExtra(EXTRA_NET_TOKEN) ?: return@let null
+            Triple(h, intent.getIntExtra(EXTRA_NET_PORT, 0), token)
+        }
+        guestSession = pendingStateFile != null || netGuest != null
         // O estado só abre no núcleo que o gerou: quem enviou diz qual é.
         val sharedCore = intent.getStringExtra(EXTRA_CORE_ID)?.takeIf { id -> system.cores.any { it.id == id } }
         val userCore = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
@@ -549,7 +562,12 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             val received = pendingStateFile
-            if (received != null) {
+            val guestOf = netGuest
+            if (guestOf != null) {
+                // O jogo começa do estado do anfitrião: nada de salvamento automático aqui.
+                if (retroView !== view) return@launch
+                netplay.join(guestOf.first, guestOf.second, guestOf.third)
+            } else if (received != null) {
                 pendingStateFile = null
                 val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
                 if (retroView !== view) return@launch
@@ -648,6 +666,7 @@ class GameActivity : ComponentActivity() {
 
     override fun onDestroy() {
         sharing?.server?.close()
+        netplay.end()
         translateJob?.cancel()
         translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
@@ -727,7 +746,8 @@ class GameActivity : ComponentActivity() {
             updateEmulationState()
             // O núcleo só aceita trapaças na thread de emulação, que acabou de voltar a rodar.
             val view = retroView
-            if (view != null && cheats?.dirty == true) applyCheats(view)
+            // Em rede as trapaças esperam: só um lado com elas desencontraria os dois jogos.
+            if (view != null && cheats?.dirty == true && !netplay.playing) applyCheats(view)
         }
         override fun slots() = if (::states.isInitialized) states.slots() else emptyList()
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
@@ -759,6 +779,7 @@ class GameActivity : ComponentActivity() {
 
         override fun load(slot: Int) {
             val view = retroView ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             lifecycleScope.launch {
@@ -784,6 +805,8 @@ class GameActivity : ComponentActivity() {
         }
 
         override fun toggleFastForward() {
+            // Em rede os dois lados andam no mesmo ritmo: acelerar só aqui travaria o outro.
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             fastForward = !fastForward
             retroView?.frameSpeed = if (fastForward) settings.fastForwardSpeed else 1
         }
@@ -798,6 +821,7 @@ class GameActivity : ComponentActivity() {
             retroView?.getVariables()?.mapNotNull(CoreOption::parse).orEmpty()
 
         override fun setCoreOption(option: CoreOption, value: String) {
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             retroView?.updateVariables(Variable(option.key, value))
             app.scope.launch { app.settings.setCoreOption(core.id, option.key, value) }
         }
@@ -814,6 +838,7 @@ class GameActivity : ComponentActivity() {
 
         override fun reset() {
             val view = retroView ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
             close()
             lifecycleScope.launch(Dispatchers.Default) { view.reset() }
@@ -872,6 +897,20 @@ class GameActivity : ComponentActivity() {
 
         override fun skipBenchmark() { benchSkip = true }
 
+        override fun netplay(): NetplayController = netplay
+
+        override fun hostNetplay() {
+            if (!::game.isInitialized || !::core.isInitialized || !autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            val view = retroView ?: return
+            // Trapaças ligadas só aqui desencontrariam os jogos: saem durante a partida e voltam depois.
+            if (cheats?.state?.enabled?.isNotEmpty() == true) {
+                cheats?.dirty = true
+                lifecycleScope.launch(Dispatchers.Default) { view.resetCheat() }
+            }
+            if (fastForward) toggleFastForward()
+            netplay.startHosting(StatePackage.manifestFor(game, core.id, System.currentTimeMillis()), game.title)
+        }
+
         override fun closeShare() {
             sharing?.server?.close()
             sharing = null
@@ -907,6 +946,7 @@ class GameActivity : ComponentActivity() {
         override fun stopPadEditor() { padEditing = false }
 
         override fun exit() {
+            netplay.end()
             persist(auto = settings.autoSave)
             // O LibretroDroid é global e o onDestroy desta Activity roda só depois que a próxima tela
             // aparece: abrir outro jogo logo em seguida teria o emulador novo destruído por este.
@@ -936,6 +976,17 @@ class GameActivity : ComponentActivity() {
     private fun sendPadSave(save: Pair<Boolean, PadProfile?>) {
         pendingPadSaves++
         padSaves.trySend(save)
+    }
+
+    /** Fecha o menu (e a tradução) e espera a emulação rodar: o núcleo só é tocado na thread de emulação ativa. */
+    private suspend fun resumeForNetplay(): Boolean {
+        if (translation != null) menuActions.closeTranslation()
+        if (menuOpen) menuActions.close()
+        repeat(100) {
+            if (emulationRunning()) return true
+            delay(50)
+        }
+        return emulationRunning()
     }
 
     /**
@@ -1127,7 +1178,23 @@ class GameActivity : ComponentActivity() {
         )
 
         private const val EXTRA_STATE_FILE = "state_file"
+        private const val EXTRA_NET_HOST = "net_host"
+        private const val EXTRA_NET_PORT = "net_port"
+        private const val EXTRA_NET_TOKEN = "net_token"
         private const val EXTRA_CORE_ID = "core_id"
+
+        /** Entra na partida em rede do anfitrião em [host]:[port], com o mesmo núcleo dele. */
+        fun launchNetplay(context: Context, gameId: Long, host: String, port: Int, token: String, coreId: String) {
+            context.startActivity(
+                Intent(context, GameActivity::class.java)
+                    .putExtra(EXTRA_GAME_ID, gameId)
+                    .putExtra(EXTRA_NET_HOST, host)
+                    .putExtra(EXTRA_NET_PORT, port)
+                    .putExtra(EXTRA_NET_TOKEN, token)
+                    .putExtra(EXTRA_CORE_ID, coreId)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
 
         /** [stateFile]: estado recebido para abrir no lugar do salvamento automático, no núcleo [coreId]. */
         fun launch(context: Context, gameId: Long, stateFile: File? = null, coreId: String? = null) {
@@ -1171,6 +1238,8 @@ interface MenuActions {
     fun shareAsQr()
     fun closeShare()
     fun skipBenchmark()
+    fun netplay(): NetplayController
+    fun hostNetplay()
     fun translation(): TranslationUi?
     fun canTranslate(): Boolean
     fun translate()

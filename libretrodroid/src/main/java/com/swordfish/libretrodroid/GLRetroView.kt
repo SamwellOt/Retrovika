@@ -238,8 +238,29 @@ class GLRetroView(
         runOnEmulationThread(useEmulationThread) { LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch) }
     }
 
+    /**
+     * Anfitrião: captura o estado e começa a partida no mesmo passo da thread de emulação, sem nenhum
+     * quadro entre os dois (o convidado parte exatamente desse estado). Nulo se o núcleo não gerou estado.
+     */
+    fun serializeAndStartNetplay(fd: Int, localPort: Int, delayFrames: Int, epoch: Int): ByteArray? = runOnEmulationThread(true) {
+        runCatching {
+            val state = LibretroDroid.serializeState()
+            LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch)
+            state
+        }.onFailure { Log.e(TAG_LOG, "serializeAndStartNetplay", it) }.getOrNull()
+    }
+
+    /** Convidado: carrega o estado do anfitrião e começa a partida no mesmo passo. */
+    fun unserializeAndStartNetplay(state: ByteArray, fd: Int, localPort: Int, delayFrames: Int, epoch: Int): Boolean = runOnEmulationThread(true) {
+        runCatching {
+            val ok = LibretroDroid.unserializeState(state)
+            if (ok) LibretroDroid.startNetplay(fd, localPort, delayFrames, epoch)
+            ok
+        }.onFailure { Log.e(TAG_LOG, "unserializeAndStartNetplay", it) }.getOrDefault(false)
+    }
+
     fun stopNetplay(useEmulationThread: Boolean = true) {
-        runOnEmulationThread(useEmulationThread) { LibretroDroid.stopNetplay() }
+        runOnEmulationThread(useEmulationThread) { runCatching { LibretroDroid.stopNetplay() } }
     }
 
     /** -1 sem partida; -2 conexão perdida; senão, há quantos ms a entrada do outro está atrasada. */
@@ -427,14 +448,16 @@ class GLRetroView(
         }
 
         val latch = CountDownLatch(1)
-        var result: T? = null
+        var result: Any? = null
         queueEvent {
             result = block()
             latch.countDown()
         }
 
         latch.awaitUninterruptibly()
-        return result!!
+        // T pode ser anulável (a partida em rede devolve nulo quando o núcleo não gera estado).
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     private fun buildShader(config: ShaderConfig): GLRetroShader {

@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -169,6 +170,9 @@ fun GameScreen(
                         dimmed = !padShown,
                     )
                 }
+                (menu.netplay().ui as? NetplayUi.Playing)?.let {
+                    NetplayBadge(it, Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(10.dp))
+                }
                 // Sobre o vídeo, no mesmo lugar dele: as caixas traduzidas batem com o texto da captura.
                 menu.translation()?.let { TranslationOverlay(it, onClose = menu::closeTranslation, modifier = videoModifier) }
             }
@@ -195,6 +199,9 @@ fun GameScreen(
                 onCancel = menu::stopPadEditor,
             )
         }
+
+        // Por cima do menu: o QR code do anfitrião ou o "conectando" do convidado.
+        menu.netplay().ui?.takeIf { it !is NetplayUi.Playing }?.let { NetplaySheet(it, onCancel = { menu.netplay().end() }) }
 
         AnimatedVisibility(
             visible = toast != null,
@@ -517,6 +524,27 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     repeat(disks.first) { i ->
                         SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i); disks = disks.first to i })
+                    }
+                }
+            }
+        }
+        item {
+            val net = menu.netplay()
+            Column {
+                Text(stringResource(R.string.netplay_menu_title), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(if (net.playing) R.string.netplay_menu_playing else R.string.netplay_menu_subtitle),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!net.playing) {
+                        OutlinedButton(onClick = menu::hostNetplay) {
+                            Icon(Icons.Rounded.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.netplay_host))
+                        }
+                    } else {
+                        if (net.isHost) OutlinedButton(onClick = { net.resync() }) { Text(stringResource(R.string.netplay_resync)) }
+                        OutlinedButton(onClick = { net.end() }) { Text(stringResource(R.string.netplay_leave)) }
                     }
                 }
             }

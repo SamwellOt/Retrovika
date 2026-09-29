@@ -56,6 +56,8 @@ import com.retrovika.app.ui.components.GhostButton
 import com.retrovika.app.ui.components.GradientButton
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
+import com.retrovika.app.core.netplay.NetplayGuest
 
 /** O que chegou de fora: um arquivo .rvstate ou um link de QR code. */
 sealed interface Incoming {
@@ -183,6 +185,48 @@ private fun Received(result: SharedStates.Received) {
             )
         }
     }
+}
+
+/**
+ * Entrar numa partida em rede pelo QR code: pergunta ao anfitrião qual jogo e núcleo ele está rodando,
+ * acha o jogo na biblioteca e abre direto como jogador 2.
+ */
+@Composable
+fun NetplayJoin(link: RetrovikaLink.Netplay, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val app = context.container
+    var error by remember(link) { mutableStateOf<String?>(null) }
+    LaunchedEffect(link) {
+        try {
+            val (host, manifest) = NetplayGuest.info(link.hosts, link.port, link.token)
+            val game = StatePackage.match(manifest, app.library.all.first())
+            if (game == null) {
+                error = context.getString(R.string.netplay_missing_game, manifest.datName ?: manifest.rawName, Systems.byId(manifest.systemId)?.name ?: manifest.systemId)
+                return@LaunchedEffect
+            }
+            onDone()
+            GameActivity.launchNetplay(context, game.id, host, link.port, link.token, manifest.coreId)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            error = context.getString(R.string.netplay_join_failed)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDone,
+        containerColor = Palette.SurfaceHigh,
+        title = { Text(stringResource(R.string.netplay_kicker)) },
+        text = {
+            val e = error
+            if (e != null) Text(e, style = MaterialTheme.typography.bodyMedium, color = Palette.Coral)
+            else Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Palette.Cyan)
+                Spacer(Modifier.width(12.dp))
+                Text(stringResource(R.string.netplay_joining, link.title), style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text(stringResource(if (error != null) R.string.common_close else R.string.common_cancel)) } },
+    )
 }
 
 /** Câmera (QR code) e seletor de arquivo; ficam na raiz da navegação para o resultado não se perder. */
