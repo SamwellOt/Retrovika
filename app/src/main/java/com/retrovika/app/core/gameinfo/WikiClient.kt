@@ -319,8 +319,10 @@ class WikiClient {
 
         private val nihongo = Regex("""\{\{\s*nihongo[\w ]*\|""", RegexOption.IGNORE_CASE)
         private val namedParam = Regex("""^\s*[\w-]+\s*=""")
-        private val innerTemplate = Regex("""\{\{[^{}]*}}""")
-        private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)]]""")
+        // Chaves e colchetes de fechamento sempre escapados: o Java do PC aceita "}}" solto, mas o ICU do
+        // Android recusa (PatternSyntaxException), e isto roda na abertura do app, pelo AppContainer.
+        private val innerTemplate = Regex("""\{\{[^{}]*\}\}""")
+        private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)\]\]""")
 
         /**
          * Os três primeiros parâmetros (inglês, kanji, romaji) de cada `{{Nihongo…}}` do wikitexto,
