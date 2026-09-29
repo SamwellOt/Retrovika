@@ -19,6 +19,7 @@ private fun regionRes(stored: String): Int? = when (stored.trim().lowercase()) {
     "brasil", "brazil" -> R.string.region_brazil
     "coreia", "korea" -> R.string.region_korea
     "china" -> R.string.region_china
+    "austrália", "australia" -> R.string.region_australia
     else -> null
 }
 

@@ -65,18 +65,21 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
         uris.mapNotNull { uri ->
             // Cada arquivo à parte: um que falhe (provedor offline, sem espaço…) não perde os outros.
             // Temporário próprio de cada arquivo: duas importações ao mesmo tempo não se atropelam.
-            paths.downloadsTmp.mkdirs()
-            val tmp = File.createTempFile("bios-import", null, paths.downloadsTmp)
+            var tmp: File? = null
             try {
+                // Dentro do try: sem espaço ou pasta inacessível conta como falha deste arquivo, não derruba a importação.
+                paths.downloadsTmp.mkdirs()
+                val file = File.createTempFile("bios-import", null, paths.downloadsTmp)
+                tmp = file
                 val name = displayName(uri) ?: return@mapNotNull null
-                resolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
-                val hash = md5(tmp)
+                resolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } ?: return@mapNotNull null
+                val hash = md5(file)
                 // Pelo MD5, pelo nome ou, para BIOS com formato conhecido, pelo conteúdo: uma BIOS de PS2 com
                 // outro nome (SCPH-70012.bin) vale tanto quanto a scph39001.bin. Nome certo com conteúdo
                 // errado é recusado, senão apareceria como presente sem funcionar.
                 val match = known.firstOrNull { it.md5 != null && it.md5.equals(hash, true) }
-                    ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) && (it.format == null || BiosFormats.isValid(it.format, tmp)) }
-                    ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, tmp) }
+                    ?: known.firstOrNull { it.fileName.substringAfterLast('/').equals(name, true) && (it.format == null || BiosFormats.isValid(it.format, file)) }
+                    ?: known.firstOrNull { it.format != null && BiosFormats.isValid(it.format, file) }
                     ?: return@mapNotNull null
                 val dest = File(paths.system, match.fileName)
                 // Casou só pelo nome, com MD5 diferente: não substitui uma cópia que já confere.
@@ -84,14 +87,14 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
                     return@mapNotNull null
                 }
                 dest.parentFile?.mkdirs()
-                tmp.copyTo(dest, overwrite = true)
+                file.copyTo(dest, overwrite = true)
                 match.fileName
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 null
             } finally {
-                tmp.delete()
+                tmp?.delete()
             }
         }
     }

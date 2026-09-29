@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Versões repetidas do mesmo jogo na biblioteca. -->
+<resources>
+    <string name="versions_title">Repeated versions</string>
+    <plurals name="versions_groups">
+        <item quantity="one">%d game with more than one version</item>
+        <item quantity="other">%d games with more than one version</item>
+    </plurals>
+    <string name="versions_intro">Files of the same game are grouped by title. The star marks the version recommended for you: your language\'s region or a translation into it, verified dumps and the newest revision win; bad dumps, hacks and betas lose.</string>
+    <string name="versions_verify_title">Check against the DAT</string>
+    <plurals name="versions_verify_pending">
+        <item quantity="one">%d game not verified yet. Verified files get more weight and renamed files are grouped by their real name.</item>
+        <item quantity="other">%d games not verified yet. Verified files get more weight and renamed files are grouped by their real name.</item>
+    </plurals>
+    <string name="versions_verify_all_done">Every game of this console has been checked.</string>
+    <string name="versions_verify_button">Verify all</string>
+    <string name="versions_verify_progress">Analyzing %1$d of %2$d…</string>
+    <plurals name="versions_verify_result">
+        <item quantity="one">%d game identified.</item>
+        <item quantity="other">%d games identified.</item>
+    </plurals>
+    <string name="versions_empty_title">No repeated versions</string>
+    <string name="versions_empty_message">Each game of this console has a single file.</string>
+    <plurals name="versions_count">
+        <item quantity="one">%d version</item>
+        <item quantity="other">%d versions</item>
+    </plurals>
+    <string name="versions_keep_best">Keep only the recommended one</string>
+    <plurals name="versions_remove_title">
+        <item quantity="one">Remove %d version?</item>
+        <item quantity="other">Remove %d versions?</item>
+    </plurals>
+    <string name="versions_remove_message">Imported and downloaded files are deleted; files from linked folders only leave the library. Saves and states are kept.</string>
+    <string name="versions_recommended">Recommended</string>
+    <string name="versions_tag_verified">Verified</string>
+    <string name="versions_tag_good_dump">Good dump</string>
+    <string name="versions_tag_bad_dump">Bad dump</string>
+    <string name="versions_tag_hack">Hack</string>
+    <string name="versions_tag_trainer">Trainer</string>
+    <string name="versions_tag_overdump">Overdump</string>
+    <string name="versions_tag_pirate">Pirate</string>
+    <string name="versions_tag_prerelease">Beta/demo</string>
+    <string name="versions_tag_unlicensed">Unlicensed</string>
+    <string name="versions_tag_translation">Translation</string>
+    <string name="versions_tag_revision">Revision</string>
+
+    <plurals name="system_versions_title">
+        <item quantity="one">%d game with repeated versions</item>
+        <item quantity="other">%d games with repeated versions</item>
+    </plurals>
+    <string name="system_versions_subtitle">See which one to keep</string>
+    <string name="details_library_versions">Versions in your library</string>
+    <string name="details_library_versions_all">See all</string>
+    <string name="details_library_versions_this">This one</string>
+</resources>

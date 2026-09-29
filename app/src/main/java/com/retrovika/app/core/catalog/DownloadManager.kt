@@ -1,6 +1,7 @@
 package com.retrovika.app.core.catalog
 
 import android.content.Context
+import android.webkit.CookieManager
 import com.retrovika.app.R
 import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.settings.localized
@@ -101,6 +102,13 @@ class DownloadManager(
     private val waiting = ArrayDeque<String>()
     private val slotFreed = MutableStateFlow(0L)
 
+    /**
+     * Limpa os .part deixados por downloads, importações e extrações interrompidos (app encerrado à
+     * força, aparelho reiniciado). Roda uma vez ao criar o gerenciador; cada download espera por ela
+     * antes de começar, para a limpeza nunca apagar o temporário de um download em andamento.
+     */
+    private val sweep: Job = scope.launch(Dispatchers.IO) { runCatching { library.sweepStaleParts() } }
+
     fun enqueue(entry: CatalogEntry) {
         val system = Systems.byId(entry.systemId) ?: return
         if (isActive(entry)) return
@@ -127,7 +135,7 @@ class DownloadManager(
             try {
                 runDownload(
                     taskId, direct.url, direct.fileName ?: variant.fileName, system, entry.title, entry.coverUrl, entry.developer,
-                    entry.tags.joinToString(" · ").ifBlank { null }, refererOf(variant.origin ?: entry) + direct.headers, direct.ipv6,
+                    entry.tags.joinToString(" · ").ifBlank { null }, refererOf(variant.origin ?: entry) + direct.headers, ipv6 = direct.ipv6,
                     onWaited = { waited = true },
                 )
                 return
@@ -148,7 +156,8 @@ class DownloadManager(
         val name = url.substringAfterLast('/').substringBefore('?').substringBefore('#').let { android.net.Uri.decode(it) }
             .ifBlank { context.localized().getString(R.string.download_default_name) }
         val task = DownloadTask(title = name.substringBeforeLast('.'), systemId = system.id, coverUrl = null)
-        launchTask(task) { id -> runDownload(id, url, name, system, task.title, null, null, null) }
+        // O nome do fim do link pode não ser o do arquivo (o "uc" do Google Drive): vale o que o servidor disser.
+        launchTask(task) { id -> runDownload(id, url, name, system, task.title, null, null, null, serverName = true) }
     }
 
     /**
@@ -157,7 +166,9 @@ class DownloadManager(
      */
     fun enqueueBrowser(url: String, fileName: String, system: GameSystem, headers: Map<String, String>) {
         val task = DownloadTask(title = RomNaming.cleanTitle(fileName.substringBeforeLast('.')), systemId = system.id, coverUrl = null)
-        launchTask(task) { id -> runDownload(id, url, fileName, system, task.title, null, null, null, headers) }
+        // Num redirecionamento para outro site, os cookies daquele site vêm do próprio WebView.
+        val cookiesFor: (String) -> String? = { hop -> runCatching { CookieManager.getInstance().getCookie(hop) }.getOrNull() }
+        launchTask(task) { id -> runDownload(id, url, fileName, system, task.title, null, null, null, headers, cookiesFor) }
     }
 
     /** Alguns servidores (CDRomance, por exemplo) só liberam o arquivo vindo da página do jogo. */
@@ -182,6 +193,7 @@ class DownloadManager(
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var holdsSlot = false
             try {
+                sweep.join()
                 awaitSlot(id)
                 holdsSlot = true
                 update(id) { it.copy(status = DownloadStatus.DOWNLOADING) }
@@ -242,6 +254,9 @@ class DownloadManager(
     private suspend fun runDownload(
         taskId: String, url: String, fileName: String, system: GameSystem, title: String,
         cover: String?, developer: String?, description: String?, headers: Map<String, String> = emptyMap(),
+        cookiesFor: ((String) -> String?)? = null,
+        /** O nome veio do fim do link, não da fonte: o do servidor (Content-Disposition, URL final) é melhor. */
+        serverName: Boolean = false,
         ipv6: Boolean? = null,
         onWaited: () -> Unit = {},
     ) {
@@ -252,7 +267,8 @@ class DownloadManager(
         var lastTime = System.nanoTime()
         var saved: File? = null
         val file = try {
-            Http.download(url, target, headers, http = Http.clientFor(ipv6), onSaved = { saved = it }, onWait = { until ->
+            // keepExisting: outro jogo com o mesmo nome de arquivo (dois "rom.gb") não é apagado.
+            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), onSaved = { saved = it }, onWait = { until ->
                 if (until > 0) onWaited()
                 update(taskId) { it.copy(retryAt = until, speed = 0) }
             }, onBytes = { read, total ->
@@ -271,9 +287,12 @@ class DownloadManager(
             saved?.delete()
             throw c
         }
+        // Com o nome do servidor, o título da tarefa (e do jogo) passa a ser o do arquivo salvo.
+        val finalTitle = if (serverName) file.name.substringBeforeLast('.').ifBlank { file.name } else title
+        if (finalTitle != title) update(taskId) { it.copy(title = finalTitle) }
         // Daqui em diante o arquivo já está baixado: extrair e registrar vão até o fim, senão um cancelamento
         // no meio da extração deixaria arquivos soltos e a tarefa marcada como cancelada.
-        withContext(NonCancellable) { finishDownload(taskId, file, dir, system, title, cover, developer, description) }
+        withContext(NonCancellable) { finishDownload(taskId, file, dir, system, finalTitle, cover, developer, description) }
     }
 
     private suspend fun finishDownload(
@@ -291,6 +310,13 @@ class DownloadManager(
             if (Archives.isArchive(file) && !system.keepArchives) {
                 update(taskId) { it.copy(status = DownloadStatus.EXTRACTING, speed = 0) }
                 file = withContext(Dispatchers.IO) { RomExtractor.extract(file, dir, system) }
+            }
+            // Sem um arquivo do console (um .rar, ou um .zip sem ROM dele, que o extrator devolve como veio):
+            // o jogo nunca abriria. Melhor falhar com o motivo do que cadastrar algo que não roda.
+            if (!system.keepArchives && file.extension.lowercase() !in system.extensions) {
+                val name = file.name
+                withContext(Dispatchers.IO) { file.delete() }
+                throw LocalizedException(R.string.download_unplayable, name, system.name)
             }
             library.addDownloaded(system, file, title, cover, developer, description)
         }

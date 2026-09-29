@@ -39,4 +39,9 @@
     <string name="settings_pad_profiles">Controller per console</string>
     <string name="settings_pad_profiles_subtitle">Each console can have its own on-screen controller (hidden, size, button positions). Adjust it in the game menu › Controls.</string>
     <string name="settings_pad_profiles_reset">Restore all (%d)</string>
+    <string name="pad_scope_title">Controller for</string>
+    <string name="pad_scope_game">This game only</string>
+    <string name="pad_scope_console">Every %s game</string>
+    <string name="pad_scope_game_hint">This game has its own layout. The other %s games keep the console\'s one.</string>
+    <string name="pad_reset_game">Restore the default controller in this game</string>
 </resources>

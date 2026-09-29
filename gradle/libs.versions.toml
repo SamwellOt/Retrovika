@@ -22,6 +22,9 @@ zip4j = "2.11.5"
 xz = "1.10"
 zxing = "3.5.3"
 junit = "4.13.2"
+zxingEmbedded = "4.3.0"
+mlkitTextJapanese = "16.0.1"
+mlkitTranslate = "17.0.3"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -54,6 +57,9 @@ zip4j = { module = "net.lingala.zip4j:zip4j", version.ref = "zip4j" }
 xz = { module = "org.tukaani:xz", version.ref = "xz" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
+mlkit-text-japanese = { module = "com.google.android.gms:play-services-mlkit-text-recognition-japanese", version.ref = "mlkitTextJapanese" }
+mlkit-translate = { module = "com.google.mlkit:translate", version.ref = "mlkitTranslate" }
+zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingEmbedded" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

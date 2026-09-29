@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Estados compartilhados (enviar e receber). -->
+<resources>
+    <string name="share_state_title">Share state</string>
+    <string name="share_state_kicker">Try to beat this part</string>
+    <string name="share_state_message">Can you beat this part of %1$s? Open it with Retrovika.</string>
+    <string name="share_state_hint">Your friend opens the game at this exact moment. They need the same game (same region) in their library.</string>
+    <string name="share_state_send_file">Send as a file</string>
+    <string name="share_state_show_qr">Show QR code (same Wi-Fi)</string>
+    <string name="share_state_qr_hint">On the other phone, open Retrovika, tap the QR button at the top of Home and point at this code. Both need to be on the same Wi-Fi network (or one on the other\'s hotspot). Keep this screen open until it arrives.</string>
+    <string name="share_state_no_network">No local network found. Connect to Wi-Fi or turn on the hotspot, or send it as a file.</string>
+    <string name="share_state_opened">Shared state loaded. Autosave and the cartridge save stay off in this session so your progress isn\'t replaced.</string>
+    <string name="share_state_open_failed">This state didn\'t load in this core or version of the game.</string>
+    <string name="share_state_invalid">This file isn\'t a Retrovika state.</string>
+    <string name="share_receive_title">Shared state</string>
+    <string name="share_receive_working">Receiving…</string>
+    <string name="share_receive_progress">Receiving… %1$d%%</string>
+    <string name="share_receive_lan_failed">Couldn\'t reach the other phone. Check that both are on the same Wi-Fi and that the QR code is still open there.</string>
+    <string name="share_receive_ready">Starts exactly where your friend stopped. Autosave stays off in this session, so your own progress is safe.</string>
+    <string name="share_receive_missing">You don\'t have this game in your library. It needs: %1$s</string>
+    <string name="share_receive_play">Play from here</string>
+    <string name="share_chooser_title">Receive</string>
+    <string name="share_chooser_message">A friend\'s state (\"try to beat this part\") or a local multiplayer match.</string>
+    <string name="share_chooser_scan">Scan QR code</string>
+    <string name="share_chooser_file">Open .rvstate file</string>
+    <string name="share_scan_prompt">Point at the QR code on your friend\'s screen</string>
+    <string name="share_qr_not_ours">This QR code isn\'t from Retrovika.</string>
+    <string name="share_link_bad_host">This link doesn\'t point to a device on your local network, so it was ignored.</string>
+    <string name="share_link_confirm_state_title">Receive a shared state?</string>
+    <string name="share_link_confirm_netplay_title">Join a network match?</string>
+    <string name="share_link_confirm_state">A link asks to download the state \"%1$s\" from another device. Retrovika will connect to it only if you continue.</string>
+    <string name="share_link_confirm_netplay">A link invites you to the match \"%1$s\". If you continue, Retrovika connects to the other device and opens the game as player 2.</string>
+    <string name="share_link_confirm_host">Device: %1$s</string>
+    <string name="share_link_confirm_accept">Continue</string>
+</resources>

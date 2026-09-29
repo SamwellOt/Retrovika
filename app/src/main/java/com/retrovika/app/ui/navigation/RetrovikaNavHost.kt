@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -90,11 +91,19 @@ import com.retrovika.app.ui.screens.explore.ExploreScreen
 import com.retrovika.app.ui.screens.home.HomeScreen
 import com.retrovika.app.ui.screens.library.LibraryScreen
 import com.retrovika.app.ui.screens.library.SystemScreen
+import com.retrovika.app.ui.screens.library.VersionsScreen
 import com.retrovika.app.ui.screens.settings.BiosScreen
 import com.retrovika.app.ui.screens.settings.CoresScreen
 import com.retrovika.app.ui.screens.settings.SettingsScreen
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.retrovika.app.ui.share.ReceiveChooser
+import com.retrovika.app.ui.share.ReceiveHost
+import com.retrovika.app.ui.share.NetplayJoin
+import com.retrovika.app.core.share.RetrovikaLink
+import com.retrovika.app.ui.share.rememberReceiveLaunchers
 
 private data class Tab(val route: String, @StringRes val label: Int, val icon: ImageVector)
 
@@ -146,6 +155,16 @@ fun RetrovikaNavHost() {
         }
     }
     val addFolder = { folderPicker.launch(null) }
+
+    // Receber estado compartilhado ou entrar numa partida: os lançadores ficam aqui, sempre compostos.
+    val receive = rememberReceiveLaunchers()
+    var choosingReceive by remember { mutableStateOf(false) }
+    if (choosingReceive) ReceiveChooser(receive, onDismiss = { choosingReceive = false })
+    // Guardado como texto do link (rememberSaveable): girar a tela recria a Activity e não pode perder a partida.
+    var joiningLink by rememberSaveable { mutableStateOf<String?>(null) }
+    val joining = remember(joiningLink) { joiningLink?.let { RetrovikaLink.parse(it) as? RetrovikaLink.Netplay } }
+    ReceiveHost(onNetplay = { joiningLink = it.toUri() })
+    joining?.let { link -> NetplayJoin(link, onDone = { joiningLink = null }) }
 
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura
     // de todas as pastas a cada vez deixava o menu lento. Roda no escopo do app: se a Activity for
@@ -203,6 +222,7 @@ fun RetrovikaNavHost() {
                         onOpenLibrary = { selectTab("library") },
                         onOpenDownloads = openDownloads,
                         onAddFolder = addFolder,
+                        onReceive = { choosingReceive = true },
                     )
                 }
                 composable("library") { entry ->
@@ -247,6 +267,14 @@ fun RetrovikaNavHost() {
                         onBack = { nav.back(entry) },
                         onOpenGame = { nav.open(entry, "game/$it") },
                         onOpenBios = { nav.open(entry, "settings/bios") },
+                        onOpenVersions = { nav.open(entry, "system/${entry.arguments?.getString("id").orEmpty()}/versions") },
+                    )
+                }
+                composable("system/{id}/versions", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                    VersionsScreen(
+                        systemId = entry.arguments?.getString("id").orEmpty(),
+                        onBack = { nav.back(entry) },
+                        onOpenGame = { nav.open(entry, "game/$it") },
                     )
                 }
                 composable("game/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
@@ -259,6 +287,9 @@ fun RetrovikaNavHost() {
                             if (previous?.destination?.route == "system/{id}" && previous.arguments?.getString("id") == id) nav.back(entry)
                             else nav.open(entry, "system/$id")
                         },
+                        // Outra versão do jogo: empilha (singleTop trocaria esta página pela nova, e voltar pularia a atual).
+                        onOpenGame = { if (it != entry.arguments?.getLong("id")) nav.open(entry, "game/$it", singleTop = false) },
+                        onOpenVersions = { nav.open(entry, "system/$it/versions") },
                     )
                 }
             }
@@ -276,9 +307,9 @@ fun RetrovikaNavHost() {
  * Navega só se a tela de origem ainda é a ativa. A tela que está saindo continua clicável durante a
  * transição: sem isso, um toque duplo empilhava o mesmo jogo duas vezes.
  */
-private fun NavHostController.open(from: NavBackStackEntry, route: String) {
+private fun NavHostController.open(from: NavBackStackEntry, route: String, singleTop: Boolean = true) {
     if (from.lifecycle.currentState != Lifecycle.State.RESUMED) return
-    navigate(route) { launchSingleTop = true }
+    navigate(route) { launchSingleTop = singleTop }
 }
 
 /** Voltar pela tela que pediu: um toque duplo em "voltar" não desempilha também a tela de baixo (nem esvazia a pilha). */

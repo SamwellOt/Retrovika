@@ -248,10 +248,13 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
     jclass obj
 ) {
     try {
-        auto [data, size] = LibretroDroid::getInstance().serializeState();
+        std::vector<int8_t> data = LibretroDroid::getInstance().serializeState();
+        auto size = (jsize) data.size();
 
         jbyteArray result = env->NewByteArray(size);
-        env->SetByteArrayRegion(result, 0, size, data);
+        if (result != nullptr && size > 0) {
+            env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(data.data()));
+        }
 
         return result;
 
@@ -319,10 +322,13 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
     jclass obj
 ) {
     try {
-        auto [data, size] = LibretroDroid::getInstance().serializeSRAM();
+        std::vector<int8_t> data = LibretroDroid::getInstance().serializeSRAM();
+        auto size = (jsize) data.size();
 
         jbyteArray result = env->NewByteArray(size);
-        env->SetByteArrayRegion(result, 0, size, (jbyte *) data);
+        if (result != nullptr && size > 0) {
+            env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(data.data()));
+        }
 
         return result;
 
@@ -655,6 +661,52 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setViewpor
     jfloat height
 ) {
     LibretroDroid::getInstance().setViewport(Rect(x, y, width, height));
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_startNetplay(
+    JNIEnv* env,
+    jclass obj,
+    jint fd,
+    jint localPort,
+    jint delayFrames,
+    jint epoch
+) {
+    LibretroDroid::getInstance().startNetplay(fd, localPort, delayFrames, epoch);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_stopNetplay(
+    JNIEnv* env,
+    jclass obj
+) {
+    LibretroDroid::getInstance().stopNetplay();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_netplayStatus(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().netplayStatus();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_netplayFrame(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().netplayFrame();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getRunCount(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().getRunCount();
+}
+
+JNIEXPORT jdouble JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentFps(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jdouble) LibretroDroid::getInstance().getContentFps();
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_refreshAspectRatio(

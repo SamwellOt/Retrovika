@@ -4,6 +4,7 @@
     <string name="app_name" translatable="false">Retrovika</string>
 
     <string name="common_back">Back</string>
+    <string name="common_close">Close</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_remove">Remove</string>
     <string name="common_clear">Clear</string>
@@ -60,12 +61,18 @@
     <string name="region_brazil">Brazil</string>
     <string name="region_korea">Korea</string>
     <string name="region_china">China</string>
+    <string name="region_australia">Australia</string>
     <string name="common_error_no_internet">No internet connection (or the server is unreachable)</string>
     <string name="common_error_timeout">The server took too long to respond. Try again.</string>
     <string name="common_error_secure_connection">Couldn\'t establish a secure connection with the server</string>
     <string name="common_error_no_space">Not enough free storage space</string>
     <string name="common_error_memory">Not enough memory to finish the operation</string>
     <string name="common_error_unknown">Unexpected error (%s)</string>
+    <string name="common_error_http_not_found">The server couldn\'t find this address (HTTP 404)</string>
+    <string name="common_error_http_forbidden">The server refused access (HTTP 403)</string>
+    <string name="common_error_http_server">The server is having problems (HTTP %d). Try again later.</string>
+    <string name="common_error_http_other">The server answered with an error (HTTP %d)</string>
+    <string name="common_error_bad_data">The server sent data in an unexpected format</string>
     <string name="common_beta">BETA</string>
     <string name="common_playtime_hm">%1$dh %2$dmin</string>
     <string name="common_playtime_m">%1$dmin</string>

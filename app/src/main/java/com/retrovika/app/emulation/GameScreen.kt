@@ -48,6 +48,9 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -129,6 +132,7 @@ fun GameScreen(
         when (state) {
             is EmulationUi.Preparing -> PreparingView(state, game, system)
             is EmulationUi.Failed -> FailedView(state, onExit = menu::exit)
+            is EmulationUi.Benchmarking -> BenchmarkView(state, system, onSkip = menu::skipBenchmark)
             is EmulationUi.Running -> BoxWithConstraints(Modifier.fillMaxSize()) {
                 val portrait = maxHeight > maxWidth
                 val padShown = showPad && system != null && padProfile.visible
@@ -136,10 +140,8 @@ fun GameScreen(
                 // no DS/3DS usam a tela toda.
                 val fullVideo = padProfile.fullScreenVideo(portrait, padShown)
                 // A estrutura é sempre a mesma (vídeo + controle) para o GLRetroView nunca ser recriado ao girar a tela.
-                AndroidView(
-                    factory = { state.view },
-                    modifier = if (fullVideo) Modifier.fillMaxSize() else Modifier.fillMaxWidth().fillMaxHeight(VIDEO_SPLIT).align(Alignment.TopCenter),
-                )
+                val videoModifier = if (fullVideo) Modifier.fillMaxSize() else Modifier.fillMaxWidth().fillMaxHeight(VIDEO_SPLIT).align(Alignment.TopCenter)
+                AndroidView(factory = { state.view }, modifier = videoModifier)
                 if (padShown && system != null) {
                     VirtualGamepad(
                         layout = system.layout,
@@ -159,6 +161,7 @@ fun GameScreen(
                         fastForward = fastForward,
                         onMenu = menu::open,
                         onFastForward = menu::toggleFastForward,
+                        onTranslate = if (menu.canTranslate()) menu::translate else null,
                         modifier = if (!fullVideo) {
                             Modifier.align(Alignment.TopCenter).padding(top = maxHeight * VIDEO_SPLIT + 4.dp)
                         } else Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
@@ -167,6 +170,11 @@ fun GameScreen(
                         dimmed = !padShown,
                     )
                 }
+                (menu.netplay().ui as? NetplayUi.Playing)?.let {
+                    NetplayBadge(it, Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(10.dp))
+                }
+                // Sobre o vídeo, no mesmo lugar dele: as caixas traduzidas batem com o texto da captura.
+                menu.translation()?.let { TranslationOverlay(it, onClose = menu::closeTranslation, modifier = videoModifier) }
             }
         }
 
@@ -179,6 +187,8 @@ fun GameScreen(
             PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab) { menuTab = it }
         }
 
+        if (menuOpen) menu.sharing()?.let { ShareStateSheet(it, menu) }
+
         if (menuOpen && padEditing && system != null) {
             PadLayoutEditor(
                 layout = system.layout,
@@ -189,6 +199,9 @@ fun GameScreen(
                 onCancel = menu::stopPadEditor,
             )
         }
+
+        // Por cima do menu: o QR code do anfitrião ou o "conectando" do convidado.
+        menu.netplay().ui?.takeIf { it !is NetplayUi.Playing }?.let { NetplaySheet(it, onCancel = { menu.netplay().end() }) }
 
         AnimatedVisibility(
             visible = toast != null,
@@ -221,10 +234,14 @@ internal fun BoxScope.padModifier(overlay: Boolean): Modifier =
     else Modifier.fillMaxWidth().fillMaxHeight(1f - VIDEO_SPLIT).align(Alignment.BottomCenter).padding(top = 48.dp, bottom = 16.dp)
 
 @Composable
-private fun Hud(fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, modifier: Modifier, vertical: Boolean, dimmed: Boolean = false) {
+private fun Hud(
+    fastForward: Boolean, onMenu: () -> Unit, onFastForward: () -> Unit, onTranslate: (() -> Unit)?,
+    modifier: Modifier, vertical: Boolean, dimmed: Boolean = false,
+) {
     val content: @Composable () -> Unit = {
         HudButton(Icons.Rounded.Menu, stringResource(R.string.game_menu), false, onMenu)
         HudButton(Icons.Rounded.FastForward, stringResource(R.string.game_fast_forward), fastForward, onFastForward)
+        onTranslate?.let { HudButton(Icons.Rounded.Translate, stringResource(R.string.translate_button), false, it) }
     }
     val m = if (dimmed) modifier.alpha(0.45f) else modifier
     if (vertical) Column(m, verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
@@ -298,7 +315,7 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
 }
 
 private enum class MenuTab(@StringRes val label: Int) {
-    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core),
+    STATES(R.string.game_tab_states), OPTIONS(R.string.game_tab_game), CHEATS(R.string.game_tab_cheats), CONTROLS(R.string.game_tab_controls), CORE(R.string.game_tab_core),
     REMOTE(R.string.game_tab_remote)
 }
 
@@ -355,7 +372,9 @@ private fun PauseMenu(
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuTab.entries.forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
+                val cheats = menu.cheats()
+                MenuTab.entries.filter { it != MenuTab.CHEATS || cheats?.supported == true }
+                    .forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
             }
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -364,6 +383,7 @@ private fun PauseMenu(
                     MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader)
                     MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, system?.name.orEmpty(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
+                    MenuTab.CHEATS -> menu.cheats()?.let { CheatsTab(it) }
                     MenuTab.REMOTE -> RemoteTab()
                 }
             }
@@ -428,15 +448,27 @@ private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit
         }
     }
     val canSave = slot.index != SaveStates.AUTO_SLOT
+    val share: @Composable () -> Unit = {
+        if (slot.exists) {
+            Box(
+                Modifier.size(36.dp).clip(CircleShape).background(Palette.Cyan.copy(alpha = 0.14f)).clickable { menu.share(slot.index) },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Share, stringResource(R.string.share_state_title), tint = Palette.Cyan, modifier = Modifier.size(18.dp)) }
+        }
+    }
     if (stacked) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (canSave) save(Modifier.fillMaxWidth())
-            load(Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                load(Modifier.weight(1f))
+                share()
+            }
         }
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canSave) save(Modifier.weight(1f))
             load(Modifier.weight(1f))
+            share()
         }
     }
 }
@@ -496,6 +528,32 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                         SelectChip(stringResource(R.string.game_disc_n, i + 1), disks.second == i, onClick = { menu.changeDisk(i); disks = disks.first to i })
                     }
                 }
+            }
+        }
+        item {
+            val net = menu.netplay()
+            Column {
+                Text(stringResource(R.string.netplay_menu_title), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(if (net.playing) R.string.netplay_menu_playing else R.string.netplay_menu_subtitle),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!net.playing) {
+                        OutlinedButton(onClick = menu::hostNetplay) {
+                            Icon(Icons.Rounded.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.netplay_host))
+                        }
+                    } else {
+                        if (net.isHost) OutlinedButton(onClick = { net.resync() }) { Text(stringResource(R.string.netplay_resync)) }
+                        OutlinedButton(onClick = { net.end() }) { Text(stringResource(R.string.netplay_leave)) }
+                    }
+                }
+            }
+        }
+        item {
+            OutlinedButton(onClick = { menu.close(); menu.translate() }) {
+                Icon(Icons.Rounded.Translate, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.translate_screen))
             }
         }
         item {

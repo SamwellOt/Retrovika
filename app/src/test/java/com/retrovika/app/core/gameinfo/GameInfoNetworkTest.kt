@@ -101,6 +101,27 @@ class GameInfoNetworkTest {
     }
 
     @Test
+    fun `titulo japones romanizado acha o nome em ingles`() = runBlocking {
+        val wiki = WikiClient()
+        // Um caso de cada fonte: apelido no Wikidata, redirecionamento e busca pela frase na Wikipedia.
+        val cases = listOf(
+            "Bokujou Monogatari (Japan)" to "Harvest Moon",
+            "Rockman X (Japan)" to "Mega Man X",
+            "Kirby no Kirakira Kids (Japan)" to "Kirby's Star Stacker",
+            "Hana to Taiyou to Ame to (Japan)" to "Flower, Sun, and Rain",
+        )
+        for ((rom, english) in cases) {
+            val other = timed("Nome em inglês · $rom") { wiki.otherTitle(rom) }
+            println("  $other")
+            assertTrue("$rom -> $other", other != null && GameTitles.same(other.title, english))
+        }
+        // Jogo que só existe com o nome japonês: não vira outro jogo.
+        val jp = timed("Nome em inglês · Tokimeki Memorial") { wiki.otherTitle("Tokimeki Memorial (Japan)") }
+        println("  $jp")
+        assertTrue("$jp", jp == null || GameTitles.same(jp.title, "Tokimeki Memorial"))
+    }
+
+    @Test
     fun `howlongtobeat traz os tempos pelo id do wikidata`() = runBlocking {
         val wiki = WikiClient()
         val mario = timed("Wikidata · Super Mario 64 (ID do HLTB)") { wiki.find("Super Mario 64", "en", igdbSlug = "super-mario-64") }

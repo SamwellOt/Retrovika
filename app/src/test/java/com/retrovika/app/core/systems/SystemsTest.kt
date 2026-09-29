@@ -4,6 +4,7 @@ import com.retrovika.app.core.dat.DatCatalog
 import com.retrovika.app.core.library.RomNaming
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -30,6 +31,15 @@ class SystemsTest {
             s.extensions.forEach { assertTrue("${s.id}: .$it", it == it.lowercase() && !it.startsWith(".")) }
             assertTrue("${s.id}: folderOnly fora das extensões", s.extensions.containsAll(s.folderOnlyExtensions))
         }
+    }
+
+    @Test
+    fun `extensoes genericas so identificam o console dentro da pasta`() {
+        listOf("bat", "com", "conf", "o", "app", "img", "hex", "png").forEach { ext ->
+            assertNull(".$ext", Systems.byUniqueExtension(ext))
+        }
+        assertEquals("arduboy", RomNaming.resolveSystem("jogo.hex", listOf("Arduboy"))?.id)
+        assertEquals("psx", RomNaming.resolveSystem("jogo.img", listOf("roms", "psx"))?.id)
     }
 
     @Test

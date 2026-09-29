@@ -12,6 +12,7 @@
     <string name="explore_kind_everything">Tudo</string>
     <string name="explore_error_title">Algo deu errado</string>
     <string name="explore_error_network">Não foi possível acessar o catálogo. Verifique a conexão.</string>
+    <string name="explore_partial_failure">Alguns sites não responderam, então esta lista pode estar incompleta.</string>
     <string name="explore_empty_title">Nada por aqui</string>
     <string name="explore_empty_message">Nenhum título livre encontrado para \"%s\".</string>
     <string name="explore_extracting">Extraindo</string>
@@ -61,6 +62,7 @@
     <string name="download_move_failed">Não foi possível mover %s</string>
     <string name="download_unsupported_format">Formato não suportado: %s</string>
     <string name="download_got_webpage">O site enviou uma página em vez do arquivo. Tente baixar pelo navegador interno.</string>
+    <string name="download_unplayable">%1$s não roda no %2$s: o compactado não tem um jogo deste console ou o formato (como .rar) não é suportado. O arquivo foi apagado.</string>
     <string name="download_no_space">Espaço livre insuficiente para extrair o jogo (precisa de %s)</string>
     <string name="download_extract_failed">Não foi possível extrair o arquivo: %s</string>
     <string name="download_archive_corrupt">O arquivo baixado está corrompido (%s). Tente baixar de novo.</string>

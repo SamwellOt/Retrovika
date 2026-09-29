@@ -68,17 +68,27 @@ object Archives {
      * põem por fora) é descartada; subpastas abaixo dela ficam, porque um .m3u cita os discos pelo
      * caminho relativo ("Disco 1/Jogo.cue") e achatar tudo quebraria a referência (ou faria discos de
      * mesmo nome se sobrescreverem). Caminhos que escapariam de [destDir] ("zip slip") são recusados.
-     * Se algo falhar no meio, os arquivos já extraídos são apagados.
+     *
+     * Cada entrada é gravada num temporário ([PART_SUFFIX]) ao lado do destino e só troca de nome
+     * depois que tudo deu certo: uma falha no meio não trunca uma ROM que já estava lá.
+     *
+     * Se algum destino já existe com outro conteúdo (outro jogo que só tem o mesmo nome, como dois
+     * "rom.gb"), nada é substituído: o conjunto inteiro vai para uma subpasta nova com o nome do
+     * compactado. Inteiro, e não só o arquivo repetido, porque um .cue/.m3u cita as faixas pelo nome.
+     * O mesmo arquivo extraído de novo (conteúdo igual) continua substituindo o antigo.
      */
     fun extract(archive: File, destDir: File, names: Set<String>, password: String? = null): Map<String, File> {
         destDir.mkdirs()
         val out = LinkedHashMap<String, File>()
+        // Destino final -> temporário onde a entrada é gravada.
+        val parts = LinkedHashMap<File, File>()
         val canonicalDest = destDir.canonicalPath + File.separator
         val prefix = commonFolder(names)
-        // Entrada cujo destino já existe (jogo já na biblioteca) é gravada num temporário ao lado e só
-        // substitui o original no fim: uma falha no meio não pode deixar o arquivo antigo truncado.
-        val staged = LinkedHashMap<File, File>()
-        val written = ArrayList<File>()
+        // Arquivos que já existiam antes da extração: numa falha, não são apagados (seriam jogos já na biblioteca).
+        val preexisting = HashSet<File>()
+        // 7z criado da entrada padrão ("7z a -si") não guarda nome: usa o do próprio arquivo, como em [entries].
+        val unnamed = archive.nameWithoutExtension
+        /** Valida o destino de [name] e devolve o temporário onde gravá-lo. */
         fun target(name: String): File {
             val relative = name.replace('\\', '/').removePrefix(prefix).trimStart('/')
             val file = File(destDir, relative)
@@ -86,10 +96,15 @@ object Archives {
                 throw LocalizedException(R.string.download_extract_failed, name)
             }
             file.parentFile?.mkdirs()
+            if (file.exists()) preexisting += file
             out[name] = file
-            val dest = if (file.exists()) File(file.parentFile, ".${file.name}.extracting").also { staged[it] = file } else file
-            written += dest
-            return dest
+            return parts.getOrPut(file) { File(file.path + PART_SUFFIX) }
+        }
+        /** Descarta o que foi gravado até aqui (só temporários: os destinos ainda não foram tocados). */
+        fun discard() {
+            parts.values.forEach { it.delete() }
+            parts.clear()
+            out.clear()
         }
         try {
             when (formatOf(archive)) {
@@ -99,64 +114,96 @@ object Archives {
                 Format.ZIP -> if (password != null) ZipFile4j(archive, password.toCharArray()).use { zf ->
                     for (header in zf.fileHeaders) {
                         if (header.isDirectory || header.fileName !in names) continue
-                        val file = target(header.fileName)
-                        zf.getInputStream(header).use { input -> file.outputStream().use { input.copyTo(it) } }
+                        val part = target(header.fileName)
+                        zf.getInputStream(header).use { input -> part.outputStream().use { input.copyTo(it) } }
                     }
                 } else zip(archive).use { zf ->
                     for (entry in zf.entries.toList()) {
                         if (entry.isDirectory || entry.name !in names) continue
                         if (!zf.canReadEntryData(entry)) throw LocalizedException(R.string.download_unsupported_format, entry.name)
-                        val file = target(entry.name)
-                        zf.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
+                        val part = target(entry.name)
+                        zf.getInputStream(entry).use { input -> part.outputStream().use { input.copyTo(it) } }
                     }
                 }
                 // O 7z nativo não decifra AES: com senha, direto no commons-compress.
-                Format.SEVEN_Z -> if (password != null || !extractSevenZNative(archive, names, ::target) { out.clear(); staged.clear(); written.clear() }) sevenZ(archive, password).use { sz ->
+                Format.SEVEN_Z -> if (password != null || !extractSevenZNative(archive, names, unnamed, ::target, ::discard)) sevenZ(archive, password).use { sz ->
                     while (true) {
                         val entry = sz.nextEntry ?: break
-                        val name = entry.name ?: archive.nameWithoutExtension
+                        val name = entry.name ?: unnamed
                         if (entry.isDirectory || name !in names) continue
-                        val file = target(name)
-                        sz.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
+                        val part = target(name)
+                        sz.getInputStream(entry).use { input -> part.outputStream().use { input.copyTo(it) } }
                     }
                 }
                 null -> throw LocalizedException(R.string.download_unsupported_format, archive.name)
             }
-            for ((temp, file) in staged) {
-                file.delete()
-                if (!temp.renameTo(file)) throw LocalizedException(R.string.download_extract_failed, file.name)
+            // Outro jogo com o mesmo nome: o conjunto vai para uma subpasta própria em vez de apagá-lo.
+            val clash = parts.any { (file, part) -> file.exists() && !FileNames.sameContent(file, part) }
+            val finalOf: Map<File, File> = if (!clash) parts.keys.associateWith { it } else {
+                val dir = freeDir(destDir, FileNames.safe(archive.nameWithoutExtension))
+                parts.keys.associateWith { File(dir, it.relativeTo(destDir).path) }
+            }
+            // Atualizado antes de mover: numa falha, o catch apaga os destinos novos (nunca os que já existiam).
+            out.replaceAll { _, file -> finalOf.getValue(file) }
+            // Tudo gravado: só agora os temporários tomam o lugar dos destinos.
+            for ((file, part) in parts) {
+                val dest = finalOf.getValue(file)
+                dest.parentFile?.mkdirs()
+                commit(part, dest)
             }
         } catch (t: Throwable) {
-            // Só o que esta extração gravou: os originais que ela ia substituir ficam intactos.
-            written.forEach { it.delete() }
+            parts.values.forEach { it.delete() }
+            out.values.filterNot { it in preexisting }.forEach { it.delete() }
             throw t
         }
         return out
     }
 
+    /** Primeira subpasta livre de [parent] chamada [base], "[base] (2)", "[base] (3)"… */
+    private fun freeDir(parent: File, base: String): File {
+        var dir = File(parent, base)
+        var n = 2
+        while (dir.exists()) dir = File(parent, "$base (${n++})")
+        return dir
+    }
+
+    /** Troca [file] por [part]. No Linux o rename substitui o destino; se não, apaga e tenta de novo. */
+    private fun commit(part: File, file: File) {
+        if (part.renameTo(file)) return
+        file.delete()
+        if (!part.renameTo(file)) throw LocalizedException(R.string.download_extract_failed, file.name)
+    }
+
     /**
      * Extrai pelo [SevenZipNative], com o dicionário fora do heap Java. Falso quando ele não serve (biblioteca
-     * ausente, método que ele não decodifica): aí nada foi gravado e o commons-compress tenta.
+     * ausente, método que ele não decodifica): aí o que ele gravou (só temporários) é descartado e o
+     * commons-compress tenta do zero.
      */
-    private fun extractSevenZNative(archive: File, names: Set<String>, target: (String) -> File, forget: () -> Unit): Boolean {
+    private fun extractSevenZNative(
+        archive: File,
+        names: Set<String>,
+        unnamed: String,
+        target: (String) -> File,
+        discard: () -> Unit,
+    ): Boolean {
         if (!SevenZipNative.available) return false
         val all = SevenZipNative.list(archive.path) ?: return false
         val targets = arrayOfNulls<String>(all.size)
         all.forEachIndexed { i, raw ->
-            // Entrada sem nome ("7z a -si"): o mesmo nome que [entries] deu a ela.
-            val name = raw.ifEmpty { archive.nameWithoutExtension }
+            val name = raw.ifEmpty { unnamed }
             if (!name.endsWith('/') && name in names) targets[i] = target(name).path
         }
         return when (SevenZipNative.extract(archive.path, targets)) {
             SevenZipNative.OK -> true
-            // Nada foi gravado: só esquece os destinos (apagá-los levaria arquivos que já existiam).
+            // Um bloco que ele não decodifica pode aparecer depois de outros já gravados: descarta e recomeça.
             SevenZipNative.UNSUPPORTED, SevenZipNative.OPEN -> {
-                forget()
+                discard()
                 false
             }
             // Nem na memória nativa coube: o RomExtractor transforma isso na mensagem de memória.
             SevenZipNative.MEMORY -> throw OutOfMemoryError("7z: ${archive.name}")
             SevenZipNative.DATA -> throw LocalizedException(R.string.download_archive_corrupt, archive.name)
+            SevenZipNative.NO_SPACE -> throw LocalizedException(R.string.common_error_no_space)
             else -> throw LocalizedException(R.string.download_extract_failed, archive.name)
         }
     }
@@ -174,6 +221,9 @@ object Archives {
             if (read <= 0) ByteArray(0) else buf.copyOf(read)
         }
     }.getOrDefault(ByteArray(0))
+
+    /** Sufixo do temporário de cada entrada durante a extração. */
+    const val PART_SUFFIX = ".part"
 
     private val SEVEN_Z_MAGIC = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
 

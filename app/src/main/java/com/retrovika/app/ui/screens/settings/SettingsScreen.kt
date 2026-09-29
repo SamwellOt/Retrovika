@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Speed
 import com.retrovika.app.R
 import com.retrovika.app.core.settings.AppLanguage
 import com.retrovika.app.core.settings.Languages
@@ -63,6 +64,7 @@ import androidx.compose.material.icons.rounded.SdCard
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -117,6 +119,8 @@ import com.retrovika.app.ui.components.Wordmark
 import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.core.diagnostics.ErrorReport
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
 import com.retrovika.app.core.update.UpdateState
 import com.retrovika.app.ui.components.UpdateCard
 import com.retrovika.app.ui.components.cardRelease
@@ -239,12 +243,15 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             RowDivider()
             NavRow(Icons.Rounded.BugReport, Palette.Coral, stringResource(R.string.settings_error_report), stringResource(R.string.settings_error_report_subtitle)) {
                 scope.launch {
-                    val report = withContext(Dispatchers.IO) { ErrorReport.build(context) }
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
-                        .setType("text/plain")
-                        .putExtra(android.content.Intent.EXTRA_SUBJECT, "Retrovika")
-                        .putExtra(android.content.Intent.EXTRA_TEXT, report)
-                    context.startActivity(android.content.Intent.createChooser(send, context.getString(R.string.settings_error_report)))
+                    // Qualquer falha (disco, nenhum app para compartilhar) vira mensagem: aqui não há quem a capture.
+                    try {
+                        val send = withContext(Dispatchers.IO) { ErrorReport.shareIntent(context, ErrorReport.build(context)) }
+                        context.startActivity(android.content.Intent.createChooser(send, context.getString(R.string.settings_error_report)))
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        Toast.makeText(context, t.userMessage(context), Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
@@ -291,6 +298,10 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.FastForward, Palette.Orange, stringResource(R.string.settings_fast_forward), listOf(2, 3, 4, 6), s.fastForwardSpeed, { "${it}×" }) { scope.launch { repo.setFastForwardSpeed(it) } }
             RowDivider()
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
+            RowDivider()
+            SwitchRow(Icons.Rounded.Speed, Palette.Sun, stringResource(R.string.settings_auto_benchmark), stringResource(R.string.settings_auto_benchmark_subtitle), s.autoBenchmark) { scope.launch { repo.setAutoBenchmark(it) } }
+            RowDivider()
+            SwitchRow(Icons.Rounded.Translate, Palette.Cyan, stringResource(R.string.settings_translate_everywhere), stringResource(R.string.settings_translate_everywhere_subtitle), s.translateEverywhere) { scope.launch { repo.setTranslateEverywhere(it) } }
         }
 
         group(R.string.settings_group_interface) {

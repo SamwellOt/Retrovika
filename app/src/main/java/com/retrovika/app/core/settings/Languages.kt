@@ -69,3 +69,6 @@ object Languages {
  * nomes de região...). O contexto da Application não é recriado quando o idioma muda no Android < 13.
  */
 fun Context.localized(): Context = Languages.wrap(applicationContext)
+
+/** Idioma em que o app está sendo mostrado: "pt" ou "en" (o inglês também serve os demais idiomas). */
+fun Context.uiLanguage(): String = if (localized().resources.configuration.locales[0].language == "pt") "pt" else "en"

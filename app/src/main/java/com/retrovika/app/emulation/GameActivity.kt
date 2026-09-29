@@ -41,6 +41,18 @@ import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
+import com.retrovika.app.core.share.LanTransfer
+import com.retrovika.app.core.share.StatePackage
+import com.retrovika.app.core.cores.CoreBenchmark
+import com.retrovika.app.core.cores.CoreSpeed
+import com.retrovika.app.core.cores.SystemBenchmark
+import com.retrovika.app.core.net.Http
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.withTimeoutOrNull
+import com.retrovika.app.core.settings.uiLanguage
+import com.retrovika.app.core.translate.LiveTranslator
+import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
@@ -60,6 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -70,6 +83,8 @@ sealed interface EmulationUi {
     data class Preparing(val message: String, val progress: Float?) : EmulationUi
     data class Running(val view: GLRetroView) : EmulationUi
     data class Failed(val title: String, val message: String, val action: FailAction? = null) : EmulationUi
+    /** Teste dos núcleos na primeira vez do console: [view] é o núcleo sendo medido (nulo entre um e outro). */
+    data class Benchmarking(val view: GLRetroView?, val cores: List<CoreInfo>, val current: Int, val results: List<CoreSpeed>) : EmulationUi
 }
 
 /** Botão extra da tela de falha, para o que o usuário pode resolver na hora (ex.: conceder uma permissão). */
@@ -85,10 +100,16 @@ class GameActivity : ComponentActivity() {
      * Ciclo de vida exclusivo do emulador: acompanha o da Activity, mas fica em STARTED
      * (pausado) enquanto o menu está aberto. É assim que pausamos o LibretroDroid com segurança.
      */
-    private val emulationOwner = object : LifecycleOwner {
+    private val emulationOwner = EmulationOwner()
+
+    private class EmulationOwner : LifecycleOwner {
         val registry = LifecycleRegistry(this)
         override val lifecycle: Lifecycle get() = registry
     }
+
+    /** Ciclo de vida do núcleo em teste: um por núcleo, destruído ao fim da medição. */
+    private var benchOwner: EmulationOwner? = null
+    @Volatile private var benchSkip = false
 
     private var ui by mutableStateOf<EmulationUi>(EmulationUi.Preparing("", null))
     private var menuOpen by mutableStateOf(false)
@@ -104,9 +125,14 @@ class GameActivity : ComponentActivity() {
     private var padProfile by mutableStateOf(PadProfile())
     /**
      * Gravações do perfil numa fila só, na ordem em que foram feitas (lançadas soltas no Dispatchers.Default,
-     * uma mais antiga podia gravar por último). Conflated: só a mais recente ainda pendente importa.
+     * uma mais antiga podia gravar por último). Sem descartar nenhuma: cada uma pode ir para um lugar
+     * (o jogo ou o console), e (true, null) apaga o controle próprio do jogo.
      */
-    private val padSaves = Channel<PadProfile>(Channel.CONFLATED)
+    private val padSaves = Channel<Pair<Boolean, PadProfile?>>(Channel.UNLIMITED)
+    /** Gravações enviadas a [padSaves] e ainda não feitas (lido e escrito só na thread principal). */
+    private var pendingPadSaves = 0
+    /** O controle em uso é o próprio deste jogo (verdadeiro) ou o do console (falso). */
+    private var padForGame by mutableStateOf(false)
     /** Há mudança do perfil ainda não gravada: o que chega do DataStore nesse meio-tempo é mais velho. */
     private var padDirty = false
     /** Editor do layout aberto a partir do menu: a emulação segue pausada por baixo. */
@@ -128,7 +154,29 @@ class GameActivity : ComponentActivity() {
     private lateinit var core: CoreInfo
     /** A tela de falha pediu o acesso a todos os arquivos: ao voltar com ele concedido, o jogo recomeça. */
     private var awaitingFileAccess = false
+    /**
+     * Partida de outra pessoa (estado recebido): nada é gravado por cima do progresso de quem joga, nem a
+     * memória do cartucho nem o salvamento automático. Os slots continuam valendo.
+     */
+    private var guestSession = false
+    /** Estado recebido a abrir no primeiro quadro, no lugar do salvamento automático. */
+    private var pendingStateFile: File? = null
+    /** Tradução da tela aberta: a emulação fica pausada até ela fechar. */
+    private var translation by mutableStateOf<TranslationUi?>(null)
+    /** Criado só quando alguém traduz: os clientes do ML Kit ficam fora dos jogos que não usam. */
+    private var translator: LiveTranslator? = null
+    private var translateJob: kotlinx.coroutines.Job? = null
+    /** Partida em rede local (anfitrião ou convidado). */
+    private val netplay by lazy {
+        NetplayController(lifecycleScope, { retroView }, ::resumeForNetplay) { res -> toast = getString(res) }
+    }
+    /** Convidado de uma partida em rede: endereço, porta e token do anfitrião, vindos do QR code. */
+    private var netGuest: Triple<String, Int, String>? = null
+    /** Estado sendo compartilhado a partir do menu. */
+    private var sharing by mutableStateOf<ShareSheet?>(null)
     private lateinit var states: SaveStates
+    /** Trapaças do jogo; nulo até o jogo ser encontrado. */
+    private var cheats: CheatSession? = null
     private var settings = AppSettings()
     private var retroView: GLRetroView? = null
     /** O GLRetroView ligado ao jogo pela rede; continua aqui depois do "Sair" zerar o [retroView]. */
@@ -143,7 +191,8 @@ class GameActivity : ComponentActivity() {
     private var autoSaveReady = false
     /**
      * Primeiro quadro desenhado: o núcleo terminou de carregar o jogo. Antes disso a thread de emulação está
-     * presa no carregamento, e pedir a SRAM por ela travaria a thread principal até ele acabar.
+     * presa no carregamento (pedir a SRAM por ela travaria a thread principal até ele acabar), e a SRAM ainda
+     * é a do boot, ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
      */
     private var gameLoaded = false
 
@@ -214,7 +263,10 @@ class GameActivity : ComponentActivity() {
         val newId = intent.getLongExtra(EXTRA_GAME_ID, -1)
         // Compara com o pedido atual, não com o jogo carregado: durante a preparação ele ainda não
         // existe, e um toque duplo em "Jogar" reiniciava a instalação do núcleo.
-        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1)) return
+        // Mesmo jogo, sem estado recebido: é só um toque duplo em "Jogar".
+        if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1) && intent.getStringExtra(EXTRA_STATE_FILE) == null &&
+            intent.getStringExtra(EXTRA_NET_HOST) == null) return
+        netplay.end()
         persist(auto = settings.autoSave)
         setIntent(intent)
         recreate()
@@ -224,6 +276,7 @@ class GameActivity : ComponentActivity() {
         game = app.library.get(gameId) ?: return fail(getString(R.string.game_not_found), getString(R.string.game_not_found_message))
         system = Systems.byId(game.systemId) ?: return fail(getString(R.string.game_unknown_system), game.systemId)
         states = SaveStates(app.paths, game)
+        cheats = CheatSession(app.cheats, game, lifecycleScope, this).also { it.restore() }
         settings = app.settings.current()
         // A tela acompanha o sensor: girar o celular alterna entre retrato e paisagem em qualquer console.
         requestedOrientation = when (system.orientation) {
@@ -231,21 +284,54 @@ class GameActivity : ComponentActivity() {
             Orientation.PORTRAIT, Orientation.ANY -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
 
-        val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
-        core = system.core(coreId)
+        pendingStateFile = intent.getStringExtra(EXTRA_STATE_FILE)?.let(::File)?.takeIf { it.exists() }
+        netGuest = intent.getStringExtra(EXTRA_NET_HOST)?.let { h ->
+            val token = intent.getStringExtra(EXTRA_NET_TOKEN) ?: return@let null
+            Triple(h, intent.getIntExtra(EXTRA_NET_PORT, 0), token)
+        }
+        guestSession = pendingStateFile != null || netGuest != null
+        // O estado só abre no núcleo que o gerou: quem enviou diz qual é.
+        val sharedCore = intent.getStringExtra(EXTRA_CORE_ID)?.takeIf { id -> system.cores.any { it.id == id } }
+        val userCore = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
+        core = system.core(userCore ?: app.settings.effectiveCoreFor(system.id).first())
         val padCore = system.id
-        padProfile = app.settings.padProfile(padCore).first()
+        val gameId = game.id
+        // O controle próprio do jogo, quando existe, vence o do console.
+        val padFlow = combine(app.settings.gamePadProfile(gameId), app.settings.padProfile(padCore)) { own, console -> (own != null) to (own ?: console) }
+        padFlow.first().let { (forGame, profile) -> padForGame = forGame; padProfile = profile }
         app.scope.launch {
-            for (profile in padSaves) {
-                app.settings.setPadProfile(padCore, profile)
-                withContext(Dispatchers.Main) { if (padProfile == profile) padDirty = false }
+            for ((forGame, profile) in padSaves) {
+                if (forGame) app.settings.setGamePadProfile(gameId, profile) else if (profile != null) app.settings.setPadProfile(padCore, profile)
+                // Fila vazia: tudo o que foi mexido já está gravado, e o que vier do DataStore volta a valer.
+                withContext(Dispatchers.Main) { if (--pendingPadSaves == 0) padDirty = false }
             }
         }
         // Acompanha o perfil gravado: "Restaurar todos" em Ajustes com o jogo aberto em segundo plano vale
         // na volta, em vez de o perfil antigo da memória ser gravado de novo na próxima mudança.
-        lifecycleScope.launch { app.settings.padProfile(padCore).collect { if (!padDirty) padProfile = it } }
+        lifecycleScope.launch { padFlow.collect { (forGame, profile) -> if (!padDirty) { padForGame = forGame; padProfile = profile } } }
 
-        // 1. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
+        // 1. BIOS obrigatórias (cada item pode ter alternativas: basta uma delas).
+        val missing = app.bios.missingRequired(system)
+        if (missing.isNotEmpty()) {
+            return fail(
+                getString(R.string.game_bios_required),
+                getString(R.string.game_bios_required_message) + "\n\n" +
+                    missing.joinToString("\n") { options ->
+                        options.singleOrNull()?.let { "• ${it.fileName} — ${getString(it.description)}" }
+                            ?: getString(R.string.game_bios_one_of, options.joinToString { it.fileName })
+                    },
+            )
+        }
+
+        // 2. Primeira vez do console neste aparelho, sem núcleo escolhido: testa os núcleos e fica com o ideal.
+        if (userCore == null && !guestSession && settings.autoBenchmark && app.settings.benchmark(system.id).first() == null) {
+            benchmarkCandidates().takeIf { it.size > 1 }?.let { candidates ->
+                val chosen = runBenchmark(candidates) ?: return
+                core = system.core(chosen)
+            }
+        }
+
+        // 3. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
             ui = EmulationUi.Preparing(getString(R.string.game_installing_core, core.displayName), 0f)
             val progressJob = lifecycleScope.launch {
@@ -271,22 +357,8 @@ class GameActivity : ComponentActivity() {
             }
         }
 
-        // 2. BIOS obrigatórias (cada item pode ter alternativas: basta uma delas).
-        val missing = app.bios.missingRequired(system)
-        if (missing.isNotEmpty()) {
-            return fail(
-                getString(R.string.game_bios_required),
-                getString(R.string.game_bios_required_message) + "\n\n" +
-                    missing.joinToString("\n") { options ->
-                        options.singleOrNull()?.let { "• ${it.fileName} — ${getString(it.description)}" }
-                            ?: getString(R.string.game_bios_one_of, options.joinToString { it.fileName })
-                    },
-            )
-        }
-
-        // 3. Opções: padrões otimizados + preset escolhido + ajustes manuais do usuário.
-        val preset = app.settings.presetFor(system.id).first()
-        val options = core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id)
+        // 4. Opções: padrões otimizados + preset escolhido + ajustes manuais do usuário.
+        val options = optionsFor(core)
 
         ui = EmulationUi.Preparing(getString(R.string.game_starting, game.title), null)
         val sram = withContext(Dispatchers.IO) { states.sramFile().takeIf { it.exists() }?.readBytes() }
@@ -298,46 +370,26 @@ class GameActivity : ComponentActivity() {
 
         val data = GLRetroViewData(this).apply {
             coreFilePath = corePath
-            val realFile = if (game.isContentUri) withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } else null
-            if (realFile != null) {
-                // Com acesso aos arquivos, o núcleo recebe o caminho real: funciona até nos que não usam a VFS.
-                gameFilePath = realFile.path
-            } else if (game.isContentUri && core.needsRealPath) {
-                awaitingFileAccess = true
-                return fail(
-                    getString(R.string.game_needs_file_access),
-                    getString(R.string.game_needs_file_access_message, core.displayName),
-                    FailAction(getString(R.string.game_allow_file_access)) { startActivity(StorageAccess.settingsIntent(this@GameActivity)) },
-                )
-            } else if (game.isContentUri) {
-                // IPC com o provedor SAF: fora da thread principal.
-                gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
-                    if (it is kotlinx.coroutines.CancellationException) throw it
-                    return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
+            when (setGameSource(this, core)) {
+                GameSource.Ok -> Unit
+                GameSource.NeedsFileAccess -> {
+                    awaitingFileAccess = true
+                    return fail(
+                        getString(R.string.game_needs_file_access),
+                        getString(R.string.game_needs_file_access_message, core.displayName),
+                        FailAction(getString(R.string.game_allow_file_access)) { startActivity(StorageAccess.settingsIntent(this@GameActivity)) },
+                    )
                 }
-            } else {
-                if (!File(game.uri).exists()) return fail(getString(R.string.game_file_not_found), game.uri)
-                gameFilePath = game.uri
+                GameSource.Inaccessible -> return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
+                GameSource.NotFound -> return fail(getString(R.string.game_file_not_found), game.uri)
             }
-            systemDirectory = app.paths.system.absolutePath
-            savesDirectory = app.paths.savesFor(system.id).absolutePath
-            variables = options.map { Variable(it.key, it.value) }.toTypedArray()
+            configure(this, core, options)
             saveRAMState = sram
-            shader = settings.shader.toShaderConfig()
-            preferLowLatencyAudio = settings.lowLatencyAudio
-            rumbleEventsEnabled = true
-            relaxedGlesVersion = core.relaxedGlesVersion
-            // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
-            core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
         }
 
         // Voltar durante o "Iniciando…" já chamou finish(): iniciar o núcleo agora derrubaria o do
         // próximo jogo quando esta Activity fosse destruída (o LibretroDroid é global).
-        if (isFinishing) {
-            // Os descritores do SAF já abertos não chegam ao núcleo: fecha aqui, senão ficam até o GC.
-            data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
-            return
-        }
+        if (isFinishing) { closeVirtualFiles(data); return }
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
@@ -351,6 +403,172 @@ class GameActivity : ComponentActivity() {
         updateEmulationState()
         view.requestFocus()
     }
+
+    private enum class GameSource { Ok, NeedsFileAccess, Inaccessible, NotFound }
+
+    /** Aponta [data] para o arquivo do jogo: caminho real quando dá, senão os arquivos virtuais do SAF. */
+    private suspend fun setGameSource(data: GLRetroViewData, core: CoreInfo): GameSource {
+        val realFile = if (game.isContentUri) withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } else null
+        when {
+            // Com acesso aos arquivos, o núcleo recebe o caminho real: funciona até nos que não usam a VFS.
+            realFile != null -> data.gameFilePath = realFile.path
+            game.isContentUri && core.needsRealPath -> return GameSource.NeedsFileAccess
+            game.isContentUri -> {
+                // IPC com o provedor SAF: fora da thread principal. Descritores novos a cada carga (o núcleo fica com eles).
+                data.gameVirtualFiles = runCatching { withContext(Dispatchers.IO) { GameFiles.virtualFiles(contentResolver, game) } }.getOrElse {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    return GameSource.Inaccessible
+                }
+            }
+            else -> {
+                if (!File(game.uri).exists()) return GameSource.NotFound
+                data.gameFilePath = game.uri
+            }
+        }
+        return GameSource.Ok
+    }
+
+    /** Fecha os descritores do SAF de uma carga que não vai acontecer (a GLRetroView nunca foi criada). */
+    private fun closeVirtualFiles(data: GLRetroViewData) {
+        data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
+        data.gameVirtualFiles = emptyList()
+    }
+
+    private suspend fun optionsFor(core: CoreInfo): Map<String, String> {
+        val preset = app.settings.presetFor(system.id).first()
+        return core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id)
+    }
+
+    private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>) = data.apply {
+        systemDirectory = app.paths.system.absolutePath
+        savesDirectory = app.paths.savesFor(system.id).absolutePath
+        variables = options.map { Variable(it.key, it.value) }.toTypedArray()
+        shader = settings.shader.toShaderConfig()
+        preferLowLatencyAudio = settings.lowLatencyAudio
+        rumbleEventsEnabled = true
+        relaxedGlesVersion = core.relaxedGlesVersion
+        // Controles físicos vão para as portas 1 a 4 (controllerNumber), então todas recebem o tipo.
+        core.portDevice?.let { device -> controllerTypes = IntArray(MAX_PORTS) { device } }
+    }
+
+    // region Teste dos núcleos
+
+    @kotlinx.serialization.Serializable
+    private data class BenchProgress(val results: List<CoreSpeed>, val running: String?)
+
+    /** Núcleos que entram no teste: os estáveis que conseguem abrir este arquivo. */
+    private suspend fun benchmarkCandidates(): List<CoreInfo> {
+        val realPath = !game.isContentUri || withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } != null
+        return system.cores.filter { !it.experimental && (realPath || !it.needsRealPath) }
+    }
+
+    /**
+     * Roda cada núcleo com este jogo por alguns segundos, sem som e sem o limite de velocidade, e fica com
+     * o mais fiel que roda com folga ([CoreBenchmark.choose]). O progresso vai para um arquivo antes de cada
+     * núcleo: se um deles derrubar o app, na próxima abertura ele conta como falho e o teste continua.
+     * Nulo quando a Activity está fechando.
+     */
+    private suspend fun runBenchmark(candidates: List<CoreInfo>): String? {
+        val marker = File(filesDir, "benchmark_${system.id}.json")
+        val previous = runCatching { Http.json.decodeFromString(BenchProgress.serializer(), marker.readText()) }.getOrNull()
+        val results = previous?.results.orEmpty().toMutableList()
+        previous?.running?.let { crashed -> if (results.none { it.coreId == crashed }) results += CoreSpeed(crashed, null) }
+        benchSkip = false
+        for ((i, c) in candidates.withIndex()) {
+            if (benchSkip) break
+            if (results.any { it.coreId == c.id }) continue
+            withContext(Dispatchers.IO) { runCatching { marker.writeText(Http.json.encodeToString(BenchProgress.serializer(), BenchProgress(results, c.id))) } }
+            val speed = measure(c, candidates, i, results)
+            if (isFinishing) return null
+            if (!benchSkip) results += CoreSpeed(c.id, speed)
+        }
+        withContext(Dispatchers.IO) { marker.delete() }
+        val chosen = if (benchSkip) system.defaultCore.id else CoreBenchmark.choose(candidates.map { it.id }, results)
+        app.settings.setBenchmark(
+            system.id,
+            SystemBenchmark(results, chosen, "${Build.MANUFACTURER} ${Build.MODEL}", System.currentTimeMillis(), skipped = benchSkip),
+        )
+        if (!benchSkip) {
+            val speed = results.firstOrNull { it.coreId == chosen }?.speed
+            toast = getString(R.string.bench_chosen, system.core(chosen).displayName, speed?.let { (it * 100).toInt() } ?: 0)
+        }
+        ui = EmulationUi.Preparing(getString(R.string.game_loading), null)
+        return chosen
+    }
+
+    /** Velocidade de [core] com este jogo, ou nulo se ele não instalou, não abriu o jogo ou deu erro. */
+    private suspend fun measure(core: CoreInfo, cores: List<CoreInfo>, index: Int, results: List<CoreSpeed>): Float? {
+        ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+        val path = try {
+            app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: app.cores.install(core)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            return null
+        }
+        val data = GLRetroViewData(this).apply { coreFilePath = path }
+        if (setGameSource(data, core) != GameSource.Ok) return null
+        try {
+            configure(data, core, optionsFor(core))
+        } catch (t: Throwable) {
+            // Inclui o cancelamento (Activity fechando): os descritores do SAF já abertos não podem vazar.
+            closeVirtualFiles(data)
+            throw t
+        }
+        data.rumbleEventsEnabled = false
+        runCatching { android.system.Os.setenv("EXTERNAL_STORAGE", app.paths.savesFor(system.id).absolutePath, true) }
+        if (isFinishing || benchSkip) { closeVirtualFiles(data); return null }
+
+        val owner = EmulationOwner()
+        val view = GLRetroView(this, data)
+        owner.registry.currentState = Lifecycle.State.CREATED
+        owner.registry.addObserver(view)
+        // O create do LibretroDroid liga o som: desliga logo depois, antes do primeiro quadro.
+        view.audioEnabled = false
+        benchOwner = owner
+        ui = EmulationUi.Benchmarking(view, cores, index, results.toList())
+        updateEmulationState()
+        try {
+            val started = withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) {
+                merge(
+                    view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().map { true },
+                    view.getGLRetroErrors().map { false },
+                ).first()
+            }
+            if (started != true) return null
+            view.audioEnabled = false
+            view.frameSpeed = CoreBenchmark.FRAME_SPEED
+            delay(BENCH_WARMUP_MS)
+            // Mede só o tempo com o app na frente: se ele for para o fundo, a contagem espera.
+            var frames = 0L
+            var millis = 0L
+            while (millis < BENCH_MEASURE_MS && !benchSkip && !isFinishing) {
+                val r0 = view.runCount()
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                delay(BENCH_SAMPLE_MS)
+                if (activityResumed && benchOwner === owner) {
+                    frames += view.runCount() - r0
+                    millis += android.os.SystemClock.elapsedRealtime() - t0
+                }
+            }
+            if (benchSkip) return null
+            return CoreBenchmark.speed(frames, millis, view.contentFps())
+        } finally {
+            // Destruir com o retro_load_game ainda rodando (demorou demais, ou o usuário saiu) faria o
+            // onDestroy esperar o carregamento na thread principal: a espera fica aqui, suspensa e com teto.
+            // NonCancellable: com a Activity fechando o escopo já está cancelado e o delay sairia na hora.
+            withContext(kotlinx.coroutines.NonCancellable) {
+                withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) { while (view.isLoading) delay(BENCH_SAMPLE_MS) }
+            }
+            owner.registry.currentState = Lifecycle.State.DESTROYED
+            benchOwner = null
+            // Tira a view da tela (a thread GL termina) antes de o próximo núcleo criar o dele.
+            ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+            delay(BENCH_TEARDOWN_MS)
+        }
+    }
+
+    // endregion
 
     private fun observe(view: GLRetroView) {
         lifecycleScope.launch {
@@ -373,7 +591,19 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (retroView === view) gameLoaded = true
-            if (settings.autoLoad) {
+            val received = pendingStateFile
+            val guestOf = netGuest
+            if (guestOf != null) {
+                // O jogo começa do estado do anfitrião: nada de salvamento automático aqui.
+                if (retroView !== view) return@launch
+                netplay.join(guestOf.first, guestOf.second, guestOf.third)
+            } else if (received != null) {
+                pendingStateFile = null
+                val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
+                if (retroView !== view) return@launch
+                val ok = data != null && withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
+                toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
+            } else if (settings.autoLoad) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
                 // Menu aberto ou app em segundo plano durante a leitura: a thread de emulação está parada (sem
                 // contexto GL) e o estado só é aplicado quando o jogo voltar a rodar.
@@ -383,6 +613,9 @@ class GameActivity : ComponentActivity() {
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
                     if (withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }) {
+                        // Se a emulação parou no meio (app para o fundo), a cópia de pausa ainda é a da tela
+                        // de início: gravá-la no próximo salvamento automático apagaria o progresso restaurado.
+                        if (retroView === view && !emulationRunning()) frozenState = data
                         toast = getString(R.string.game_progress_restored)
                     } else {
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
@@ -393,6 +626,11 @@ class GameActivity : ComponentActivity() {
                 }
             }
             autoSaveReady = true
+            // Trapaças ligadas na última sessão voltam junto com o jogo (menos em rede: o convidado parte do
+            // estado do anfitrião, e só um lado com trapaças desencontraria os dois jogos).
+            if (retroView === view && cheats?.state?.enabled?.isNotEmpty() == true) {
+                if (cheatsBlocked()) cheats?.dirty = true else applyCheats(view)
+            }
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
         lifecycleScope.launch {
@@ -470,9 +708,14 @@ class GameActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        sharing?.server?.close()
+        netplay.end()
+        translateJob?.cancel()
+        translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
+        benchOwner?.registry?.currentState = Lifecycle.State.DESTROYED
         retroView = null
         remoteView?.let { app.remote.detach(it) }
         remoteView = null
@@ -484,8 +727,10 @@ class GameActivity : ComponentActivity() {
     }
 
     private fun updateEmulationState() {
+        // O núcleo em teste só roda com o app na frente (a medição desconta o tempo parado).
+        benchOwner?.registry?.let { if (it.currentState != Lifecycle.State.DESTROYED) it.currentState = if (activityResumed) Lifecycle.State.RESUMED else Lifecycle.State.STARTED }
         if (emulationOwner.registry.currentState == Lifecycle.State.DESTROYED) return
-        val running = activityResumed && !menuOpen && ui is EmulationUi.Running
+        val running = activityResumed && !menuOpen && translation == null && ui is EmulationUi.Running
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
         if (running && sessionStart == 0L) sessionStart = System.currentTimeMillis()
         // O jogo volta a andar: o estado congelado deixa de ser o atual.
@@ -510,7 +755,11 @@ class GameActivity : ComponentActivity() {
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
     private fun persist(auto: Boolean) {
         val view = retroView ?: return
-        if (ui !is EmulationUi.Running || !gameLoaded) return
+        if (ui !is EmulationUi.Running) return
+        // Partida de outra pessoa: gravar aqui trocaria o progresso de quem joga pelo dela.
+        if (guestSession) return
+        // Jogo ainda carregando: nem a SRAM nem o estado são reais.
+        if (!gameLoaded) return
         runCatching {
             val running = emulationRunning()
             // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
@@ -538,12 +787,18 @@ class GameActivity : ComponentActivity() {
     private val menuActions = object : MenuActions {
         override fun open() = openMenu()
         override fun close() {
+            closeShare()
             menuOpen = false
             padEditing = false
             menuFrame = null
             // A captura vale só para este menu; reaproveitá-la depois ilustraria o save com uma tela antiga.
             menuSnapshot = null
             updateEmulationState()
+            // O núcleo só aceita trapaças na thread de emulação, que acabou de voltar a rodar.
+            val view = retroView
+            // Em rede as trapaças esperam (também com o QR na tela ou conectando): só um lado com elas
+            // desencontraria os dois jogos. Continuam pendentes e voltam depois que a partida acaba.
+            if (view != null && cheats?.dirty == true && !cheatsBlocked()) applyCheats(view)
         }
         override fun slots() = if (::states.isInitialized) states.slots() else emptyList()
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
@@ -575,6 +830,7 @@ class GameActivity : ComponentActivity() {
 
         override fun load(slot: Int) {
             val view = retroView ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             lifecycleScope.launch {
@@ -600,6 +856,8 @@ class GameActivity : ComponentActivity() {
         }
 
         override fun toggleFastForward() {
+            // Em rede os dois lados andam no mesmo ritmo: acelerar só aqui travaria o outro.
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             fastForward = !fastForward
             retroView?.frameSpeed = if (fastForward) settings.fastForwardSpeed else 1
         }
@@ -614,6 +872,7 @@ class GameActivity : ComponentActivity() {
             retroView?.getVariables()?.mapNotNull(CoreOption::parse).orEmpty()
 
         override fun setCoreOption(option: CoreOption, value: String) {
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             retroView?.updateVariables(Variable(option.key, value))
             app.scope.launch { app.settings.setCoreOption(core.id, option.key, value) }
         }
@@ -624,24 +883,114 @@ class GameActivity : ComponentActivity() {
         }
 
         override fun changeDisk(index: Int) {
+            // Trocar o disco só de um lado desencontraria os dois jogos.
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             retroView?.changeDisk(index, false)
             toast = getString(R.string.game_disk_inserted, index + 1)
         }
 
         override fun reset() {
             val view = retroView ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
             close()
-            lifecycleScope.launch(Dispatchers.Default) { view.reset() }
+            lifecycleScope.launch(Dispatchers.Default) { runCatching { view.reset() } }
         }
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
+
+        override fun cheats(): CheatSession? = cheats
+
+        override fun share(slot: Int) {
+            if (!::states.isInitialized) return
+            lifecycleScope.launch {
+                val data = withContext(Dispatchers.IO) { runCatching { states.read(slot) }.getOrNull() }
+                if (data == null || data.isEmpty()) { toast = getString(R.string.game_state_load_failed); return@launch }
+                val thumb = withContext(Dispatchers.IO) { states.thumbnail(slot) }
+                val bytes = withContext(Dispatchers.Default) { app.sharedStates.pack(game, core.id, data, thumb) }
+                sharing = ShareSheet(game.title, bytes, thumb)
+            }
+        }
+
+        override fun sharing(): ShareSheet? = sharing
+
+        override fun shareAsFile() {
+            val sheet = sharing ?: return
+            lifecycleScope.launch {
+                runCatching { app.sharedStates.shareIntent(game, sheet.bytes) }
+                    .onSuccess { startActivity(Intent.createChooser(it, getString(R.string.share_state_title))) }
+                    .onFailure { toast = it.userMessage(this@GameActivity) }
+            }
+        }
+
+        override fun shareAsQr() {
+            val sheet = sharing ?: return
+            if (sheet.server != null) return
+            val hosts = LanTransfer.localAddresses()
+            if (hosts.isEmpty()) { sheet.noNetwork = true; return }
+            val token = LanTransfer.newToken()
+            val server = runCatching { LanTransfer.Server(sheet.bytes, token) }.getOrElse { sheet.noNetwork = true; return }
+            sheet.server = server
+            sheet.link = RetrovikaLink.State(hosts, server.port, token, game.title).toUri()
+        }
+
+        override fun translation(): TranslationUi? = translation
+
+        override fun canTranslate(): Boolean =
+            ::game.isInitialized && (settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true))
+
+        override fun translate() = startTranslation()
+
+        override fun closeTranslation() {
+            translateJob?.cancel()
+            translateJob = null
+            translation = null
+            updateEmulationState()
+        }
+
+        override fun skipBenchmark() { benchSkip = true }
+
+        override fun netplay(): NetplayController = netplay
+
+        override fun hostNetplay() {
+            if (!::game.isInitialized || !::core.isInitialized || !autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            val view = retroView ?: return
+            // Trapaças ligadas só aqui desencontrariam os jogos: saem durante a partida e voltam depois.
+            if (cheats?.state?.enabled?.isNotEmpty() == true) {
+                cheats?.dirty = true
+                lifecycleScope.launch(Dispatchers.Default) { view.resetCheat() }
+            }
+            if (fastForward) toggleFastForward()
+            netplay.startHosting(StatePackage.manifestFor(game, core.id, System.currentTimeMillis()), game.title)
+        }
+
+        override fun closeShare() {
+            sharing?.server?.close()
+            sharing = null
+        }
 
         override fun setPadProfile(profile: PadProfile) {
             padProfile = profile
             if (::core.isInitialized) {
                 padDirty = true
-                padSaves.trySend(profile)
+                sendPadSave(padForGame to profile)
+            }
+        }
+
+        override fun padForGame() = padForGame
+
+        override fun setPadForGame(forGame: Boolean) {
+            if (!::game.isInitialized || forGame == padForGame) return
+            padForGame = forGame
+            if (forGame) {
+                // Começa como cópia do controle do console, que continua valendo para os outros jogos.
+                padDirty = true
+                sendPadSave(true to padProfile)
+            } else {
+                // O jogo volta a seguir o console: o próprio é apagado e o do console reaparece pelo fluxo.
+                padDirty = true
+                sendPadSave(true to null)
+                lifecycleScope.launch { padProfile = app.settings.padProfile(system.id).first() }
             }
         }
 
@@ -650,6 +999,7 @@ class GameActivity : ComponentActivity() {
         override fun stopPadEditor() { padEditing = false }
 
         override fun exit() {
+            netplay.end()
             persist(auto = settings.autoSave)
             // O LibretroDroid é global e o onDestroy desta Activity roda só depois que a próxima tela
             // aparece: abrir outro jogo logo em seguida teria o emulador novo destruído por este.
@@ -661,7 +1011,79 @@ class GameActivity : ComponentActivity() {
         }
     }
 
+    /** Partida em rede montada ou em andamento (anfitrião esperando, conectando ou jogando). */
+    private fun cheatsBlocked(): Boolean = netplay.ui != null
+
+    /**
+     * Refaz a lista de trapaças no núcleo: limpa e liga as marcadas, em índices seguidos. Desligar uma só
+     * não basta em vários núcleos (o código já gravado na memória fica), por isso a lista inteira é refeita.
+     */
+    private fun applyCheats(view: GLRetroView) {
+        val session = cheats ?: return
+        session.dirty = false
+        val codes = session.state.enabled.map { it.code }
+        lifecycleScope.launch(Dispatchers.Default) {
+            view.resetCheat()
+            codes.forEachIndexed { i, code -> view.setCheat(i, true, code) }
+        }
+        if (codes.isNotEmpty()) toast = resources.getQuantityString(R.plurals.cheats_applied, codes.size, codes.size)
+    }
+
+    private fun sendPadSave(save: Pair<Boolean, PadProfile?>) {
+        pendingPadSaves++
+        padSaves.trySend(save)
+    }
+
+    /** Fecha o menu (e a tradução) e espera a emulação rodar: o núcleo só é tocado na thread de emulação ativa. */
+    private suspend fun resumeForNetplay(): Boolean {
+        if (translation != null) menuActions.closeTranslation()
+        if (menuOpen) menuActions.close()
+        repeat(100) {
+            if (emulationRunning()) return true
+            delay(50)
+        }
+        return emulationRunning()
+    }
+
+    /**
+     * Tradução ao vivo: captura a tela, pausa (o estado sai antes, como ao abrir o menu, para o salvamento
+     * automático valer se o app for para o fundo) e mostra o texto traduzido por cima da própria captura.
+     */
+    private fun startTranslation() {
+        val view = retroView ?: return
+        if (ui !is EmulationUi.Running || menuOpen || menuOpening || translation != null) return
+        if (gameLoaded && !autoSaveReady) return
+        releaseAllInputs(view)
+        menuOpening = true
+        captureFrame(view) { _, full ->
+            lifecycleScope.launch {
+                val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
+                menuOpening = false
+                if (retroView !== view || full == null) return@launch
+                frozenState = state?.takeIf { it.isNotEmpty() }
+                menuSnapshot = null
+                translation = TranslationUi.Working(full, LiveTranslator.Stage.READING)
+                updateEmulationState()
+                val target = uiLanguage()
+                translateJob = lifecycleScope.launch {
+                    translation = try {
+                        val tr = translator ?: LiveTranslator().also { translator = it }
+                        val blocks = tr.translate(full, target) { stage ->
+                            if (translation is TranslationUi.Working) translation = TranslationUi.Working(full, stage)
+                        }
+                        TranslationUi.Ready(full, blocks)
+                    } catch (c: kotlinx.coroutines.CancellationException) {
+                        throw c
+                    } catch (t: Throwable) {
+                        TranslationUi.Failed(full, t.userMessage(this@GameActivity))
+                    }
+                }
+            }
+        }
+    }
+
     private fun toggleMenu() {
+        if (translation != null) { menuActions.closeTranslation(); return }
         // No editor de layout, voltar retorna ao menu (o que foi mexido e não salvo é descartado).
         if (padEditing) { padEditing = false; return }
         if (menuOpen) menuActions.close() else openMenu()
@@ -670,8 +1092,14 @@ class GameActivity : ComponentActivity() {
     private fun openMenu() {
         // Falha e tela de erro primeiro: um menuOpening preso não pode impedir o Voltar de sair.
         val view = retroView
-        if (view == null || ui !is EmulationUi.Running) { finish(); return }
+        // Tela de erro: o núcleo já foi criado, então sair passa por exit() (que o destrói na hora);
+        // um finish() simples o deixaria para o onDestroy, que poderia destruir o núcleo do próximo jogo.
+        if (view == null) { finish(); return }
+        if (ui !is EmulationUi.Running) { menuActions.exit(); return }
         if (menuOpen || menuOpening) return
+        // Salvamento automático sendo carregado: pausar agora carregaria o estado sem contexto GL
+        // e deixaria o menu com a cópia da tela de início. Leva só um instante.
+        if (gameLoaded && !autoSaveReady) return
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)
@@ -807,6 +1235,11 @@ class GameActivity : ComponentActivity() {
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
+        private const val BENCH_LOAD_TIMEOUT_MS = 25_000L
+        private const val BENCH_WARMUP_MS = 1_500L
+        private const val BENCH_MEASURE_MS = 4_000L
+        private const val BENCH_SAMPLE_MS = 250L
+        private const val BENCH_TEARDOWN_MS = 350L
         /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */
         private const val MAX_PORTS = 4
         private val RETROPAD_KEYS = listOf(
@@ -816,10 +1249,32 @@ class GameActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
         )
 
-        fun launch(context: Context, gameId: Long) {
+        private const val EXTRA_STATE_FILE = "state_file"
+        private const val EXTRA_NET_HOST = "net_host"
+        private const val EXTRA_NET_PORT = "net_port"
+        private const val EXTRA_NET_TOKEN = "net_token"
+        private const val EXTRA_CORE_ID = "core_id"
+
+        /** Entra na partida em rede do anfitrião em [host]:[port], com o mesmo núcleo dele. */
+        fun launchNetplay(context: Context, gameId: Long, host: String, port: Int, token: String, coreId: String) {
             context.startActivity(
                 Intent(context, GameActivity::class.java)
                     .putExtra(EXTRA_GAME_ID, gameId)
+                    .putExtra(EXTRA_NET_HOST, host)
+                    .putExtra(EXTRA_NET_PORT, port)
+                    .putExtra(EXTRA_NET_TOKEN, token)
+                    .putExtra(EXTRA_CORE_ID, coreId)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+
+        /** [stateFile]: estado recebido para abrir no lugar do salvamento automático, no núcleo [coreId]. */
+        fun launch(context: Context, gameId: Long, stateFile: File? = null, coreId: String? = null) {
+            context.startActivity(
+                Intent(context, GameActivity::class.java)
+                    .putExtra(EXTRA_GAME_ID, gameId)
+                    .apply { stateFile?.let { putExtra(EXTRA_STATE_FILE, it.absolutePath) } }
+                    .apply { coreId?.let { putExtra(EXTRA_CORE_ID, it) } }
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
@@ -848,7 +1303,22 @@ interface MenuActions {
     fun changeDisk(index: Int)
     fun reset()
     fun coreName(): String
+    fun cheats(): CheatSession?
+    fun share(slot: Int)
+    fun sharing(): ShareSheet?
+    fun shareAsFile()
+    fun shareAsQr()
+    fun closeShare()
+    fun skipBenchmark()
+    fun netplay(): NetplayController
+    fun hostNetplay()
+    fun translation(): TranslationUi?
+    fun canTranslate(): Boolean
+    fun translate()
+    fun closeTranslation()
     fun setPadProfile(profile: PadProfile)
+    fun padForGame(): Boolean
+    fun setPadForGame(forGame: Boolean)
     fun startPadEditor()
     fun stopPadEditor()
     fun exit()

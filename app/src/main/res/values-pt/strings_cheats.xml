@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trapaças (aba do menu de pausa). -->
+<resources>
+    <string name="game_tab_cheats">Trapaças</string>
+    <string name="cheats_source">Arquivo de trapaças (libretro-database)</string>
+    <string name="cheats_searching">Procurando as trapaças deste jogo…</string>
+    <string name="cheats_no_file">Nenhum arquivo escolhido</string>
+    <string name="cheats_find">Procurar</string>
+    <string name="cheats_change">Trocar</string>
+    <string name="cheats_retry">Tentar de novo</string>
+    <string name="cheats_filter">Filtrar trapaças</string>
+    <string name="cheats_hint">As mudanças valem ao voltar ao jogo. Algumas trapaças só funcionam a partir de uma nova área ou depois de reiniciar.</string>
+    <string name="cheats_disable_all">Desligar todas</string>
+    <string name="cheats_not_found">Nenhum arquivo de trapaças achado para este jogo. Procure pelo nome ou adicione um código seu.</string>
+    <string name="cheats_empty_file">Este arquivo não tem códigos.</string>
+    <string name="cheats_custom">Meu</string>
+    <string name="cheats_add_code">Adicionar código</string>
+    <string name="cheats_add_description">Descrição</string>
+    <string name="cheats_add_code_label">Código</string>
+    <string name="cheats_add_hint">No formato do núcleo (Game Genie, Pro Action Replay, GameShark…). Separe vários códigos com +.</string>
+    <string name="cheats_add">Adicionar</string>
+    <string name="cheats_pick_title">Escolha o arquivo de trapaças</string>
+    <string name="cheats_pick_search">Buscar nos arquivos deste console</string>
+    <string name="cheats_pick_suggestions">Sugeridos para este jogo</string>
+    <string name="cheats_pick_results">Resultados</string>
+    <string name="cheats_pick_failed">Não deu para carregar a lista de arquivos. Confira a conexão.</string>
+    <string name="cheats_pick_nothing">Nada encontrado.</string>
+    <string name="cheats_none_for_console">A libretro-database não tem trapaças para este console.</string>
+    <plurals name="cheats_applied">
+        <item quantity="one">%d trapaça ligada</item>
+        <item quantity="other">%d trapaças ligadas</item>
+    </plurals>
+</resources>

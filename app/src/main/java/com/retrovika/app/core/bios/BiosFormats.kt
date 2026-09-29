@@ -1,8 +1,9 @@
 package com.retrovika.app.core.bios
 
 import com.retrovika.app.core.systems.BiosFormat
+import java.io.BufferedInputStream
+import java.io.DataInputStream
 import java.io.File
-import java.io.RandomAccessFile
 
 /**
  * Confere o conteúdo de BIOS que não têm um MD5 único (há dezenas de versões da do PS2), com as
@@ -13,6 +14,7 @@ object BiosFormats {
     private const val PS2_MIN_SIZE = 4L * 1024 * 1024
     private const val PS2_MAX_SIZE = 8L * 1024 * 1024
     private const val ENTRY = 16
+    private const val READ_BUFFER = 64 * 1024
 
     fun isValid(format: BiosFormat, file: File): Boolean = when (format) {
         BiosFormat.PS2 -> isPs2Bios(file)
@@ -26,19 +28,23 @@ object BiosFormats {
         val size = file.length()
         if (size < PS2_MIN_SIZE || size > PS2_MAX_SIZE) return false
         return runCatching {
-            RandomAccessFile(file, "r").use { raf ->
+            // Lido com buffer: entradas de 16 bytes direto do RandomAccessFile eram uma chamada de sistema cada.
+            DataInputStream(BufferedInputStream(file.inputStream(), READ_BUFFER)).use { input ->
                 val entry = ByteArray(ENTRY)
+                var pos = 0L
                 // O núcleo lê entradas seguidas desde o início até achar a RESET.
                 var found = false
-                while (raf.filePointer + ENTRY <= size) {
-                    raf.readFully(entry)
+                while (pos + ENTRY <= size) {
+                    input.readFully(entry)
+                    pos += ENTRY
                     if (name(entry) == "RESET") { found = true; break }
                 }
                 if (!found) return@use false
                 while (entry[0].toInt() != 0 && entry.take(10).any { it.toInt() == 0 }) {
                     if (name(entry) == "ROMVER") return@use true
-                    if (raf.filePointer + ENTRY > size) break
-                    raf.readFully(entry)
+                    if (pos + ENTRY > size) break
+                    input.readFully(entry)
+                    pos += ENTRY
                 }
                 false
             }

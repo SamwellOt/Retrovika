@@ -45,6 +45,7 @@
     <string name="system_import_skipped">Ignorados: %1$s</string>
     <string name="system_import_failed">%1$s falhou: %2$s</string>
     <string name="system_import_unreadable">Não foi possível ler o arquivo</string>
+    <string name="system_import_rename_failed">Não foi possível salvar %s na pasta de ROMs</string>
     <string name="system_import_games">Importar jogos</string>
     <string name="system_experimental">EXPERIMENTAL</string>
     <string name="system_bios_missing">BIOS obrigatória ausente</string>
@@ -84,4 +85,8 @@
     <string name="details_remove_title">Remover %1$s?</string>
     <string name="details_remove_linked">O jogo sai da biblioteca, mas o arquivo continua na sua pasta. Para mostrá-lo de novo, use Ajustes › Jogos removidos.</string>
     <string name="details_remove_file">O arquivo será apagado do armazenamento do Retrovika. Saves e estados são mantidos.</string>
+
+    <!-- Pacotes .zip de núcleos e arquivos de sistema -->
+    <string name="zip_invalid_entry">Entrada inválida no arquivo compactado: %s</string>
+    <string name="zip_unsupported_compression">Compressão não suportada no arquivo compactado: %s</string>
 </resources>

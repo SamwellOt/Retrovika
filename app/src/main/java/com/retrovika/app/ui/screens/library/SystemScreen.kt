@@ -78,6 +78,12 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.VideogameAsset
 import com.retrovika.app.ui.components.EmptyState
+import com.retrovika.app.ui.components.SurfaceCard
+import com.retrovika.app.core.library.Versions
+import com.retrovika.app.core.settings.uiLanguage
+import androidx.compose.material.icons.rounded.Layers
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import com.retrovika.app.ui.components.GameCard
 import com.retrovika.app.ui.components.GameCardSkeleton
 import com.retrovika.app.ui.components.bleed
@@ -85,11 +91,14 @@ import com.retrovika.app.ui.components.accentColor
 import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
-fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Unit, onOpenBios: () -> Unit) {
+fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Unit, onOpenBios: () -> Unit, onOpenVersions: () -> Unit) {
     val system = Systems.byId(systemId) ?: return
     val context = LocalContext.current
     val app = context.container
@@ -115,21 +124,36 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         // No escopo do app: sair da tela no meio da cópia não a interrompe nem deixa arquivos pela metade.
+        // Contexto da aplicação, pego fora da corrotina: a Activity pode ser recriada (rotação) antes da
+        // importação terminar, e capturá-la aqui a manteria viva até o fim.
+        val res = context.localized()
         app.scope.launch(Dispatchers.Main) {
-            // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
-            val res = context.localized()
             importStatus.message = res.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
             importStatus.errors = null
-            val result = app.library.importFiles(uris, system)
-            importStatus.message = if (result.unknown.isEmpty()) res.getString(R.string.system_import_done)
-            else res.getString(R.string.system_import_skipped, result.unknown.joinToString())
-            // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
-            importStatus.errors = result.failed.takeIf { it.isNotEmpty() }
-                ?.joinToString("\n") { (name, reason) -> res.getString(R.string.system_import_failed, name, reason) }
+            // O escopo do app não tem tratador: uma exceção solta aqui derrubaria o processo.
+            try {
+                val result = app.library.importFiles(uris, system)
+                importStatus.message = if (result.unknown.isEmpty()) res.getString(R.string.system_import_done)
+                else res.getString(R.string.system_import_skipped, result.unknown.joinToString())
+                // Cada arquivo que falhou aparece com o motivo, abaixo do botão.
+                importStatus.errors = result.failed.takeIf { it.isNotEmpty() }
+                    ?.joinToString("\n") { (name, reason) -> res.getString(R.string.system_import_failed, name, reason) }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                importStatus.message = null
+                importStatus.errors = t.userMessage(res)
+            }
         }
     }
 
-    val core = system.core(selectedCore)
+    val bench by remember(systemId) { app.settings.benchmark(systemId) }.collectAsStateWithLifecycle(null)
+    // Sem escolha do usuário, vale o núcleo do teste automático (quando houve teste).
+    val core = system.core(selectedCore?.ifEmpty { bench?.takeIf { !it.skipped }?.chosen })
+    val language = remember { context.uiLanguage() }
+    // Só a contagem: a tela de versões refaz os grupos com os detalhes.
+    // Fora da thread principal: com milhares de ROMs o agrupamento travava a transição e a rolagem.
+    val repeated by produceState(0, all, language) { value = withContext(Dispatchers.Default) { Versions.groups(all, language).size } }
 
     val accent = system.accentColor()
     LazyVerticalGrid(
@@ -224,6 +248,21 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                         modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp),
                     )
+                    bench?.let { b ->
+                        Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (b.skipped) stringResource(R.string.bench_system_skipped)
+                                else stringResource(
+                                    R.string.bench_system_result, system.core(b.chosen).displayName,
+                                    ((b.speedOf(b.chosen) ?: 0f) * 100).toInt(),
+                                ) + if (selectedCore?.isNotEmpty() == true) " " + stringResource(R.string.bench_system_overridden) else "",
+                                style = MaterialTheme.typography.labelSmall, color = Palette.Cyan, modifier = Modifier.weight(1f),
+                            )
+                            androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.setBenchmark(system.id, null) } }) {
+                                Text(stringResource(R.string.bench_again), style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
 
                     if (core.presets.isNotEmpty()) {
                         HorizontalDivider(Modifier.padding(vertical = 14.dp), color = Palette.Outline.copy(alpha = 0.5f))
@@ -245,6 +284,19 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
                 )
+                if (repeated > 0) {
+                    SurfaceCard(Modifier.fillMaxWidth().padding(bottom = 14.dp), onClick = onOpenVersions) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconTile(Icons.Rounded.Layers, Palette.Cyan, size = 36.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(countString(R.plurals.system_versions_title, repeated), style = MaterialTheme.typography.titleSmall)
+                                Text(stringResource(R.string.system_versions_subtitle), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+                            }
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.TextSecondary)
+                        }
+                    }
+                }
                 if (all.isNotEmpty()) {
                     SectionHeader(stringResource(R.string.system_games), inset = 4.dp)
                     Spacer(Modifier.height(12.dp))

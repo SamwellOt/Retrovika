@@ -2,6 +2,7 @@ package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.Urls
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
@@ -19,6 +20,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class WikiClient {
     private val wikidata = "https://www.wikidata.org/w/api.php"
+    private val wikipedia = "https://en.wikipedia.org/w/api.php"
     private val headers = mapOf("User-Agent" to "Retrovika/0.2 (Android; https://github.com/SamwellOt/Retrovika)")
 
     /**
@@ -26,10 +28,134 @@ class WikiClient {
      * aceita só um item de mesmo nome descrito como jogo.
      */
     suspend fun find(title: String, lang: String, igdbSlug: String? = null): WikiInfo? {
-        val id = igdbSlug?.let { runCatching { byIgdb(it) }.getOrNull() }
+        // runCatching engoliria o cancelamento (a página fechou) e seguiria buscando por título à toa.
+        val bySlug = igdbSlug?.let {
+            try { Result.success(byIgdb(it)) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+        }
+        val id = bySlug?.getOrNull()
             ?: GameTitles.clean(title).takeIf { it.isNotBlank() }?.let { byTitle(it) }
+            ?: try { otherTitle(title)?.item } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+            // Falha de rede no slug sem nada achado pelo título: é erro, não "sem artigo" guardado no cache.
+            ?: bySlug?.exceptionOrNull()?.let { throw it }
             ?: return null
         return entity(id, lang)
+    }
+
+    /** Outro nome do jogo, com o item do Wikidata e o slug do IGDB (= Backloggd) quando há. */
+    data class OtherTitle(val title: String, val item: String?, val igdbSlug: String?)
+
+    /**
+     * O nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título japonês
+     * romanizado ("Bokujou Monogatari" é "Harvest Moon"; "Hana to Taiyou to Ame to", "Flower, Sun, and
+     * Rain"). Três fontes, da mais segura para a menos, comparadas contra títulos reais no workflow
+     * `catalog-speed` (`english_title_probe.py`):
+     * 1. Wikidata: os nomes japoneses ficam como apelidos do item do jogo, que também traz o slug do
+     *    IGDB. Só vale o apelido ou rótulo inteiro, não o começo ("Rockman X" não é "Rockman X4").
+     * 2. Wikipedia: título ou redirecionamento exato ("Seiken Densetsu 3" leva a "Trials of Mana").
+     * 3. Wikipedia, busca pela frase: só o artigo de jogo cuja predefinição `{{Nihongo}}` da abertura
+     *    traz a romanização pedida ("Hana to Taiyō to Ame to"). A busca solta pegava a continuação ou
+     *    o derivado ("Rockman X" virava "Mega Man X DiVE").
+     * Nulo quando nada disso acha outro nome nem o slug do IGDB.
+     */
+    suspend fun otherTitle(title: String): OtherTitle? {
+        val clean = GameTitles.clean(title).ifBlank { return null }
+        val wanted = GameTitles.romajiKey(clean)
+        if (wanted.length < 4) return null
+        val variants = GameTitles.romajiVariants(clean)
+        fun useful(o: OtherTitle?) = o?.takeIf { !GameTitles.same(it.title, clean) || it.igdbSlug != null }
+        return useful(byAlias(variants, wanted))
+            ?: useful(byRedirect(variants))
+            ?: useful(byPhrase(clean, wanted))
+    }
+
+    /** Item de jogo do Wikidata cujo rótulo ou apelido é o título pedido. */
+    private suspend fun byAlias(variants: List<String>, wanted: String): OtherTitle? {
+        for (query in variants) {
+            val url = Urls.withQuery(wikidata, listOf(
+                "action" to "wbsearchentities", "search" to query, "language" to "en", "type" to "item",
+                "limit" to "7", "format" to "json",
+            ))
+            val hit = json(url)["search"]?.jsonArray.orEmpty().map { it.jsonObject }.firstOrNull { item ->
+                val matched = item["match"]?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                isGameDescription(item["description"]?.jsonPrimitive?.contentOrNull) && GameTitles.romajiKey(matched) == wanted
+            } ?: continue
+            val id = hit["id"]?.jsonPrimitive?.contentOrNull ?: continue
+            val label = hit["label"]?.jsonPrimitive?.contentOrNull ?: continue
+            return OtherTitle(label, id, runCatching { igdbOf(id) }.getOrNull())
+        }
+        return null
+    }
+
+    /** Artigo de jogo da Wikipedia com esse título, ou para onde esse título redireciona. */
+    private suspend fun byRedirect(variants: List<String>): OtherTitle? {
+        val pages = pages(listOf("titles" to variants.joinToString("|"), "redirects" to "1"))
+        val page = pages.firstOrNull { it.isGame } ?: return null
+        return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
+    }
+
+    /**
+     * Busca pela frase e aceita o artigo de jogo que se declara com esse nome japonês: a predefinição
+     * `{{Nihongo|<inglês>|<kanji>|<romaji>}}` da abertura traz a romanização pedida. Achar a frase em
+     * qualquer ponto do texto não basta ("Rockman X" aparece no artigo de "Mega Man X DiVE").
+     */
+    private suspend fun byPhrase(clean: String, wanted: String): OtherTitle? {
+        val checked = HashSet<String>()
+        // A busca tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda usa a forma sem
+        // vogais longas.
+        for (query in listOf(GameTitles.key(clean), wanted).distinct()) {
+            val url = Urls.withQuery(wikipedia, listOf(
+                "action" to "query", "list" to "search", "srsearch" to "\"$query\"", "srnamespace" to "0",
+                "srlimit" to "5", "srprop" to "", "format" to "json", "formatversion" to "2",
+            ))
+            val titles = json(url)["query"]?.jsonObject?.get("search")?.jsonArray.orEmpty()
+                .mapNotNull { it.jsonObject["title"]?.jsonPrimitive?.contentOrNull }
+            if (titles.isEmpty()) continue
+            val byTitle = pages(listOf("titles" to titles.joinToString("|"))).associateBy { it.title }
+            val games = titles.mapNotNull { byTitle[it]?.takeIf { p -> p.isGame } }.filter { checked.add(it.title) }
+            for (page in games.take(MAX_LEADS)) {
+                val names = runCatching { nihongoNames(leadWikitext(page.title)) }.getOrDefault(emptyList())
+                if (names.any { GameTitles.romajiKey(GameTitles.clean(it)) == wanted }) {
+                    return OtherTitle(GameTitles.clean(page.title), page.item, page.item?.let { runCatching { igdbOf(it) }.getOrNull() })
+                }
+            }
+        }
+        return null
+    }
+
+    /** O wikitexto da abertura (seção 0) do artigo. */
+    private suspend fun leadWikitext(title: String): String {
+        val url = Urls.withQuery(wikipedia, listOf(
+            "action" to "parse", "page" to title, "prop" to "wikitext", "section" to "0",
+            "format" to "json", "formatversion" to "2",
+        ))
+        return json(url)["parse"]?.jsonObject?.get("wikitext")?.jsonPrimitive?.contentOrNull.orEmpty()
+    }
+
+    private class Page(val title: String, val isGame: Boolean, val item: String?)
+
+    /** Páginas da Wikipedia em inglês com a descrição curta e o item do Wikidata. */
+    private suspend fun pages(params: List<Pair<String, String>>): List<Page> {
+        val url = Urls.withQuery(wikipedia, listOf(
+            "action" to "query", "prop" to "description|pageprops", "ppprop" to "wikibase_item",
+            "format" to "json", "formatversion" to "2",
+        ) + params)
+        return json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
+            .filter { it["missing"] == null }
+            .mapNotNull { p ->
+                Page(
+                    title = p["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
+                    isGame = isGameDescription(p["description"]?.jsonPrimitive?.contentOrNull),
+                    item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
+                )
+            }
+    }
+
+    private suspend fun igdbOf(item: String): String? {
+        val url = Urls.withQuery(wikidata, listOf(
+            "action" to "wbgetentities", "ids" to item, "props" to "claims", "format" to "json",
+        ))
+        val claims = json(url)["entities"]?.jsonObject?.get(item)?.jsonObject?.get("claims")?.jsonObject ?: return null
+        return string(claims, IGDB)
     }
 
     private suspend fun byIgdb(slug: String): String? {
@@ -181,7 +307,57 @@ class WikiClient {
 
     private suspend fun json(url: String): JsonObject = Http.json.parseToJsonElement(Http.getString(url, headers)).jsonObject
 
-    private companion object {
+    internal companion object {
+        /** Descrição curta de um jogo ("1993 video game"); séries, empresas e listas ficam de fora. */
+        fun isGameDescription(description: String?): Boolean {
+            val d = description.orEmpty().trim().lowercase()
+            return "game" in d && listOf("series", "franchise", "company", "developer", "publisher", "list").none { it in d }
+        }
+
+        /** Quantos artigos de jogo de cada busca têm a abertura lida. */
+        private const val MAX_LEADS = 2
+
+        private val nihongo = Regex("""\{\{\s*nihongo[\w ]*\|""", RegexOption.IGNORE_CASE)
+        private val namedParam = Regex("""^\s*[\w-]+\s*=""")
+        private val innerTemplate = Regex("""\{\{[^{}]*}}""")
+        private val wikiLink = Regex("""\[\[(?:[^|\]]*\|)?([^\]]*)]]""")
+
+        /**
+         * Os três primeiros parâmetros (inglês, kanji, romaji) de cada `{{Nihongo…}}` do wikitexto,
+         * sem marcação. Conta chaves e colchetes: a predefinição pode trazer outras dentro, como em
+         * `{{Nihongo foot|''Flower, Sun, and Rain''|花と太陽と雨と|Hana to Taiyō to Ame to|…{{nihongo|…}}}}`.
+         */
+        fun nihongoNames(wikitext: String): List<String> {
+            val out = mutableListOf<String>()
+            var from = 0
+            while (true) {
+                val m = nihongo.find(wikitext, from) ?: break
+                from = m.range.last + 1
+                val params = mutableListOf(StringBuilder())
+                var braces = 1
+                var brackets = 0
+                var i = from
+                while (i < wikitext.length && braces > 0) {
+                    val two = wikitext.substring(i, minOf(i + 2, wikitext.length))
+                    when {
+                        two == "{{" -> { braces++; params.last().append(two); i += 2 }
+                        two == "}}" -> { braces--; if (braces > 0) params.last().append(two); i += 2 }
+                        two == "[[" -> { brackets++; params.last().append(two); i += 2 }
+                        two == "]]" -> { brackets--; params.last().append(two); i += 2 }
+                        wikitext[i] == '|' && braces == 1 && brackets == 0 -> { params.add(StringBuilder()); i++ }
+                        else -> { params.last().append(wikitext[i]); i++ }
+                    }
+                }
+                params.map { it.toString() }.filterNot { namedParam.containsMatchIn(it) }.take(3).forEach { raw ->
+                    var t = raw
+                    repeat(3) { t = t.replace(innerTemplate, "") }
+                    t = t.replace(wikiLink, "$1").replace("'''", "").replace("''", "").trim()
+                    if (t.isNotEmpty()) out += t
+                }
+            }
+            return out
+        }
+
         const val DEVELOPER = "P178"
         const val PUBLISHER = "P123"
         const val GENRE = "P136"

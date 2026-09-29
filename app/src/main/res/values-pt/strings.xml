@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="common_back">Voltar</string>
+    <string name="common_close">Fechar</string>
     <string name="common_cancel">Cancelar</string>
     <string name="common_remove">Remover</string>
     <string name="common_clear">Limpar</string>
@@ -57,12 +58,18 @@
     <string name="region_brazil">Brasil</string>
     <string name="region_korea">Coreia</string>
     <string name="region_china">China</string>
+    <string name="region_australia">Austrália</string>
     <string name="common_error_no_internet">Sem conexão com a internet (ou o servidor está fora do ar)</string>
     <string name="common_error_timeout">O servidor demorou demais para responder. Tente de novo.</string>
     <string name="common_error_secure_connection">Não foi possível estabelecer uma conexão segura com o servidor</string>
     <string name="common_error_no_space">Espaço de armazenamento insuficiente</string>
     <string name="common_error_memory">Memória insuficiente para concluir a operação</string>
     <string name="common_error_unknown">Erro inesperado (%s)</string>
+    <string name="common_error_http_not_found">O servidor não encontrou este endereço (HTTP 404)</string>
+    <string name="common_error_http_forbidden">O servidor recusou o acesso (HTTP 403)</string>
+    <string name="common_error_http_server">O servidor está com problemas (HTTP %d). Tente mais tarde.</string>
+    <string name="common_error_http_other">O servidor respondeu com um erro (HTTP %d)</string>
+    <string name="common_error_bad_data">O servidor enviou dados num formato inesperado</string>
     <string name="common_beta">BETA</string>
     <string name="common_playtime_hm">%1$dh %2$dmin</string>
     <string name="common_playtime_m">%1$dmin</string>

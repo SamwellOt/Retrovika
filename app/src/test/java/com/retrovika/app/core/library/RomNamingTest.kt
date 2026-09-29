@@ -19,6 +19,8 @@ class RomNamingTest {
     fun `traduz a regiao`() {
         assertEquals("EUA", RomNaming.region("Chrono Trigger (USA)"))
         assertEquals("Brasil", RomNaming.region("Sonic (Brazil)"))
+        // Mesma grafia da ordem de regiões do Versions.
+        assertEquals("Austrália", RomNaming.region("Game (Australia)"))
         assertNull(RomNaming.region("Homebrew"))
     }
 

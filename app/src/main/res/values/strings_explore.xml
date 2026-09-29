@@ -12,6 +12,7 @@
     <string name="explore_kind_everything">Everything</string>
     <string name="explore_error_title">Something went wrong</string>
     <string name="explore_error_network">Couldn\'t reach the catalog. Check your connection.</string>
+    <string name="explore_partial_failure">Some sites didn\'t respond, so this list may be incomplete.</string>
     <string name="explore_empty_title">Nothing here</string>
     <string name="explore_empty_message">No free titles found for \"%s\".</string>
     <string name="explore_extracting">Extracting</string>
@@ -61,6 +62,7 @@
     <string name="download_move_failed">Couldn\'t move %s</string>
     <string name="download_unsupported_format">Unsupported format: %s</string>
     <string name="download_got_webpage">The site sent a web page instead of the file. Try downloading through the in-app browser.</string>
+    <string name="download_unplayable">%1$s can\'t be played on %2$s: the archive has no game for this console or its format (such as .rar) isn\'t supported. The file was removed.</string>
     <string name="download_no_space">Not enough free space to extract the game (needs %s)</string>
     <string name="download_extract_failed">Couldn\'t extract the file: %s</string>
     <string name="download_archive_corrupt">The downloaded archive is corrupted (%s). Try downloading it again.</string>

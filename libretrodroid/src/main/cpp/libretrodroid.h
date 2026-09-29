@@ -46,6 +46,8 @@
 #include "renderers/es2/imagerendereres2.h"
 #include "renderers/es3/imagerendereres3.h"
 #include "utils/rect.h"
+#include "netplay.h"
+#include <atomic>
 
 namespace libretrodroid {
 
@@ -68,10 +70,11 @@ public:
     void setCheat(unsigned index, bool enabled, const std::string& code);
     void resetCheat();
 
-    std::pair<int8_t*, size_t> serializeState();
+    // Vazio quando o núcleo não consegue gerar o estado (o Kotlin trata como falha).
+    std::vector<int8_t> serializeState();
     bool unserializeState(int8_t *data, size_t size);
 
-    std::pair<int8_t *, size_t> serializeSRAM();
+    std::vector<int8_t> serializeSRAM();
     jboolean unserializeSRAM(int8_t *data, size_t size);
 
     void onSurfaceCreated();
@@ -109,6 +112,17 @@ public:
 
     void refreshAspectRatio();
     float getAspectRatio();
+
+    // Partida em rede local (Retrovika): ver netplay.h.
+    void startNetplay(int fd, unsigned localPort, unsigned delayFrames, unsigned epoch);
+    void stopNetplay();
+    /** -1 sem partida; -2 conexão perdida; senão, há quantos ms a entrada do outro está atrasada. */
+    int64_t netplayStatus() const;
+    uint32_t netplayFrame() const;
+
+    // Teste de desempenho dos núcleos (Retrovika): quadros emulados e a taxa nativa do jogo.
+    uint64_t getRunCount() const { return runCount.load(); }
+    double getContentFps() const { return contentFps; }
 
     bool requiresVideoRefresh() const;
     void clearRequiresVideoRefresh();
@@ -159,6 +173,7 @@ protected:
 
     [[noreturn]] void throwLoadGameError();
     void throwIfHwContextMissing();
+    void throwIfCoreMissing();
     static void callback_retro_set_input_poll();
 
 private:
@@ -184,6 +199,8 @@ private:
     std::mutex coreLock;
 
     std::unique_ptr<Core> core;
+    // retro_load_game deu certo: só então o destroy chama retro_unload_game.
+    bool gameLoaded = false;
     std::unique_ptr<Audio> audio;
     std::unique_ptr<Video> video;
     std::unique_ptr<FPSSync> fpsSync;
@@ -191,6 +208,12 @@ private:
     // Protege [input]: pause/resume o trocam na thread principal enquanto eventos chegam pela thread GL.
     std::mutex inputLock;
     std::unique_ptr<Rumble> rumble;
+    std::unique_ptr<Netplay> netplay;
+    std::atomic<uint64_t> runCount {0};
+    // Lidos de outras threads sem o coreLock (a emulação o segura durante todo o quadro).
+    std::atomic<int64_t> netplayState {-1};
+    std::atomic<uint32_t> netplayFrameCount {0};
+    double contentFps = 60.0;
 
     Capture capture;
     int audioSampleRate = 0;

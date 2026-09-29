@@ -63,6 +63,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.net.userMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -79,12 +81,22 @@ fun BiosScreen(onBack: () -> Unit) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        // Contexto da aplicação, pego fora da corrotina: a Activity pode ser recriada (rotação) antes da
+        // importação terminar, e capturá-la aqui a manteria viva até o fim.
+        val res = context.localized()
         app.scope.launch(Dispatchers.Main) {
-            val found = bios.import(uris)
-            // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
-            val res = context.localized()
-            status.message = if (found.isEmpty()) res.getString(R.string.bios_ui_none_recognized)
-            else res.getString(R.string.bios_ui_imported, found.joinToString())
+            // O escopo do app não tem tratador: uma exceção solta aqui derrubaria o processo.
+            try {
+                status.errors = null
+                val found = bios.import(uris)
+                status.message = if (found.isEmpty()) res.getString(R.string.bios_ui_none_recognized)
+                else res.getString(R.string.bios_ui_imported, found.joinToString())
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                status.message = null
+                status.errors = t.userMessage(res)
+            }
             status.version++
         }
     }
@@ -104,6 +116,7 @@ fun BiosScreen(onBack: () -> Unit) {
                 Modifier.padding(horizontal = 20.dp, vertical = 14.dp), icon = Icons.Rounded.FileOpen,
             )
             status.message?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Success, modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) }
+            status.errors?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.Coral, modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) }
         }
         items(systems, key = { it.id }) { system ->
             Column(

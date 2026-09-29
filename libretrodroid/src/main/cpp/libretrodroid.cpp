@@ -92,6 +92,7 @@ void LibretroDroid::updateAudioSampleRateMultiplier() {
 // TODO... Do we really need this?
 void LibretroDroid::resetGlobalVariables() {
     core = nullptr;
+    gameLoaded = false;
     audio = nullptr;
     video = nullptr;
     fpsSync = nullptr;
@@ -142,6 +143,7 @@ std::vector<std::vector<struct Controller>> LibretroDroid::getControllers() {
 }
 
 void LibretroDroid::setControllerType(unsigned int port, unsigned int type) {
+    if (!core) return;
     core->retro_set_controller_port_device(port, type);
 }
 
@@ -153,6 +155,8 @@ bool LibretroDroid::unserializeState(int8_t *data, size_t size) {
 
 JNIEXPORT jboolean JNICALL LibretroDroid::unserializeSRAM(int8_t* data, size_t size) {
     std::lock_guard<std::mutex> lock(coreLock);
+
+    if (!core) return false;
 
     size_t sramSize = core->retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
     void *sramState = core->retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -172,14 +176,19 @@ JNIEXPORT jboolean JNICALL LibretroDroid::unserializeSRAM(int8_t* data, size_t s
     return true;
 }
 
-std::pair<int8_t*, size_t> LibretroDroid::serializeSRAM() {
+std::vector<int8_t> LibretroDroid::serializeSRAM() {
     std::lock_guard<std::mutex> lock(coreLock);
 
-    size_t size = core->retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
-    auto* data = new int8_t[size];
-    memcpy(data, (int8_t*) core->retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), size);
+    if (!core) return {};
 
-    return std::pair(data, size);
+    size_t size = core->retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    auto* source = (int8_t*) core->retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    // Alguns núcleos informam tamanho > 0 sem ponteiro: devolve vazio em vez de ler de nullptr.
+    if (source == nullptr || size == 0) {
+        return {};
+    }
+
+    return std::vector<int8_t>(source, source + size);
 }
 
 void LibretroDroid::onSurfaceChanged(unsigned int width, unsigned int height) {
@@ -189,6 +198,8 @@ void LibretroDroid::onSurfaceChanged(unsigned int width, unsigned int height) {
 
 void LibretroDroid::onSurfaceCreated() {
     LOGD("Performing libretrodroid onSurfaceCreated");
+
+    if (!core) return;
 
     struct retro_system_av_info system_av_info {};
     core->retro_get_system_av_info(&system_av_info);
@@ -327,6 +338,14 @@ void LibretroDroid::throwLoadGameError() {
     throw std::runtime_error("Cannot load game");
 }
 
+void LibretroDroid::throwIfCoreMissing() {
+    // O núcleo foi destruído antes de o carregamento começar (a tela saiu durante a preparação).
+    if (!core) {
+        LOGE("Cannot load game: the core was already destroyed. Leaving.");
+        throw std::runtime_error("Core already destroyed");
+    }
+}
+
 void LibretroDroid::throwIfHwContextMissing() {
     // Alguns núcleos (o Play!) ignoram a recusa do SET_HW_RENDER e dizem que carregaram: sem contexto,
     // caíam segundos depois ao usar o vídeo que nunca foi criado.
@@ -338,6 +357,10 @@ void LibretroDroid::throwIfHwContextMissing() {
 
 void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     LOGD("Performing libretrodroid loadGameFromPath");
+    // Com o coreLock: um destroy() (sair durante o carregamento) espera o retro_load_game terminar em
+    // vez de descarregar o núcleo no meio dele. Os callbacks chamados pelo núcleo não pegam esse lock.
+    std::lock_guard<std::mutex> lock(coreLock);
+    throwIfCoreMissing();
     struct retro_system_info system_info {};
     core->retro_get_system_info(&system_info);
 
@@ -358,6 +381,7 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     if (!result) {
         throwLoadGameError();
     }
+    gameLoaded = true;
     throwIfHwContextMissing();
 
     afterGameLoad();
@@ -365,6 +389,10 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
 
 void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
     LOGD("Performing libretrodroid loadGameFromBytes");
+    // Com o coreLock: um destroy() (sair durante o carregamento) espera o retro_load_game terminar em
+    // vez de descarregar o núcleo no meio dele. Os callbacks chamados pelo núcleo não pegam esse lock.
+    std::lock_guard<std::mutex> lock(coreLock);
+    throwIfCoreMissing();
 
     struct retro_system_info system_info {};
     core->retro_get_system_info(&system_info);
@@ -385,6 +413,7 @@ void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
     if (!result) {
         throwLoadGameError();
     }
+    gameLoaded = true;
     throwIfHwContextMissing();
 
     afterGameLoad();
@@ -392,6 +421,10 @@ void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
 
 void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) {
     LOGD("Performing libretrodroid loadGameFromVirtualFiles");
+    // Com o coreLock: um destroy() (sair durante o carregamento) espera o retro_load_game terminar em
+    // vez de descarregar o núcleo no meio dele. Os callbacks chamados pelo núcleo não pegam esse lock.
+    std::lock_guard<std::mutex> lock(coreLock);
+    throwIfCoreMissing();
     struct retro_system_info system_info {};
     core->retro_get_system_info(&system_info);
 
@@ -426,6 +459,7 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) 
     if (!result) {
         throwLoadGameError();
     }
+    gameLoaded = true;
     throwIfHwContextMissing();
 
     afterGameLoad();
@@ -436,11 +470,20 @@ void LibretroDroid::destroy() {
 
     LOGD("Performing libretrodroid destroy");
 
-    if (Environment::getInstance().getHwContextDestroy() != nullptr) {
-        Environment::getInstance().getHwContextDestroy()();
+    // Já destruído (ou o create falhou antes de criar o núcleo): não há o que descarregar.
+    if (!core) {
+        return;
     }
 
-    core->retro_unload_game();
+    // Sem jogo carregado (destruído antes ou durante um carregamento que falhou) não há contexto nem
+    // jogo a descarregar: só o retro_deinit, como o RetroArch faz.
+    if (gameLoaded) {
+        if (Environment::getInstance().getHwContextDestroy() != nullptr) {
+            Environment::getInstance().getHwContextDestroy()();
+        }
+        core->retro_unload_game();
+    }
+    gameLoaded = false;
     core->retro_deinit();
 
     capture.release();
@@ -449,6 +492,8 @@ void LibretroDroid::destroy() {
     video = nullptr;
     core = nullptr;
     rumble = nullptr;
+    netplay = nullptr;
+    netplayState = -1;
     fpsSync = nullptr;
     audio = nullptr;
 
@@ -494,12 +539,25 @@ void LibretroDroid::step() {
 
     auto& frameTime = Environment::getInstance().getFrameTimeCallback();
     for (size_t i = 0; i < frames * frameSpeed; i++) {
+        // Em rede, o quadro só roda com a entrada dos dois lados; sem a do outro, fica para o próximo desenho.
+        if (netplay && !netplay->prepareFrame(input.get())) {
+            break;
+        }
         // Each retro_run is one frame of emulated time, so the reference duration is the right delta
         // (fast-forward runs more frames, not longer ones).
         if (frameTime.callback != nullptr) {
             frameTime.callback(frameTime.reference);
         }
         core->retro_run();
+        runCount++;
+        if (netplay) {
+            netplay->frameDone();
+        }
+    }
+
+    if (netplay) {
+        netplayState = netplay->isBroken() ? -2 : netplay->stalledMillis();
+        netplayFrameCount = netplay->currentFrame();
     }
 
     if (video && !video->rendersInVideoCallback()) {
@@ -600,10 +658,34 @@ int16_t LibretroDroid::handleSetInputState(
     unsigned int index,
     unsigned int id
 ) {
+    if (netplay) {
+        return netplay->getInputState(port, device, index, id);
+    }
     if (input) {
         return input->getInputState(port, device, index, id);
     }
     return 0;
+}
+
+void LibretroDroid::startNetplay(int fd, unsigned localPort, unsigned delayFrames, unsigned epoch) {
+    std::lock_guard<std::mutex> lock(coreLock);
+    netplay = std::make_unique<Netplay>(fd, localPort, delayFrames, (uint8_t) epoch);
+    netplayState = 0;
+    netplayFrameCount = 0;
+}
+
+void LibretroDroid::stopNetplay() {
+    std::lock_guard<std::mutex> lock(coreLock);
+    netplay = nullptr;
+    netplayState = -1;
+}
+
+int64_t LibretroDroid::netplayStatus() const {
+    return netplayState.load();
+}
+
+uint32_t LibretroDroid::netplayFrame() const {
+    return netplayFrameCount.load();
 }
 
 uintptr_t LibretroDroid::handleGetCurrentFrameBuffer() {
@@ -619,15 +701,24 @@ void LibretroDroid::reset() {
     core->retro_reset();
 }
 
-std::pair<int8_t*, size_t> LibretroDroid::serializeState() {
+std::vector<int8_t> LibretroDroid::serializeState() {
     std::lock_guard<std::mutex> lock(coreLock);
 
+    if (!core) return {};
+
     size_t size = core->retro_serialize_size();
-    auto data = new int8_t[size];
+    if (size == 0) {
+        return {};
+    }
 
-    core->retro_serialize(data, size);
+    std::vector<int8_t> data(size);
+    // Se o núcleo recusar, devolve vazio para o Kotlin nunca gravar um estado com lixo.
+    if (!core->retro_serialize(data.data(), size)) {
+        LOGE("retro_serialize failed");
+        return {};
+    }
 
-    return std::pair(data, size);
+    return data;
 }
 
 void LibretroDroid::resetCheat() {
@@ -655,6 +746,8 @@ void LibretroDroid::afterGameLoad() {
     core->retro_get_system_av_info(&system_av_info);
 
     fpsSync = std::make_unique<FPSSync>(system_av_info.timing.fps, screenRefreshRate);
+    contentFps = system_av_info.timing.fps > 0 ? system_av_info.timing.fps : 60.0;
+    runCount = 0;
 
     double inputSampleRate = system_av_info.timing.sample_rate * fpsSync->getTimeStretchFactor();
     audioSampleRate = (int) std::lround(inputSampleRate);

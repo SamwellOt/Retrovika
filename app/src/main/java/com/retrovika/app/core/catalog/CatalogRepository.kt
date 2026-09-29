@@ -147,7 +147,9 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         // Uma fonte fora do ar não esconde as outras; mas se todas falharam (sem internet, por
         // exemplo), o motivo precisa chegar à tela em vez de uma lista vazia.
         if (pages.isEmpty()) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
-        merge(pages, page)
+        // Marcada como parcial: quem pagina não avança por cima da página que faltou daquela fonte (o cache
+        // é por fonte e só guarda as que responderam, então pedir de novo só refaz a que falhou).
+        merge(pages, page).copy(partial = pages.size < results.size)
     }
 
     /**
@@ -166,7 +168,10 @@ class CatalogRepository(romsFun: RomsFunSource? = null) {
         var rounds = 0
         while (loaded() < MIN_FILL && next <= lastPage && rounds < MAX_FILL_ROUNDS) {
             val batch = (next until next + PARALLEL_PAGES).filter { it <= lastPage }
-            val pages = coroutineScope { batch.map { p -> async { runCatching { fetch(p) }.getOrNull() } }.awaitAll() }
+            // Página parcial (uma fonte falhou) conta como falha: seguir adiante pularia a página daquela fonte.
+            val pages = coroutineScope {
+                batch.map { p -> async { runCatching { fetch(p) }.getOrNull()?.takeIf { !it.partial } } }.awaitAll()
+            }
             // Filtro trocado no meio: a busca nova assume (os pedidos daqui foram cancelados).
             currentCoroutineContext().ensureActive()
             // Só as páginas até a primeira falha: pular uma deixaria um buraco que o "carregar mais" nunca pede de novo.

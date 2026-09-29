@@ -56,13 +56,15 @@ class ArchivesTest {
     }
 
     @Test
-    fun `substitui arquivo que ja existia sem deixar temporario`() {
+    fun `nao apaga outro jogo com o mesmo nome nem deixa temporario`() {
         val dest = tmp.newFolder("roms")
         File(dest, "Jogo.bin").writeText("antigo")
         val out = Archives.extract(zip("jogo.zip", mapOf("Jogo.bin" to "novo")), dest, setOf("Jogo.bin"))
-        assertEquals(File(dest, "Jogo.bin"), out.getValue("Jogo.bin"))
-        assertEquals("novo", File(dest, "Jogo.bin").readText())
-        assertEquals(listOf("Jogo.bin"), dest.list()!!.toList())
+        // Conteúdo diferente: o antigo fica, o novo vai para a subpasta com o nome do compactado.
+        assertEquals("antigo", File(dest, "Jogo.bin").readText())
+        assertEquals(File(dest, "jogo/Jogo.bin"), out.getValue("Jogo.bin"))
+        assertEquals("novo", out.getValue("Jogo.bin").readText())
+        assertTrue(dest.walkTopDown().none { it.name.endsWith(Archives.PART_SUFFIX) })
     }
 
     @Test
@@ -99,6 +101,52 @@ class ArchivesTest {
         val dest = tmp.newFolder("roms2")
         assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("../fora.bin", "ok.bin")) }
         assertFalse(File(dest.parentFile, "fora.bin").exists())
+    }
+
+    @Test
+    fun `falha no meio nao trunca a rom que ja existia`() {
+        val archive = zip("ruim.zip", mapOf("a.bin" to "novo", "../fora.bin" to "x"))
+        val dest = tmp.newFolder("roms3")
+        val old = File(dest, "a.bin").apply { writeText("antigo") }
+        assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("a.bin", "../fora.bin")) }
+        assertEquals("antigo", old.readText())
+        assertTrue(dest.listFiles().orEmpty().none { it.name.endsWith(Archives.PART_SUFFIX) })
+    }
+
+    @Test
+    fun `mesmo arquivo extraido de novo substitui sem duplicar`() {
+        val archive = zip("bom.zip", mapOf("a.bin" to "igual"))
+        val dest = tmp.newFolder("roms4")
+        File(dest, "a.bin").writeText("igual")
+        val out = Archives.extract(archive, dest, setOf("a.bin"))
+        assertEquals(File(dest, "a.bin"), out.getValue("a.bin"))
+        assertEquals(listOf("a.bin"), dest.list().orEmpty().toList())
+    }
+
+    @Test
+    fun `outro jogo com o mesmo nome vai inteiro para uma subpasta`() {
+        val archive = zip("Outro Jogo.zip", mapOf("jogo.cue" to "FILE \"jogo.bin\" BINARY", "jogo.bin" to "faixa nova"))
+        val dest = tmp.newFolder("roms5")
+        val oldCue = File(dest, "jogo.cue").apply { writeText("FILE \"jogo.bin\" BINARY") }
+        val oldBin = File(dest, "jogo.bin").apply { writeText("faixa antiga") }
+        val out = Archives.extract(archive, dest, setOf("jogo.cue", "jogo.bin"))
+        // O jogo que já estava lá fica intacto; o novo vai junto (cue e bin) para "Outro Jogo/".
+        assertEquals("faixa antiga", oldBin.readText())
+        assertTrue(oldCue.exists())
+        assertEquals(File(dest, "Outro Jogo/jogo.bin"), out.getValue("jogo.bin"))
+        assertEquals(File(dest, "Outro Jogo/jogo.cue"), out.getValue("jogo.cue"))
+        assertEquals("faixa nova", out.getValue("jogo.bin").readText())
+        assertTrue(dest.walkTopDown().none { it.name.endsWith(Archives.PART_SUFFIX) })
+    }
+
+    @Test
+    fun `subpasta ocupada ganha numero`() {
+        val archive = zip("X.zip", mapOf("a.bin" to "novo"))
+        val dest = tmp.newFolder("roms6")
+        File(dest, "a.bin").writeText("antigo")
+        File(dest, "X").mkdirs()
+        val out = Archives.extract(archive, dest, setOf("a.bin"))
+        assertEquals(File(dest, "X (2)/a.bin"), out.getValue("a.bin"))
     }
 
     @Test

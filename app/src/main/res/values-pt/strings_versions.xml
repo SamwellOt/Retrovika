@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Versões repetidas do mesmo jogo na biblioteca. -->
+<resources>
+    <string name="versions_title">Versões repetidas</string>
+    <plurals name="versions_groups">
+        <item quantity="one">%d jogo com mais de uma versão</item>
+        <item quantity="other">%d jogos com mais de uma versão</item>
+    </plurals>
+    <string name="versions_intro">Arquivos do mesmo jogo ficam juntos pelo título. A estrela marca a versão recomendada para você: a região do seu idioma ou uma tradução para ele, dumps verificados e a revisão mais nova ganham; dumps ruins, hacks e betas perdem.</string>
+    <string name="versions_verify_title">Conferir com o DAT</string>
+    <plurals name="versions_verify_pending">
+        <item quantity="one">%d jogo ainda sem verificação. Arquivos verificados pesam mais, e os renomeados são agrupados pelo nome real.</item>
+        <item quantity="other">%d jogos ainda sem verificação. Arquivos verificados pesam mais, e os renomeados são agrupados pelo nome real.</item>
+    </plurals>
+    <string name="versions_verify_all_done">Todos os jogos deste console já foram conferidos.</string>
+    <string name="versions_verify_button">Verificar todos</string>
+    <string name="versions_verify_progress">Analisando %1$d de %2$d…</string>
+    <plurals name="versions_verify_result">
+        <item quantity="one">%d jogo identificado.</item>
+        <item quantity="other">%d jogos identificados.</item>
+    </plurals>
+    <string name="versions_empty_title">Nenhuma versão repetida</string>
+    <string name="versions_empty_message">Cada jogo deste console tem um arquivo só.</string>
+    <plurals name="versions_count">
+        <item quantity="one">%d versão</item>
+        <item quantity="other">%d versões</item>
+    </plurals>
+    <string name="versions_keep_best">Manter só a recomendada</string>
+    <plurals name="versions_remove_title">
+        <item quantity="one">Remover %d versão?</item>
+        <item quantity="other">Remover %d versões?</item>
+    </plurals>
+    <string name="versions_remove_message">Arquivos importados e baixados são apagados; os de pastas vinculadas só saem da biblioteca. Saves e estados ficam guardados.</string>
+    <string name="versions_recommended">Recomendada</string>
+    <string name="versions_tag_verified">Verificado</string>
+    <string name="versions_tag_good_dump">Dump bom</string>
+    <string name="versions_tag_bad_dump">Dump ruim</string>
+    <string name="versions_tag_hack">Hack</string>
+    <string name="versions_tag_trainer">Trainer</string>
+    <string name="versions_tag_overdump">Overdump</string>
+    <string name="versions_tag_pirate">Pirata</string>
+    <string name="versions_tag_prerelease">Beta/demo</string>
+    <string name="versions_tag_unlicensed">Sem licença</string>
+    <string name="versions_tag_translation">Tradução</string>
+    <string name="versions_tag_revision">Revisão</string>
+
+    <plurals name="system_versions_title">
+        <item quantity="one">%d jogo com versões repetidas</item>
+        <item quantity="other">%d jogos com versões repetidas</item>
+    </plurals>
+    <string name="system_versions_subtitle">Veja qual vale manter</string>
+    <string name="details_library_versions">Versões na sua biblioteca</string>
+    <string name="details_library_versions_all">Ver todas</string>
+    <string name="details_library_versions_this">Esta</string>
+</resources>

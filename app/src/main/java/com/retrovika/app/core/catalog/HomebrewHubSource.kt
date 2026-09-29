@@ -51,7 +51,7 @@ class HomebrewHubSource : CatalogSource {
     )
 
     @Serializable
-    private data class FileEntry(val filename: String, val default: Boolean = false, val playable: Boolean = false)
+    private data class FileEntry(val filename: String = "", val default: Boolean = false, val playable: Boolean = false)
 
     override suspend fun search(query: String, systemId: String?, page: Int, kind: String?, genre: Genre?): CatalogPage {
         val url = Urls.withQuery("$base/api/search", buildList {
@@ -71,7 +71,9 @@ class HomebrewHubSource : CatalogSource {
         val entries = response.entries.mapNotNull { e ->
             if (e.slug.isBlank() || e.basepath.isBlank()) return@mapNotNull null
             val system = systemByPlatform[e.platform] ?: return@mapNotNull null
-            val file = e.files.firstOrNull { it.default && it.playable } ?: e.files.firstOrNull { it.playable } ?: return@mapNotNull null
+            // Arquivo sem nome não tem link: fica de fora da escolha.
+            val files = e.files.filter { it.filename.isNotBlank() }
+            val file = files.firstOrNull { it.default && it.playable } ?: files.firstOrNull { it.playable } ?: return@mapNotNull null
             val entryBase = "$base/static/${e.basepath}/entries/${e.slug}"
             val shots = e.screenshots.map { "$entryBase/${Urls.encode(it, "/")}" }
             CatalogEntry(

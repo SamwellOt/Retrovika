@@ -37,6 +37,34 @@ object GameTitles {
 
     fun same(a: String, b: String): Boolean = key(a) == key(b)
 
+    /**
+     * [key] com as vogais longas do japonês romanizado juntas: "Taiyou", "Taiyō", "Taiyoo" e "Taiyo"
+     * ficam iguais. Os sites de ROM escrevem os títulos japoneses de um jeito e a Wikipedia de outro.
+     */
+    fun romajiKey(title: String): String =
+        key(title).replace("ou", "o").replace("oo", "o").replace("uu", "u").replace("aa", "a")
+            // Hepburn tradicional escreve "m" antes de b/m/p ("Shimpan"); o romaji de teclado, "n".
+            .replace(Regex("""m(?=[bmp])"""), "n")
+            // A partícula を aparece como "wo" ou "o".
+            .replace(Regex("""\bwo\b"""), "o")
+
+    /**
+     * Grafias com que buscar um título romanizado: como veio, em Hepburn com mácron ("Taiyou" vira
+     * "Taiyō", como a Wikipedia escreve) e com ": " no lugar de " - " ("Mother 2 - Gyiyg…" vira
+     * "Mother 2: Gyiyg…").
+     */
+    fun romajiVariants(title: String): List<String> {
+        fun hepburn(s: String) = s.replace("ou", "ō").replace("oo", "ō").replace("uu", "ū").replace("Ou", "Ō").replace("Uu", "Ū")
+        val colon = title.replace(" - ", ": ")
+        return listOf(title, hepburn(title), colon, hepburn(colon)).distinct()
+    }
+
+    /**
+     * Mesmo título para os dois jeitos de romanizar e de separar palavras: "Yuki Hime Kyuushutsu" e
+     * "Yukihime Kyūshutsu" são iguais.
+     */
+    fun sameRomaji(a: String, b: String): Boolean =
+        romajiKey(a).replace(" ", "") == romajiKey(b).replace(" ", "")
     private fun words(title: String): List<String> = key(title).split(' ').filter { it.isNotEmpty() }
 
     /** Numeral romano de sequência ("ii", "iv"...): palavra a mais com ele é outro jogo da série. */
@@ -143,6 +171,9 @@ object Platforms {
         "pico8" to Match(setOf("pico-8"), setOf("pico 8")),
         "arduboy" to Match(setOf("arduboy"), setOf("arduboy")),
     )
+
+    /** O console tem plataformas conhecidas no Backloggd/IGDB (senão não há como conferir a plataforma). */
+    fun knows(systemId: String): Boolean = systemId in bySystem
 
     /** Verdadeiro se alguma plataforma do jogo ([slugs] dos links ou [names] exibidos) é do console [systemId]. */
     fun matches(systemId: String, slugs: Collection<String>, names: Collection<String>): Boolean {

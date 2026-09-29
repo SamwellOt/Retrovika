@@ -83,10 +83,20 @@ internal fun ControlsTab(menu: MenuActions, profile: PadProfile, settings: AppSe
     fun update(p: PadProfile) = menu.setPadProfile(p)
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Text(
-                stringResource(R.string.pad_profile_scope, systemName),
-                style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
-            )
+            val forGame = menu.padForGame()
+            Column {
+                Text(stringResource(R.string.pad_scope_title), style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectChip(stringResource(R.string.pad_scope_game), forGame, onClick = { menu.setPadForGame(true) })
+                    SelectChip(stringResource(R.string.pad_scope_console, systemName), !forGame, onClick = { menu.setPadForGame(false) })
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (forGame) stringResource(R.string.pad_scope_game_hint, systemName) else stringResource(R.string.pad_profile_scope, systemName),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                )
+            }
         }
         item {
             ToggleRow(
@@ -141,7 +151,7 @@ internal fun ControlsTab(menu: MenuActions, profile: PadProfile, settings: AppSe
             TextButton(onClick = { update(PadProfile()) }) {
                 Icon(Icons.Rounded.RestartAlt, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.pad_reset_console))
+                Text(stringResource(if (menu.padForGame()) R.string.pad_reset_game else R.string.pad_reset_console))
             }
         }
     }

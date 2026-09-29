@@ -39,4 +39,9 @@
     <string name="settings_pad_profiles">Controle por console</string>
     <string name="settings_pad_profiles_subtitle">Cada console pode ter seu próprio controle na tela (oculto, tamanho, posição dos botões). Ajuste no menu do jogo › Controle.</string>
     <string name="settings_pad_profiles_reset">Restaurar todos (%d)</string>
+    <string name="pad_scope_title">Controle de</string>
+    <string name="pad_scope_game">Só este jogo</string>
+    <string name="pad_scope_console">Todos os jogos de %s</string>
+    <string name="pad_scope_game_hint">Este jogo tem um layout próprio. Os outros jogos de %s continuam com o do console.</string>
+    <string name="pad_reset_game">Restaurar o controle padrão neste jogo</string>
 </resources>

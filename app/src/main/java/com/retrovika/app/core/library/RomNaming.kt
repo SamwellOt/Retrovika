@@ -6,27 +6,29 @@ import com.retrovika.app.core.systems.Systems
 
 object RomNaming {
     private val tagRegex = Regex("""\s*[\(\[][^)\]]*[\)\]]""")
+    private val articleSuffixRegex = Regex("""^(.*), (The|A|An|O|Os|As)$""")
+    private val unsafeFileChars = Regex("""[&*/:`<>?\\|"]""")
     private val regionRegex = Regex("""\((USA|Europe|Japan|World|Brazil|Korea|China|Asia|Australia|France|Germany|Spain|Italy)(?=[,)])[^)]*\)""", RegexOption.IGNORE_CASE)
 
     /** "Final Fantasy VII (USA) (Disc 1) [!]" -> "Final Fantasy VII" */
     fun cleanTitle(rawName: String): String {
         val cleaned = rawName.replace(tagRegex, "").replace('_', ' ').trim()
         // "Legend of Zelda, The" -> "The Legend of Zelda"
-        val articleSuffix = Regex("""^(.*), (The|A|An|O|Os|As)$""").find(cleaned)
+        val articleSuffix = articleSuffixRegex.find(cleaned)
         return (articleSuffix?.let { "${it.groupValues[2]} ${it.groupValues[1]}" } ?: cleaned).ifBlank { rawName }
     }
 
     fun region(rawName: String): String? = regionRegex.find(rawName)?.groupValues?.get(1)?.let {
         when (it.lowercase()) {
             "usa" -> "EUA"; "europe" -> "Europa"; "japan" -> "Japão"; "world" -> "Mundo"
-            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; else -> it
+            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; "australia" -> "Austrália"; else -> it
         }
     }
 
     /** Capa automática do repositório libretro-thumbnails (nomes No-Intro/Redump). */
     fun coverUrl(system: GameSystem, rawName: String): String? {
         val db = system.libretroDbName ?: return null
-        val sanitized = rawName.replace(Regex("""[&*/:`<>?\\|"]"""), "_")
+        val sanitized = rawName.replace(unsafeFileChars, "_")
         return "https://thumbnails.libretro.com/${Uri.encode(db)}/Named_Boxarts/${Uri.encode(sanitized)}.png"
     }
 

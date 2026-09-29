@@ -1,8 +1,10 @@
 package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.HttpStatusException
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.WebFetcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -36,19 +38,35 @@ class BackloggdClient(
         "Accept-Language" to "en-US,en;q=0.9",
     )
 
-    /** Depois da primeira verificação, os pedidos vão direto pelo WebView (o OkHttp só levaria outro 403). */
+    /**
+     * Até quando os pedidos vão direto pelo WebView depois de uma verificação (o OkHttp só levaria outro
+     * 403). Expira: a CDN só pede a verificação a alguns IPs, e a rede do aparelho muda.
+     */
     @Volatile
-    private var viaWeb = false
+    private var viaWebUntil = 0L
 
-    /** GET pelo OkHttp; se a CDN pedir a verificação (403), passa a usar o WebView. */
+    /** GET pelo OkHttp; se a CDN pedir a verificação (403), passa a usar o WebView por um tempo. */
     private suspend fun get(url: String): String {
         val fetch = web
-        if (viaWeb && fetch != null) return fetch(url)
+        if (fetch != null && System.currentTimeMillis() < viaWebUntil) {
+            try {
+                return fetch(url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // O WebView falhou: volta ao OkHttp e tenta uma vez por ele (a CDN pode ter liberado o IP).
+                // Se vier outra verificação, o próximo pedido cai no caminho abaixo e reabre o WebView.
+                viaWebUntil = 0L
+                return Http.getString(url, headers)
+            }
+        }
         return try {
             Http.getString(url, headers)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (fetch == null || !WebFetcher.isChallenge(e)) throw e
-            viaWeb = true
+            viaWebUntil = System.currentTimeMillis() + VIA_WEB_MS
             fetch(url)
         }
     }
@@ -64,7 +82,22 @@ class BackloggdClient(
      * não lista, como o "Sonic the Hedgehog 2" de PS1): é o original, melhor que não mostrar nada.
      */
     suspend fun find(title: String, systemId: String, igdbSlug: String? = null): BackloggdInfo? {
-        igdbSlug?.let { slug -> runCatching { game(slug) }.getOrNull()?.let { return it } }
+        // O slug vem do Wikidata, que pode apontar outra versão (a de outro console): só vale se o
+        // console bate; senão segue pela busca por título, que escolhe entre as versões.
+        var slugFailure: Exception? = null
+        igdbSlug?.let { slug ->
+            val bySlug = catching { game(slug) }
+            // 404 é "não existe"; outra falha (rede, verificação da CDN) não pode virar "não encontrado"
+            // se a busca por título também não achar, senão ficaria 15 minutos no cache.
+            bySlug.exceptionOrNull()?.let { e -> if (e !is HttpStatusException || e.code != 404) slugFailure = e as? Exception }
+            bySlug.getOrNull()
+                ?.takeIf { !Platforms.knows(systemId) || Platforms.matches(systemId, emptyList(), it.platforms) }
+                ?.let { return it }
+        }
+        return byTitle(title, systemId) ?: slugFailure?.let { throw it }
+    }
+
+    private suspend fun byTitle(title: String, systemId: String): BackloggdInfo? {
         val clean = GameTitles.clean(title).ifBlank { return null }
         var ranked = emptyList<Ranked>()
         for (query in GameTitles.searchQueries(clean)) {
@@ -93,7 +126,8 @@ class BackloggdClient(
      */
     internal fun rank(title: String, suggestions: List<Suggestion>): List<Ranked> =
         suggestions.distinctBy { it.slug }
-            .mapNotNull { s -> GameTitles.extraWords(title, s.title)?.let { Ranked(s, it) } }
+            // Romaji escrito de outro jeito ("Taiyou" / "Taiyō", "Yuki Hime" / "Yukihime") conta como idêntico.
+            .mapNotNull { s -> (GameTitles.extraWords(title, s.title) ?: 0.takeIf { GameTitles.sameRomaji(title, s.title) })?.let { Ranked(s, it) } }
             .sortedWith(compareBy<Ranked> { it.extra }.thenBy(nullsLast<Int>()) { it.suggestion.year })
 
     /**
@@ -101,7 +135,7 @@ class BackloggdClient(
      * título repetido. Página que falha fica nula e o erro vai para [errors].
      */
     private suspend fun load(candidates: List<Ranked>, errors: MutableList<Throwable>): List<Pair<String, Document?>> {
-        val results = coroutineScope { candidates.map { c -> async { runCatching { page(c.suggestion.slug) } } }.awaitAll() }
+        val results = coroutineScope { candidates.map { c -> async { catching { page(c.suggestion.slug) } } }.awaitAll() }
         results.forEach { r -> r.exceptionOrNull()?.let(errors::add) }
         return candidates.zip(results) { c, r -> c.suggestion.slug to r.getOrNull() }
     }
@@ -133,10 +167,20 @@ class BackloggdClient(
 
     /** As reviews chegam por um pedido à parte (o site as carrega depois da página). */
     private suspend fun BackloggdInfo.withReviews(): BackloggdInfo {
-        val reviews = runCatching {
+        val reviews = catching {
             parseReviews(get("$base/reviews/preview/${Urls.encode(slug)}/?sort_by=trending"))
-        }.getOrDefault(emptyList())
-        return copy(reviews = reviews.take(MAX_REVIEWS))
+        }
+        // Sem as reviews a página ainda serve; reviewsFailed evita guardar no cache esse resultado incompleto.
+        return copy(reviews = reviews.getOrDefault(emptyList()).take(MAX_REVIEWS), reviewsFailed = reviews.isFailure)
+    }
+
+    /** Como runCatching, mas o cancelamento (a página fechou) segue adiante em vez de virar falha. */
+    private inline fun <T> catching(block: () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     internal fun parseGame(html: String, slug: String): BackloggdInfo = parseGame(Jsoup.parse(html, base), slug)
@@ -214,5 +258,6 @@ class BackloggdClient(
     private companion object {
         const val MAX_CANDIDATES = 4
         const val MAX_REVIEWS = 6
+        const val VIA_WEB_MS = 10 * 60 * 1000L
     }
 }

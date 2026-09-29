@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -54,6 +55,7 @@ import coil3.compose.AsyncImage
 import com.retrovika.app.container
 import com.retrovika.app.core.dat.DatRepository
 import com.retrovika.app.core.library.GameSource
+import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
@@ -85,15 +87,22 @@ import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.screens.home.formatPlayTime
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.library.Versions
+import com.retrovika.app.core.settings.uiLanguage
+import com.retrovika.app.ui.screens.library.label
+import com.retrovika.app.ui.components.Badge
+import androidx.compose.material.icons.rounded.Star
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit) {
+fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit, onOpenVersions: (String) -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val scope = rememberCoroutineScope()
@@ -165,7 +174,7 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
             )
             if (system != null) {
                 // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
-                val preferred by remember(system.id) { app.settings.coreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
+                val preferred by remember(system.id) { app.settings.effectiveCoreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
                 preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
             }
             Spacer(Modifier.height(16.dp))
@@ -211,6 +220,8 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                     }
                 }
             }
+
+            LibraryVersions(g, onOpenGame = onOpenGame, onOpenAll = { onOpenVersions(g.systemId) })
 
             if (app.dat.supports(g.systemId)) {
                 Spacer(Modifier.height(24.dp))
@@ -324,6 +335,48 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
     }
 }
 
+/** Outras versões deste jogo na biblioteca, com a recomendada marcada; tocar abre a página dela. */
+@Composable
+private fun LibraryVersions(game: Game, onOpenGame: (Long) -> Unit, onOpenAll: () -> Unit) {
+    val context = LocalContext.current
+    val app = context.container
+    val all by remember(game.systemId) { app.library.bySystem(game.systemId) }.collectAsStateWithLifecycle(emptyList())
+    val language = remember { context.uiLanguage() }
+    val computed by produceState<Versions.Group?>(null, all, game, language) {
+        value = withContext(Dispatchers.Default) { Versions.groupOf(game, all, language) }
+    }
+    val group = computed ?: return
+    Spacer(Modifier.height(24.dp))
+    SectionHeader(stringResource(R.string.details_library_versions), action = stringResource(R.string.details_library_versions_all), onAction = onOpenAll)
+    Spacer(Modifier.height(6.dp))
+    group.all.forEach { rated ->
+        val current = rated.game.id == game.id
+        Row(
+            Modifier.fillMaxWidth()
+                .clickable(enabled = !current) { onOpenGame(rated.game.id) }
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (rated === group.best) Icons.Rounded.Star else Icons.AutoMirrored.Rounded.InsertDriveFile, null,
+                tint = if (rated === group.best) Palette.Sun else Palette.TextMuted, modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    rated.game.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = if (current) Palette.TextPrimary else Palette.TextSecondary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 3.dp)) {
+                    if (rated === group.best) Badge(stringResource(R.string.versions_recommended), Palette.Sun)
+                    if (current) Badge(stringResource(R.string.details_library_versions_this), Palette.Neon)
+                    rated.tags.take(2).forEach { Badge(stringResource(it.label()), Palette.Cyan) }
+                }
+            }
+        }
+    }
+}
+
 /** Avisa quando o núcleo que vai rodar o jogo ainda não está instalado, com opção de instalar já. */
 @Composable
 private fun CoreNotice(core: CoreInfo) {
@@ -331,8 +384,11 @@ private fun CoreNotice(core: CoreInfo) {
     val states by app.cores.states.collectAsStateWithLifecycle()
     val state = states[core.id] ?: CoreState.NotInstalled
     // needsInstall confere o .so e os pacotes de sistema no disco: refeito só quando o tipo de estado
-    // muda (instalado, falhou…), não a cada aviso de progresso do download.
-    val missing = remember(state::class, core.id) { app.cores.needsInstall(core) }
+    // muda (instalado, falhou…), não a cada aviso de progresso do download. Fora da thread principal:
+    // começa como "não falta" para o aviso não piscar enquanto o disco é lido.
+    val missing by produceState(false, state::class, core.id) {
+        value = withContext(Dispatchers.IO) { app.cores.needsInstall(core) }
+    }
     if (!missing && state !is CoreState.Downloading) return
     Row(
         Modifier

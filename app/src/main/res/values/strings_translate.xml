@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tradução ao vivo da tela do jogo. -->
+<resources>
+    <string name="translate_button">Translate screen</string>
+    <string name="translate_screen">Translate the screen</string>
+    <string name="translate_reading">Reading the text on screen…</string>
+    <string name="translate_downloading">Downloading the translation model (first time only)…</string>
+    <string name="translate_translating">Translating…</string>
+    <string name="translate_nothing">No text to translate on this screen.</string>
+    <string name="translate_hint">Tap a box to see the original and the full translation. Tap outside to go back to the game.</string>
+    <string name="translate_failed">Couldn\'t translate: %1$s</string>
+    <string name="translate_close">Back to the game</string>
+    <string name="settings_translate_everywhere">Translate button in every game</string>
+    <string name="settings_translate_everywhere_subtitle">By default it shows up only in Japanese games. Reads the screen and translates on the device; without Google services, the text goes to Google Translate.</string>
+</resources>

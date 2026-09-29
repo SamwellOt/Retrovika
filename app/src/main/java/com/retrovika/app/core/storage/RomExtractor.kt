@@ -40,7 +40,8 @@ object RomExtractor {
         try {
             val password = if (Archives.needsPassword(archive)) KNOWN_PASSWORDS.first() else null
             val entries = Archives.entries(archive, password)
-            val names = entries.map { it.name }
+            // __MACOSX/._Jogo.cue (metadados do Mac) não é faixa de ninguém: extraído, virava um "jogo" que não abre.
+            val names = entries.map { it.name }.filterNot { name -> name.split('/').any { FileNames.isJunk(it) } }
             val candidates = names.filter { it.substringAfterLast('.').lowercase().let { ext -> ext in system.extensions && ext !in ARCHIVE_EXTS } }
             val main = candidates.minByOrNull { SHEET_PRIORITY.indexOf(it.substringAfterLast('.').lowercase()).let { i -> if (i < 0) SHEET_PRIORITY.size else i } }
                 ?: return archive
@@ -57,14 +58,20 @@ object RomExtractor {
                 ?: throw LocalizedException(R.string.download_extract_failed, main.substringAfterLast('/'))
         } catch (t: Throwable) {
             archive.delete()
-            throw when (t) {
-                is LocalizedException -> t
-                is OutOfMemoryError, is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
-                is PasswordRequiredException -> LocalizedException(R.string.download_archive_password, archive.name)
-                is ZipException -> if (t.type == ZipException.Type.WRONG_PASSWORD) LocalizedException(R.string.download_archive_password, archive.name)
+            throw when {
+                t is LocalizedException -> t
+                // Disco cheio no meio da extração: a mensagem própria diz o motivo real.
+                isNoSpace(t) -> LocalizedException(R.string.common_error_no_space)
+                t is OutOfMemoryError || t is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
+                t is PasswordRequiredException -> LocalizedException(R.string.download_archive_password, archive.name)
+                t is ZipException -> if (t.type == ZipException.Type.WRONG_PASSWORD) LocalizedException(R.string.download_archive_password, archive.name)
                     else LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
                 else -> LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
             }
         }
     }
+
+    /** Mesmo critério do Throwable.userMessage (ENOSPC), olhando também as causas encadeadas. */
+    internal fun isNoSpace(t: Throwable): Boolean =
+        generateSequence(t) { it.cause }.take(8).any { e -> e.message.orEmpty().let { "ENOSPC" in it || "No space left" in it } }
 }
