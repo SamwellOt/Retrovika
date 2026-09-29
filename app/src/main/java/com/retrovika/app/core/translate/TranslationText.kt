@@ -36,6 +36,57 @@ object TranslationText {
         }
     }
 
+    /**
+     * Junta as linhas do OCR em trechos (um balão de diálogo, uma placa): linhas de altura parecida, uma logo
+     * abaixo da outra e alinhadas. Linhas curtas ficam sozinhas, porque em menus cada item é uma opção
+     * ("つづきから" / "はじめから"); juntar faria o tradutor ler uma frase sem sentido.
+     */
+    fun groupLines(lines: List<OcrLine>): List<OcrBlock> {
+        val sorted = lines.filter { !it.box.isEmpty && it.text.isNotBlank() }
+            .sortedWith(compareBy({ it.box.top }, { it.box.left }))
+        val groups = mutableListOf<MutableList<OcrLine>>()
+        for (line in sorted) {
+            val group = if (line.vertical) null else groups.lastOrNull { canJoin(it, line) }
+            if (group != null) group += line else groups += mutableListOf(line)
+        }
+        return groups.map { group ->
+            val box = group.drop(1).fold(group.first().box) { acc, l -> acc.union(l.box) }
+            OcrBlock(box, joinLines(group.map { it.text }), group)
+        }
+    }
+
+    private fun canJoin(group: List<OcrLine>, line: OcrLine): Boolean {
+        val upper = group.last()
+        if (upper.vertical) return false
+        val low = minOf(upper.box.height, line.box.height).coerceAtLeast(1)
+        val high = maxOf(upper.box.height, line.box.height)
+        if (high > low * 1.6f) return false
+        val gap = line.box.top - upper.box.bottom
+        if (gap > high * 0.9f || gap < -high * 0.5f) return false
+        val groupBox = group.drop(1).fold(group.first().box) { acc, l -> acc.union(l.box) }
+        val xOverlap = minOf(groupBox.right, line.box.right) - maxOf(groupBox.left, line.box.left)
+        if (xOverlap <= 0 && kotlin.math.abs(line.box.left - groupBox.left) > high * 2) return false
+        // Linha de cima comprida: é texto corrido que quebrou. Curta: item de menu.
+        val chars = upper.text.count { !it.isWhitespace() }
+        return if (hasJapanese(upper.text)) chars >= 6 else chars >= 12
+    }
+
+    /** Linha que é só pontuação, números ou um sinal solto (ícones e bordas que o OCR leu como letra). */
+    fun isNoise(text: String): Boolean {
+        val meaningful = text.count { it.isLetter() }
+        return meaningful == 0 || (meaningful == 1 && !hasJapanese(text))
+    }
+
+    /**
+     * Fator inteiro de ampliação do quadro nativo antes do OCR: letras de pixel com 8 a 16 px de altura são
+     * pequenas demais para os reconhecedores. Ampliar pelo vizinho mais próximo mantém as bordas nítidas.
+     */
+    fun upscaleFor(width: Int, height: Int, targetHeight: Int = 720, maxWidth: Int = 2048): Int {
+        if (width <= 0 || height <= 0 || height >= targetHeight * 3 / 4) return 1
+        val wanted = (targetHeight + height - 1) / height
+        return wanted.coerceAtMost((maxWidth / width).coerceAtLeast(1)).coerceAtLeast(1)
+    }
+
     /** Resposta do tradutor web (`translate_a/single?client=gtx&dt=t`): a tradução de cada frase, em ordem. */
     fun parseWebResponse(body: String): String? = runCatching {
         val root = Json.parseToJsonElement(body).jsonArray

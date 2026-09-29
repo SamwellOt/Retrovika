@@ -15,6 +15,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.cores.SystemBenchmark
+import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.emulation.input.PadProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -66,6 +67,9 @@ data class AppSettings(
     val gameSort: GameSort = GameSort.TITLE,
     /** Botão de tradução ao vivo em todos os jogos; sem isso, só nos japoneses. */
     val translateEverywhere: Boolean = false,
+    /** Chave do Gemini (Google AI Studio) do usuário: com ela, a tradução da tela usa IA. */
+    val geminiKey: String? = null,
+    val geminiModel: String = GeminiText.DEFAULT_MODEL,
     /** Na primeira vez que um console roda, testa os núcleos dele e escolhe o ideal para o aparelho. */
     val autoBenchmark: Boolean = true,
     /** Procura uma versão nova do app ao abrir. */
@@ -94,6 +98,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val coverSize = stringPreferencesKey("cover_size")
         val gameSort = stringPreferencesKey("game_sort")
         val translateEverywhere = booleanPreferencesKey("translate_everywhere")
+        val geminiKey = stringPreferencesKey("gemini_key")
+        val geminiModel = stringPreferencesKey("gemini_model")
         val autoBenchmark = booleanPreferencesKey("auto_benchmark")
         fun benchmark(systemId: String) = stringPreferencesKey("bench_$systemId")
         val checkUpdates = booleanPreferencesKey("check_updates")
@@ -129,6 +135,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
             translateEverywhere = p[Keys.translateEverywhere] ?: false,
+            geminiKey = p[Keys.geminiKey]?.takeIf { it.isNotBlank() },
+            geminiModel = p[Keys.geminiModel]?.takeIf { it.isNotBlank() } ?: GeminiText.DEFAULT_MODEL,
             autoBenchmark = p[Keys.autoBenchmark] ?: true,
             checkUpdates = p[Keys.checkUpdates] ?: true,
             dismissedUpdate = p[Keys.dismissedUpdate],
@@ -165,6 +173,14 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
     suspend fun setTranslateEverywhere(v: Boolean) = set(Keys.translateEverywhere, v)
+    suspend fun setGeminiKey(v: String) = context.dataStore.edit { p ->
+        val value = v.trim()
+        if (value.isEmpty()) p.remove(Keys.geminiKey) else p[Keys.geminiKey] = value
+    }
+    suspend fun setGeminiModel(v: String) = context.dataStore.edit { p ->
+        val value = v.trim()
+        if (value.isEmpty()) p.remove(Keys.geminiModel) else p[Keys.geminiModel] = value
+    }
     suspend fun setAutoBenchmark(v: Boolean) = set(Keys.autoBenchmark, v)
     suspend fun setCheckUpdates(v: Boolean) = set(Keys.checkUpdates, v)
     suspend fun setDismissedUpdate(version: String) = set(Keys.dismissedUpdate, version)
