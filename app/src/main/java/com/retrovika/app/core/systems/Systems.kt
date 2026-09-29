@@ -139,6 +139,8 @@ object Systems {
             ),
             layout = PadLayouts.NDS, accent = 0xFFD32F2F, orientation = Orientation.PORTRAIT,
             libretroDbName = "Nintendo - Nintendo 3DS", experimental = true,
+            // .app é nome de programa/pacote comum demais: só dentro de uma pasta "3ds".
+            folderOnlyExtensions = setOf("app"),
         ),
         GameSystem(
             id = "gc", name = "GameCube", shortName = "GC",
@@ -192,6 +194,8 @@ object Systems {
                 BiosFile("scph5502.bin", R.string.bios_scph5502_bin, "32736f17079d0b2b7024407c39bd3050", required = false),
             ),
             multiDisc = true,
+            // .img também é imagem de disquete/cartão SD/firmware: só dentro de uma pasta "psx".
+            folderOnlyExtensions = setOf("img"),
         ),
         GameSystem(
             id = "ps2", name = "PlayStation 2", shortName = "PS2",
@@ -362,6 +366,8 @@ object Systems {
             layout = PadLayouts.HANDHELD_2, accent = 0xFFF9A825,
             libretroDbName = "Atari - Lynx",
             bios = listOf(BiosFile("lynxboot.img", R.string.bios_lynxboot_img, "fcd403db69f54290b51035d82f835e7b", required = false)),
+            // .o é arquivo objeto de compilador: só dentro de uma pasta "lynx".
+            folderOnlyExtensions = setOf("o"),
         ),
         GameSystem(
             id = "ngp", name = "Neo Geo Pocket / Color", shortName = "NGP",
@@ -566,6 +572,8 @@ object Systems {
             cores = listOf(CoreInfo("arduous", "Arduous", R.string.core_arduous), CoreInfo("ardens", "Ardens", R.string.core_ardens)),
             layout = PadLayouts.TWO_BUTTONS, accent = 0xFF26C6DA,
             libretroDbName = "Arduboy Inc - Arduboy",
+            // .hex é o formato Intel HEX de qualquer microcontrolador: só dentro de uma pasta "arduboy".
+            folderOnlyExtensions = setOf("hex"),
         ),
 
         // ---- Computadores ----
@@ -631,6 +639,8 @@ object Systems {
             cores = listOf(CoreInfo("dosbox_pure", "DOSBox Pure", R.string.core_dosbox_pure)),
             layout = PadLayouts.COMPUTER, accent = 0xFF607D8B,
             libretroDbName = "DOS", keepArchives = true,
+            // .com/.bat/.conf aparecem em qualquer pasta de programas: só dentro de uma pasta "dos".
+            folderOnlyExtensions = setOf("com", "bat", "conf"),
         ),
 
         // ---- Consoles de fantasia ----

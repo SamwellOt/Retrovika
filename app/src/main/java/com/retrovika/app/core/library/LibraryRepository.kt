@@ -147,21 +147,30 @@ class LibraryRepository(
         lastProgress = 0L
         val found = mutableListOf<Game>()
         try {
-            filesLock.withLock { scanInternal(found) }
+            // Arquivos de `roms/` que a varredura viu e julgou auxiliares (o .bin de um .cue importado depois).
+            val auxiliary = HashSet<String>()
+            // Retrato do banco tirado junto com a varredura, sob a mesma trava: um download cadastrado depois
+            // dela não está aqui e não corre o risco de ser tomado por auxiliar.
+            val before = filesLock.withLock {
+                dao.allUris().toSet().also { scanInternal(found, auxiliary) }
+            }
             val hidden = settings.current().hiddenGames
             // Pastas que não puderam ser lidas (permissão revogada, cartão SD removido…) mantêm os
             // jogos na biblioteca; senão, favoritos e tempo de jogo seriam apagados por engano.
             val unreadable = mutableListOf<String>()
+            // Pastas vinculadas uma dentro da outra veem os mesmos documentos: cada um entra uma vez só.
+            val seenDocs = HashSet<String>()
             settings.current().linkedFolders.forEach { tree ->
-                runCatching { scanTree(Uri.parse(tree), found) }.onFailure { unreadable += tree }
+                runCatching { scanTree(Uri.parse(tree), found, seenDocs) }.onFailure { unreadable += tree }
             }
             val existing = dao.allUris().toSet()
             val foundUris = found.map { it.uri }.toSet()
             dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden })
-            // Remove apenas entradas locais cujo arquivo realmente sumiu.
+            // Remove entradas cujo arquivo realmente sumiu e as internas que viraram auxiliares
+            // (o arquivo continua lá, como faixa de outro jogo; só a entrada sai).
             val missing = existing.filter { uri ->
                 uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
-                    (uri.startsWith("content://") || !File(uri).exists())
+                    (uri.startsWith("content://") || !File(uri).exists() || (uri in auxiliary && uri in before))
             }
             // Em lotes: o SQLite do Android 8–10 aceita no máximo 999 parâmetros por comando.
             missing.chunked(500).forEach { dao.deleteByUris(it) }
@@ -170,16 +179,18 @@ class LibraryRepository(
         }
     }
 
-    private fun scanInternal(out: MutableList<Game>) {
+    private fun scanInternal(out: MutableList<Game>, auxiliaryOut: MutableSet<String>) {
         Systems.all.forEach { system ->
             val dir = File(paths.roms, system.id)
             if (!dir.exists()) return@forEach
             val folders = dir.walkTopDown().maxDepth(3).filter { it.isDirectory }.toList()
             // Primeiro lê todos os índices (.cue/.gdi/.m3u/.ccd): um .m3u pode citar discos em subpastas.
+            // Só os que este console abre: um .ccd na pasta do PS1 (que não lê .ccd) esconderia o .img
+            // que o PS1 abre, e o jogo sumiria.
             val referenced = HashSet<String>()
             val unreadable = HashSet<File>()
             folders.forEach { folder ->
-                folder.listFiles()?.filter { it.isFile && it.extension.lowercase() in GameFiles.SHEET_EXTENSIONS }?.forEach { sheet ->
+                folder.listFiles()?.filter { it.isFile && isPlayableSheet(it.extension.lowercase(), system) }?.forEach { sheet ->
                     runCatching { sheet.readText() }
                         .onSuccess { text ->
                             GameFiles.referencedPaths(sheet.extension.lowercase(), text, sheet.name)
@@ -190,15 +201,21 @@ class LibraryRepository(
             }
             folders.forEach { folder ->
                 val files = folder.listFiles()?.filter { it.isFile }.orEmpty()
-                val siblings = files.map { it.name.lowercase() }.toSet()
+                // Índices que o console não abre também ficam fora da heurística por nome.
+                val siblings = files.map { it.name.lowercase() }
+                    .filter { name -> name.substringAfterLast('.', "").let { it !in GameFiles.SHEET_EXTENSIONS || isPlayableSheet(it, system) } }
+                    .toSet()
                 files.forEach { file ->
                     val ext = file.extension.lowercase()
+                    if (ext !in system.extensions) return@forEach
                     val auxiliary = RomNaming.isAuxiliaryFile(
                         file.name, siblings,
                         referenced = GameFiles.isReferenced(file.path.lowercase(), referenced),
                         sheetsKnown = folder !in unreadable,
                     )
-                    if (ext in system.extensions && !auxiliary) {
+                    if (auxiliary) {
+                        auxiliaryOut += file.absolutePath
+                    } else {
                         out += buildGame(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED)
                         progress(out.size, file.name)
                     }
@@ -207,8 +224,15 @@ class LibraryRepository(
         }
     }
 
-    /** Varredura rápida de uma árvore SAF usando DocumentsContract (bem mais veloz que DocumentFile). */
-    private fun scanTree(treeUri: Uri, out: MutableList<Game>) {
+    /** Índice (.cue/.ccd/…) que [system] abre como jogo; os outros não escondem as faixas que citam. */
+    private fun isPlayableSheet(ext: String, system: GameSystem) = ext in GameFiles.SHEET_EXTENSIONS && ext in system.extensions
+
+    /**
+     * Varredura rápida de uma árvore SAF usando DocumentsContract (bem mais veloz que DocumentFile).
+     * [seenDocs] guarda "autoridade + id do documento" dos arquivos já cadastrados por outra árvore
+     * vinculada (uma pasta dentro da outra), para o mesmo arquivo não virar dois jogos.
+     */
+    private fun scanTree(treeUri: Uri, out: MutableList<Game>, seenDocs: MutableSet<String>) {
         val rootId = DocumentsContract.getTreeDocumentId(treeUri)
         val rootName = rootId.substringAfterLast('/').substringAfterLast(':')
         val queue = ArrayDeque(listOf(rootId to listOf(rootName)))
@@ -242,7 +266,12 @@ class LibraryRepository(
             } ?: throw IOException("Pasta inacessível: $docId")
             val folderKey = folders.joinToString("/")
             var sheetsKnown = true
-            entries.filter { it.second.substringAfterLast('.', "").lowercase() in GameFiles.SHEET_EXTENSIONS }.forEach { (id, name, size) ->
+            // Só índices que algum console abre nesta pasta: um .ccd na pasta "psx" (o PS1 não lê .ccd)
+            // não pode esconder o .img que o PS1 abre.
+            val sheets = entries.filter { (_, name, _) ->
+                name.substringAfterLast('.', "").lowercase() in GameFiles.SHEET_EXTENSIONS && RomNaming.resolveSystem(name, folders) != null
+            }
+            sheets.forEach { (id, name, size) ->
                 val text = if (size in 0..MAX_SHEET_BYTES) runCatching {
                     resolver.openInputStream(DocumentsContract.buildDocumentUriUsingTree(treeUri, id))?.bufferedReader()?.use { it.readText() }
                 }.getOrNull() else null
@@ -250,11 +279,16 @@ class LibraryRepository(
                 GameFiles.referencedPaths(name.substringAfterLast('.').lowercase(), text, name)
                     .forEach { referenced += "$folderKey/$it".lowercase() }
             }
-            val siblings = entries.map { it.second.lowercase() }.toSet()
+            val sheetNames = sheets.map { it.second }.toSet()
+            // Índices que nenhum console abre aqui também ficam fora da heurística por nome.
+            val siblings = entries.map { it.second }
+                .filter { it.substringAfterLast('.', "").lowercase() !in GameFiles.SHEET_EXTENSIONS || it in sheetNames }
+                .map { it.lowercase() }.toSet()
             entries.forEach { (id, name, size) ->
                 val isReferenced = GameFiles.isReferenced("$folderKey/$name".lowercase(), referenced)
                 if (RomNaming.isAuxiliaryFile(name, siblings, isReferenced, sheetsKnown)) return@forEach
                 val system = RomNaming.resolveSystem(name, folders) ?: return@forEach
+                if (!seenDocs.add("${treeUri.authority}\u0000$id")) return@forEach
                 val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id).toString()
                 out += buildGame(system, name, uri, size, GameSource.LOCAL)
                 progress(out.size, name)
@@ -310,7 +344,7 @@ class LibraryRepository(
             try {
                 val input = resolver.openInputStream(uri) ?: throw LocalizedException(R.string.system_import_unreadable)
                 input.use { stream -> part.outputStream().use { stream.copyTo(it) } }
-                if (!part.renameTo(dest)) throw IOException("rename ${part.name}")
+                if (!part.renameTo(dest)) throw LocalizedException(R.string.system_import_rename_failed, name)
                 val file = if (Archives.isArchive(dest) && !system.keepArchives) {
                     writingRoms { RomExtractor.extract(dest, dest.parentFile!!, system) }
                 } else dest

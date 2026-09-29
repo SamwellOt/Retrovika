@@ -81,6 +81,26 @@ class ArchivesTest {
     }
 
     @Test
+    fun `falha no meio nao trunca a rom que ja existia`() {
+        val archive = zip("ruim.zip", mapOf("a.bin" to "novo", "../fora.bin" to "x"))
+        val dest = tmp.newFolder("roms3")
+        val old = File(dest, "a.bin").apply { writeText("antigo") }
+        assertThrows(Exception::class.java) { Archives.extract(archive, dest, setOf("a.bin", "../fora.bin")) }
+        assertEquals("antigo", old.readText())
+        assertTrue(dest.listFiles().orEmpty().none { it.name.endsWith(Archives.PART_SUFFIX) })
+    }
+
+    @Test
+    fun `sucesso substitui a rom que ja existia`() {
+        val archive = zip("bom.zip", mapOf("a.bin" to "novo"))
+        val dest = tmp.newFolder("roms4")
+        File(dest, "a.bin").writeText("antigo")
+        val out = Archives.extract(archive, dest, setOf("a.bin"))
+        assertEquals("novo", out.getValue("a.bin").readText())
+        assertEquals(listOf("a.bin"), dest.list().orEmpty().toList())
+    }
+
+    @Test
     fun `lista entradas com tamanho`() {
         val archive = zip("rom.zip", mapOf("pasta/" to "", "rom.gba" to "12345"))
         assertEquals(listOf(Archives.Entry("rom.gba", 5)), Archives.entries(archive))

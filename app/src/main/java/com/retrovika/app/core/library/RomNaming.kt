@@ -19,7 +19,7 @@ object RomNaming {
     fun region(rawName: String): String? = regionRegex.find(rawName)?.groupValues?.get(1)?.let {
         when (it.lowercase()) {
             "usa" -> "EUA"; "europe" -> "Europa"; "japan" -> "Japão"; "world" -> "Mundo"
-            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; else -> it
+            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; "australia" -> "Austrália"; else -> it
         }
     }
 

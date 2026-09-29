@@ -48,11 +48,17 @@ object RomExtractor {
                 ?: throw LocalizedException(R.string.download_extract_failed, main.substringAfterLast('/'))
         } catch (t: Throwable) {
             archive.delete()
-            throw when (t) {
-                is LocalizedException -> t
-                is OutOfMemoryError, is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
+            throw when {
+                t is LocalizedException -> t
+                // Disco cheio no meio da extração: a mensagem própria diz o motivo real.
+                isNoSpace(t) -> LocalizedException(R.string.common_error_no_space)
+                t is OutOfMemoryError || t is MemoryLimitException -> LocalizedException(R.string.download_extract_memory, archive.name)
                 else -> LocalizedException(R.string.download_extract_failed, t.message ?: t.javaClass.simpleName)
             }
         }
     }
+
+    /** Mesmo critério do Throwable.userMessage (ENOSPC), olhando também as causas encadeadas. */
+    internal fun isNoSpace(t: Throwable): Boolean =
+        generateSequence(t) { it.cause }.take(8).any { e -> e.message.orEmpty().let { "ENOSPC" in it || "No space left" in it } }
 }

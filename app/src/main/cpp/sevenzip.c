@@ -179,16 +179,29 @@ static Byte lzma2_prop_for(UInt32 dict) {
     return p;
 }
 
-/* Só um codificador Copy/LZMA/LZMA2 por bloco; o resto fica com o commons-compress. */
+/*
+ * Só um codificador Copy/LZMA/LZMA2 por bloco; o resto fica com o commons-compress. As propriedades
+ * também são validadas aqui, antes de gravar qualquer coisa: assim o decode_folder não descobre um
+ * bloco que não decodifica depois de outros blocos já terem sido escritos.
+ */
 static int folder_supported(const CSzArEx *db, UInt32 f) {
     CSzFolder folder;
     CSzData sd;
-    sd.Data = db->db.CodersData + db->db.FoCodersOffsets[f];
+    const Byte *data = db->db.CodersData + db->db.FoCodersOffsets[f];
+    sd.Data = data;
     sd.Size = db->db.FoCodersOffsets[f + 1] - db->db.FoCodersOffsets[f];
     if (SzGetNextFolderItem(&folder, &sd) != SZ_OK) return 0;
     if (folder.NumCoders != 1 || folder.NumPackStreams != 1) return 0;
-    UInt32 m = folder.Coders[0].MethodID;
-    return m == k_Copy || m == k_LZMA || m == k_LZMA2;
+    const CSzCoderInfo *coder = &folder.Coders[0];
+    UInt32 m = coder->MethodID;
+    if (m == k_Copy) return 1;
+    if (m == k_LZMA) {
+        CLzmaProps lp;
+        return coder->PropsSize == LZMA_PROPS_SIZE &&
+               LzmaProps_Decode(&lp, data + coder->PropsOffset, LZMA_PROPS_SIZE) == SZ_OK;
+    }
+    if (m == k_LZMA2) return coder->PropsSize == 1 && data[coder->PropsOffset] <= 40;
+    return 0;
 }
 
 static int folder_wanted(const CSzArEx *db, UInt32 f, const char *const *targets) {
@@ -308,29 +321,47 @@ done:
 
 /* ---- JNI ---- */
 
+/*
+ * Caminho vindo do Kotlin como bytes UTF-8 padrão (String.toByteArray()), terminado em zero aqui.
+ * GetStringUTFChars daria o "UTF-8 modificado" do Java, que codifica caracteres fora do BMP (emoji,
+ * alguns ideogramas) como pares de substitutos: o fopen abriria outro nome. Liberar com free().
+ */
+static char *utf8_path(JNIEnv *env, jbyteArray bytes) {
+    if (!bytes) return NULL;
+    jsize len = (*env)->GetArrayLength(env, bytes);
+    char *s = (char *)malloc((size_t)len + 1);
+    if (!s) return NULL;
+    (*env)->GetByteArrayRegion(env, bytes, 0, len, (jbyte *)s);
+    s[len] = '\0';
+    return s;
+}
+
 /** Nomes das entradas na ordem do arquivo; pastas terminam em "/". Null se não abrir. */
 JNIEXPORT jobjectArray JNICALL
-Java_com_retrovika_app_core_storage_SevenZipNative_list(JNIEnv *env, jclass clazz, jstring jpath) {
+Java_com_retrovika_app_core_storage_SevenZipNative_list(JNIEnv *env, jclass clazz, jbyteArray jpath) {
     (void)clazz;
-    const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
+    char *path = utf8_path(env, jpath);
+    if (!path) return NULL;
     Archive a;
     int r = archive_open(&a, path);
-    (*env)->ReleaseStringUTFChars(env, jpath, path);
+    free(path);
     jobjectArray names = NULL;
     if (r == SZ7_OK) {
         jclass stringClass = (*env)->FindClass(env, "java/lang/String");
         names = (*env)->NewObjectArray(env, (jsize)a.db.NumFiles, stringClass, NULL);
         UInt16 *buf = NULL;
         size_t bufLen = 0;
+        /* 7z feito da entrada padrão ("7z a -si") não tem nomes: FileNameOffsets fica NULL e os nomes vêm vazios. */
+        int hasNames = a.db.FileNameOffsets != NULL;
         for (UInt32 i = 0; names && i < a.db.NumFiles; i++) {
-            size_t len = SzArEx_GetFileNameUtf16(&a.db, i, NULL);
+            size_t len = hasNames ? SzArEx_GetFileNameUtf16(&a.db, i, NULL) : 0;
             if (len + 1 > bufLen) {
                 free(buf);
                 bufLen = len + 1;
                 buf = (UInt16 *)malloc(bufLen * sizeof(UInt16));
                 if (!buf) { names = NULL; break; }
             }
-            SzArEx_GetFileNameUtf16(&a.db, i, buf);
+            if (hasNames) SzArEx_GetFileNameUtf16(&a.db, i, buf);
             size_t n = len > 0 ? len - 1 : 0; /* sem o terminador */
             if (SzArEx_IsDir(&a.db, i)) buf[n++] = '/';
             jstring s = (*env)->NewString(env, (const jchar *)buf, (jsize)n);
@@ -345,27 +376,32 @@ Java_com_retrovika_app_core_storage_SevenZipNative_list(JNIEnv *env, jclass claz
 
 /** Extrai as entradas cujo destino em [jtargets] (mesmo índice de list) não é null. Devolve um SZ7_*. */
 JNIEXPORT jint JNICALL
-Java_com_retrovika_app_core_storage_SevenZipNative_extract(JNIEnv *env, jclass clazz, jstring jpath, jobjectArray jtargets) {
+Java_com_retrovika_app_core_storage_SevenZipNative_extract(JNIEnv *env, jclass clazz, jbyteArray jpath, jobjectArray jtargets) {
     (void)clazz;
-    const char *path = (*env)->GetStringUTFChars(env, jpath, NULL);
+    char *path = utf8_path(env, jpath);
+    if (!path) return SZ7_MEMORY;
     Archive a;
     int r = archive_open(&a, path);
-    (*env)->ReleaseStringUTFChars(env, jpath, path);
+    free(path);
     if (r != SZ7_OK) { archive_close(&a); return r; }
 
     UInt32 n = a.db.NumFiles;
     if ((UInt32)(*env)->GetArrayLength(env, jtargets) != n) { archive_close(&a); return SZ7_UNSUPPORTED; }
-    const char **targets = (const char **)calloc(n ? n : 1, sizeof(char *));
-    jstring *refs = (jstring *)calloc(n ? n : 1, sizeof(jstring));
-    if (!targets || !refs) { free(targets); free(refs); archive_close(&a); return SZ7_MEMORY; }
-    for (UInt32 i = 0; i < n; i++) {
-        refs[i] = (jstring)(*env)->GetObjectArrayElement(env, jtargets, (jsize)i);
-        if (refs[i]) targets[i] = (*env)->GetStringUTFChars(env, refs[i], NULL);
+    char **targets = (char **)calloc(n ? n : 1, sizeof(char *));
+    if (!targets) { archive_close(&a); return SZ7_MEMORY; }
+    for (UInt32 i = 0; r == SZ7_OK && i < n; i++) {
+        jbyteArray ref = (jbyteArray)(*env)->GetObjectArrayElement(env, jtargets, (jsize)i);
+        if (ref) {
+            targets[i] = utf8_path(env, ref);
+            if (!targets[i]) r = SZ7_MEMORY;
+            (*env)->DeleteLocalRef(env, ref);
+        }
     }
 
     /* Recusa antes de gravar qualquer coisa: o commons-compress refaz tudo do zero. */
+    const char *const *wanted = (const char *const *)targets;
     for (UInt32 f = 0; r == SZ7_OK && f < a.db.db.NumFolders; f++)
-        if (folder_wanted(&a.db, f, targets) && !folder_supported(&a.db, f)) r = SZ7_UNSUPPORTED;
+        if (folder_wanted(&a.db, f, wanted) && !folder_supported(&a.db, f)) r = SZ7_UNSUPPORTED;
 
     /* Arquivos vazios não estão em nenhum bloco: basta criá-los. */
     for (UInt32 i = 0; r == SZ7_OK && i < n; i++) {
@@ -374,16 +410,10 @@ Java_com_retrovika_app_core_storage_SevenZipNative_extract(JNIEnv *env, jclass c
             if (!out || fclose(out) != 0) r = SZ7_WRITE;
         }
     }
-    for (UInt32 f = 0; r == SZ7_OK && f < a.db.db.NumFolders; f++) r = decode_folder(&a, f, targets);
+    for (UInt32 f = 0; r == SZ7_OK && f < a.db.db.NumFolders; f++) r = decode_folder(&a, f, wanted);
 
-    for (UInt32 i = 0; i < n; i++) {
-        if (refs[i]) {
-            (*env)->ReleaseStringUTFChars(env, refs[i], targets[i]);
-            (*env)->DeleteLocalRef(env, refs[i]);
-        }
-    }
+    for (UInt32 i = 0; i < n; i++) free(targets[i]);
     free(targets);
-    free(refs);
     archive_close(&a);
     return r;
 }

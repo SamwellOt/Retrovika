@@ -58,6 +58,7 @@
     <string name="region_brazil">Brasil</string>
     <string name="region_korea">Coreia</string>
     <string name="region_china">China</string>
+    <string name="region_australia">Austrália</string>
     <string name="common_error_no_internet">Sem conexão com a internet (ou o servidor está fora do ar)</string>
     <string name="common_error_timeout">O servidor demorou demais para responder. Tente de novo.</string>
     <string name="common_error_secure_connection">Não foi possível estabelecer uma conexão segura com o servidor</string>

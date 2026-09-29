@@ -20,9 +20,22 @@ internal object SevenZipNative {
     /** Falso nos testes de JVM e se a biblioteca não carregar: aí fica tudo com o commons-compress. */
     val available: Boolean = runCatching { System.loadLibrary("retrovika7z") }.isSuccess
 
-    /** Nomes das entradas na ordem do arquivo (pastas terminam em "/"); null se não abrir. */
-    @JvmStatic external fun list(path: String): Array<String>?
+    /*
+     * Os caminhos vão como bytes UTF-8 padrão: o GetStringUTFChars do JNI daria "UTF-8 modificado", que
+     * codifica caracteres fora do BMP (emoji, alguns ideogramas) de outro jeito, e o fopen abriria outro nome.
+     */
+
+    /**
+     * Nomes das entradas na ordem do arquivo (pastas terminam em "/"); null se não abrir. Um 7z sem
+     * nomes ("7z a -si") devolve nomes vazios.
+     */
+    fun list(path: String): Array<String>? = list(path.toByteArray(Charsets.UTF_8))
 
     /** Extrai as entradas cujo destino (mesmo índice de [list]) não é null. Devolve um dos códigos acima. */
-    @JvmStatic external fun extract(path: String, targets: Array<String?>): Int
+    fun extract(path: String, targets: Array<String?>): Int =
+        extract(path.toByteArray(Charsets.UTF_8), Array(targets.size) { targets[it]?.toByteArray(Charsets.UTF_8) })
+
+    @JvmStatic private external fun list(path: ByteArray): Array<String>?
+
+    @JvmStatic private external fun extract(path: ByteArray, targets: Array<ByteArray?>): Int
 }
