@@ -88,6 +88,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
         fun padProfile(systemId: String) = stringPreferencesKey("pad_console_$systemId")
+        fun gamePadProfile(gameId: Long) = stringPreferencesKey("$GAME_PAD_PREFIX$gameId")
     }
 
     private val optionsSerializer = MapSerializer(String.serializer(), String.serializer())
@@ -191,6 +192,18 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         else p[Keys.padProfile(systemId)] = Http.json.encodeToString(PadProfile.serializer(), profile)
     }
 
+    /**
+     * Controle próprio de um jogo, que vence o do console (um jogo de luta com seis botões, outro só de
+     * toque…). Nulo quando o jogo segue o do console.
+     */
+    fun gamePadProfile(gameId: Long): Flow<PadProfile?> = data.map { p -> p[Keys.gamePadProfile(gameId)]?.let(::decodeProfile) }
+
+    /** Nulo volta o jogo ao controle do console. */
+    suspend fun setGamePadProfile(gameId: Long, profile: PadProfile?) = context.dataStore.edit { p ->
+        if (profile == null) p.remove(Keys.gamePadProfile(gameId))
+        else p[Keys.gamePadProfile(gameId)] = Http.json.encodeToString(PadProfile.serializer(), profile)
+    }
+
     /** Consoles com o controle ajustado, para a lista de Ajustes. */
     val customizedPads: Flow<Set<String>> = data.map { p ->
         p.asMap().keys.map { it.name }.filter { it.startsWith(PAD_PREFIX) }.map { it.removePrefix(PAD_PREFIX) }.toSet()
@@ -198,7 +211,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
 
     suspend fun resetAllPadProfiles() = context.dataStore.edit { p ->
         // Também os perfis por núcleo da versão de desenvolvimento anterior, que não são mais lidos.
-        p.asMap().keys.filter { it.name.startsWith(PAD_PREFIX) || it.name.startsWith(OLD_PAD_PREFIX) }.toList().forEach { p.remove(it) }
+        p.asMap().keys.filter { k -> listOf(PAD_PREFIX, OLD_PAD_PREFIX, GAME_PAD_PREFIX).any { k.name.startsWith(it) } }.toList().forEach { p.remove(it) }
     }
 
     // Um perfil ilegível (versão antiga, campo renomeado) volta ao padrão em vez de impedir o jogo de abrir.
@@ -209,5 +222,6 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         const val MAX_PARALLEL_DOWNLOADS = 4
         private const val PAD_PREFIX = "pad_console_"
         private const val OLD_PAD_PREFIX = "pad_profile_"
+        private const val GAME_PAD_PREFIX = "pad_game_"
     }
 }

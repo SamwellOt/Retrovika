@@ -59,6 +59,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -103,9 +104,14 @@ class GameActivity : ComponentActivity() {
     private var padProfile by mutableStateOf(PadProfile())
     /**
      * Gravações do perfil numa fila só, na ordem em que foram feitas (lançadas soltas no Dispatchers.Default,
-     * uma mais antiga podia gravar por último). Conflated: só a mais recente ainda pendente importa.
+     * uma mais antiga podia gravar por último). Sem descartar nenhuma: cada uma pode ir para um lugar
+     * (o jogo ou o console), e (true, null) apaga o controle próprio do jogo.
      */
-    private val padSaves = Channel<PadProfile>(Channel.CONFLATED)
+    private val padSaves = Channel<Pair<Boolean, PadProfile?>>(Channel.UNLIMITED)
+    /** Gravações enviadas a [padSaves] e ainda não feitas (lido e escrito só na thread principal). */
+    private var pendingPadSaves = 0
+    /** O controle em uso é o próprio deste jogo (verdadeiro) ou o do console (falso). */
+    private var padForGame by mutableStateOf(false)
     /** Há mudança do perfil ainda não gravada: o que chega do DataStore nesse meio-tempo é mais velho. */
     private var padDirty = false
     /** Editor do layout aberto a partir do menu: a emulação segue pausada por baixo. */
@@ -229,16 +235,20 @@ class GameActivity : ComponentActivity() {
         val coreId = game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(coreId)
         val padCore = system.id
-        padProfile = app.settings.padProfile(padCore).first()
+        val gameId = game.id
+        // O controle próprio do jogo, quando existe, vence o do console.
+        val padFlow = combine(app.settings.gamePadProfile(gameId), app.settings.padProfile(padCore)) { own, console -> (own != null) to (own ?: console) }
+        padFlow.first().let { (forGame, profile) -> padForGame = forGame; padProfile = profile }
         app.scope.launch {
-            for (profile in padSaves) {
-                app.settings.setPadProfile(padCore, profile)
-                withContext(Dispatchers.Main) { if (padProfile == profile) padDirty = false }
+            for ((forGame, profile) in padSaves) {
+                if (forGame) app.settings.setGamePadProfile(gameId, profile) else if (profile != null) app.settings.setPadProfile(padCore, profile)
+                // Fila vazia: tudo o que foi mexido já está gravado, e o que vier do DataStore volta a valer.
+                withContext(Dispatchers.Main) { if (--pendingPadSaves == 0) padDirty = false }
             }
         }
         // Acompanha o perfil gravado: "Restaurar todos" em Ajustes com o jogo aberto em segundo plano vale
         // na volta, em vez de o perfil antigo da memória ser gravado de novo na próxima mudança.
-        lifecycleScope.launch { app.settings.padProfile(padCore).collect { if (!padDirty) padProfile = it } }
+        lifecycleScope.launch { padFlow.collect { (forGame, profile) -> if (!padDirty) { padForGame = forGame; padProfile = profile } } }
 
         // 1. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
@@ -624,7 +634,24 @@ class GameActivity : ComponentActivity() {
             padProfile = profile
             if (::core.isInitialized) {
                 padDirty = true
-                padSaves.trySend(profile)
+                sendPadSave(padForGame to profile)
+            }
+        }
+
+        override fun padForGame() = padForGame
+
+        override fun setPadForGame(forGame: Boolean) {
+            if (!::game.isInitialized || forGame == padForGame) return
+            padForGame = forGame
+            if (forGame) {
+                // Começa como cópia do controle do console, que continua valendo para os outros jogos.
+                padDirty = true
+                sendPadSave(true to padProfile)
+            } else {
+                // O jogo volta a seguir o console: o próprio é apagado e o do console reaparece pelo fluxo.
+                padDirty = true
+                sendPadSave(true to null)
+                lifecycleScope.launch { padProfile = app.settings.padProfile(system.id).first() }
             }
         }
 
@@ -657,6 +684,11 @@ class GameActivity : ComponentActivity() {
             codes.forEachIndexed { i, code -> view.setCheat(i, true, code) }
         }
         if (codes.isNotEmpty()) toast = resources.getQuantityString(R.plurals.cheats_applied, codes.size, codes.size)
+    }
+
+    private fun sendPadSave(save: Pair<Boolean, PadProfile?>) {
+        pendingPadSaves++
+        padSaves.trySend(save)
     }
 
     private fun toggleMenu() {
@@ -839,6 +871,8 @@ interface MenuActions {
     fun coreName(): String
     fun cheats(): CheatSession?
     fun setPadProfile(profile: PadProfile)
+    fun padForGame(): Boolean
+    fun setPadForGame(forGame: Boolean)
     fun startPadEditor()
     fun stopPadEditor()
     fun exit()
