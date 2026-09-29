@@ -95,7 +95,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
         val blocks = TranslationText.groupLines(lines).mapNotNull { block ->
             TranslationText.sourceFor(block.text, target)?.let { block to it }
         }
-        val suggestPack = !usedMeiki && ai == null && (blocks.isEmpty() || blocks.any { it.second == "ja" })
+        val suggestPack = !usedMeiki && ai == null && blocks.any { it.second == "ja" }
         if (blocks.isEmpty()) return Result(emptyList(), aiError, suggestPack)
         onStage(Stage.TRANSLATING)
         val translated = coroutineScope {
