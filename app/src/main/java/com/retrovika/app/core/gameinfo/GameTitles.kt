@@ -36,6 +36,13 @@ object GameTitles {
     }
 
     fun same(a: String, b: String): Boolean = key(a) == key(b)
+
+    /**
+     * [key] com as vogais longas do japonês romanizado juntas: "Taiyou", "Taiyō", "Taiyoo" e "Taiyo"
+     * ficam iguais. Os sites de ROM escrevem os títulos japoneses de um jeito e a Wikipedia de outro.
+     */
+    fun romajiKey(title: String): String =
+        key(title).replace("ou", "o").replace("oo", "o").replace("uu", "u").replace("aa", "a")
 }
 
 /**

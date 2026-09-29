@@ -13,9 +13,17 @@ class GameInfoRepository(
     private val backloggdCache = lru<Cached<BackloggdInfo?>>()
     private val wikiCache = lru<Cached<WikiInfo?>>()
 
-    /** O jogo no Backloggd, ou nulo quando não há um jogo de mesmo nome no console. */
+    /**
+     * O jogo no Backloggd, ou nulo quando não há um jogo de mesmo nome no console. O título original
+     * vem primeiro (há jogos que só existem com o nome japonês, no site de ROM e no Backloggd); só
+     * quando ele não acha nada, tenta o nome em inglês que a Wikipedia dá ao jogo.
+     */
     suspend fun backloggd(title: String, systemId: String): BackloggdInfo? =
-        cached(backloggdCache, "$systemId|${GameTitles.key(title)}") { backloggd.find(title, systemId) }
+        cached(backloggdCache, "$systemId|${GameTitles.key(title)}") {
+            backloggd.find(title, systemId) ?: runCatching { wiki.otherTitle(title) }.getOrNull()?.let { other ->
+                backloggd.find(other.title, systemId, other.igdbSlug)
+            }
+        }
 
     /** O jogo na Wikipedia/Wikidata; [igdbSlug] (do Backloggd) acha o item exato. */
     suspend fun wiki(title: String, lang: String, igdbSlug: String?): WikiInfo? =

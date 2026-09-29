@@ -99,6 +99,17 @@ class GameInfoNetworkTest {
     }
 
     @Test
+    fun `titulo japones romanizado acha o nome em ingles`() = runBlocking {
+        val wiki = WikiClient()
+        val other = timed("Wikipedia · Hana to Taiyou to Ame to") { wiki.otherTitle("Hana to Taiyou to Ame to (Japan)") }
+        assertNotNull("nome em inglês não encontrado", other)
+        assertTrue(other!!.title, GameTitles.same(other.title, "Flower, Sun, and Rain"))
+        println("  ${other.title} · ${other.item} · IGDB ${other.igdbSlug}")
+        // O mesmo nome nos dois lados não é "outro título".
+        assertEquals(null, wiki.otherTitle("Chrono Trigger (USA)"))
+    }
+
+    @Test
     fun `cada fonte do catalogo le a propria ficha`() = runBlocking {
         val repo = CatalogRepository()
         for (source in repo.sources) {

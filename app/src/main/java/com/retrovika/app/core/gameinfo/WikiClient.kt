@@ -28,8 +28,68 @@ class WikiClient {
     suspend fun find(title: String, lang: String, igdbSlug: String? = null): WikiInfo? {
         val id = igdbSlug?.let { runCatching { byIgdb(it) }.getOrNull() }
             ?: GameTitles.clean(title).takeIf { it.isNotBlank() }?.let { byTitle(it) }
+            ?: runCatching { otherTitle(title)?.item }.getOrNull()
             ?: return null
         return entity(id, lang)
+    }
+
+    /** Como a Wikipedia em inglês chama o jogo: título, item do Wikidata e slug do IGDB (= Backloggd). */
+    data class OtherTitle(val title: String, val item: String?, val igdbSlug: String?)
+
+    /**
+     * Acha o nome em inglês de um jogo que o site de ROM escreveu de outro jeito, em geral o título
+     * japonês romanizado ("Hana to Taiyou to Ame to" é "Flower, Sun, and Rain"). O artigo da Wikipedia
+     * em inglês cita a romanização logo na abertura ("Hepburn: Hana to Taiyō to Ame to"); só vale um
+     * artigo de jogo cujo começo traz o título pedido, para não pegar a continuação ou a série que o
+     * menciona. Nulo quando não acha ou quando o nome é o mesmo.
+     */
+    suspend fun otherTitle(title: String): OtherTitle? {
+        val clean = GameTitles.clean(title).ifBlank { return null }
+        val wanted = GameTitles.romajiKey(clean)
+        if (wanted.length < 4) return null
+        // A busca da Wikipedia tira acentos ("Taiyō" vira "taiyo") mas não junta "ou": a segunda
+        // tentativa usa a forma sem vogais longas.
+        for (query in listOf(clean, wanted).distinctBy { it.lowercase() }) {
+            val page = searchArticles(query).firstOrNull { p ->
+                val isGame = "game" in p.description.lowercase() || "video game" in p.intro.lowercase()
+                isGame && " $wanted " in " ${GameTitles.romajiKey(p.intro.take(INTRO_CHARS))} "
+            } ?: continue
+            val name = GameTitles.clean(page.title)
+            if (GameTitles.same(name, clean)) return null
+            val igdb = page.item?.let { runCatching { igdbOf(it) }.getOrNull() }
+            return OtherTitle(name, page.item, igdb)
+        }
+        return null
+    }
+
+    private class Article(val title: String, val description: String, val intro: String, val item: String?)
+
+    /** Busca na Wikipedia em inglês; cada resultado já vem com a abertura, a descrição curta e o item. */
+    private suspend fun searchArticles(query: String): List<Article> {
+        val url = Urls.withQuery("https://en.wikipedia.org/w/api.php", listOf(
+            "action" to "query", "generator" to "search", "gsrsearch" to query, "gsrnamespace" to "0",
+            "gsrlimit" to "5", "prop" to "extracts|description|pageprops", "exintro" to "1",
+            "explaintext" to "1", "exlimit" to "max", "ppprop" to "wikibase_item", "redirects" to "1",
+            "format" to "json", "formatversion" to "2",
+        ))
+        val pages = json(url)["query"]?.jsonObject?.get("pages")?.jsonArray.orEmpty().map { it.jsonObject }
+        // A lista não vem na ordem da busca: "index" é a posição do resultado.
+        return pages.sortedBy { it["index"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: Int.MAX_VALUE }.mapNotNull { p ->
+            Article(
+                title = p["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
+                description = p["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                intro = p["extract"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                item = p["pageprops"]?.jsonObject?.get("wikibase_item")?.jsonPrimitive?.contentOrNull,
+            )
+        }
+    }
+
+    private suspend fun igdbOf(item: String): String? {
+        val url = Urls.withQuery(wikidata, listOf(
+            "action" to "wbgetentities", "ids" to item, "props" to "claims", "format" to "json",
+        ))
+        val claims = json(url)["entities"]?.jsonObject?.get(item)?.jsonObject?.get("claims")?.jsonObject ?: return null
+        return string(claims, IGDB)
     }
 
     private suspend fun byIgdb(slug: String): String? {
@@ -201,5 +261,8 @@ class WikiClient {
         const val IGDB = "P5794"
         const val METACRITIC = "P12054"
         const val METACRITIC_OLD = "P1712"
+
+        /** Quanto da abertura do artigo conta para achar o título (a primeira frase, com folga). */
+        const val INTRO_CHARS = 400
     }
 }

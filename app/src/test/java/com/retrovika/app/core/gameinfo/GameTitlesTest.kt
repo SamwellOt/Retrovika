@@ -28,6 +28,13 @@ class GameTitlesTest {
     }
 
     @Test
+    fun `junta as vogais longas do japones romanizado`() {
+        assertEquals(GameTitles.romajiKey("Hana to Taiyou to Ame to"), GameTitles.romajiKey("Hana to Taiyō to Ame to"))
+        assertEquals("hana to taiyo to ame to", GameTitles.romajiKey("Hana to Taiyoo to Ame to"))
+        assertEquals("ryu ga gotoku", GameTitles.romajiKey("Ryuu ga Gotoku"))
+    }
+
+    @Test
     fun `reconhece a plataforma do console pelo slug ou pelo nome`() {
         assertTrue(Platforms.matches("snes", listOf("sfam"), emptyList()))
         assertTrue(Platforms.matches("psx", emptyList(), listOf("PlayStation")))
