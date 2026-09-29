@@ -480,12 +480,21 @@ class GLRetroView(
 
         val latch = CountDownLatch(1)
         var result: Any? = null
+        var error: Throwable? = null
         queueEvent {
-            result = block()
-            latch.countDown()
+            // Uma exceção solta derrubaria a thread GL e a espera abaixo nunca terminaria:
+            // ela é devolvida a quem chamou, que já trata a falha (runCatching).
+            try {
+                result = block()
+            } catch (t: Throwable) {
+                error = t
+            } finally {
+                latch.countDown()
+            }
         }
 
         latch.awaitUninterruptibly()
+        error?.let { throw it }
         // T pode ser anulável (a partida em rede devolve nulo quando o núcleo não gera estado).
         @Suppress("UNCHECKED_CAST")
         return result as T

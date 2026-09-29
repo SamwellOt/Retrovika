@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,6 +69,7 @@ import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Verificação em lote pelo DAT: sobrevive à rotação e segue no escopo do app se a tela fechar. */
 class VersionsCheck : ViewModel() {
@@ -88,7 +90,10 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
     val app = context.container
     val games by remember(systemId) { app.library.bySystem(systemId) }.collectAsStateWithLifecycle(null)
     val language = remember { context.uiLanguage() }
-    val groups = remember(games, language) { games?.let { Versions.groups(it, language) } }
+    val groups by produceState<List<Versions.Group>?>(null, games, language) {
+        val list = games ?: return@produceState
+        value = withContext(Dispatchers.Default) { Versions.groups(list, language) }
+    }
     val check: VersionsCheck = viewModel { VersionsCheck() }
     var confirm by remember { mutableStateOf<List<Game>?>(null) }
 
@@ -147,8 +152,9 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                                 check.message = null
                                 check.progress = 0 to 0
                                 // No escopo do app: calcular o hash de dezenas de ROMs leva tempo, e sair da tela não cancela.
+                                // Fora da corrotina: capturar a Activity a manteria viva (rotação) até o fim.
+                                val res = context.localized()
                                 app.scope.launch(Dispatchers.Main) {
-                                    val res = context.localized()
                                     try {
                                         val found = app.dat.identifyAll(list) { done, total -> check.progress = done to total }
                                         found.forEach { (game, entry) -> app.library.setIdentified(game.id, entry.name, entry.region) }
@@ -159,7 +165,7 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                                         throw c
                                     } catch (t: Throwable) {
                                         check.error = true
-                                        check.message = t.userMessage(context)
+                                        check.message = t.userMessage(res)
                                     } finally {
                                         check.progress = null
                                     }
@@ -174,7 +180,7 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                 }
             }
         }
-        if (groups != null && groups.isEmpty()) item {
+        if (groups?.isEmpty() == true) item {
             EmptyState(stringResource(R.string.versions_empty_title), stringResource(R.string.versions_empty_message), icon = Icons.Rounded.Layers)
         }
         items(groups.orEmpty(), key = { it.best.game.id }) { group ->
@@ -215,6 +221,7 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                     confirm = null
                     // No escopo do app, como a verificação: sair da tela no meio não pode interromper a remoção
                     // entre apagar o arquivo e apagar o registro no banco.
+                    val res = context.localized()
                     app.scope.launch(Dispatchers.Main) {
                         var failure: Throwable? = null
                         toRemove.forEach { game ->
@@ -228,7 +235,7 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                         }
                         failure?.let {
                             check.error = true
-                            check.message = it.userMessage(context)
+                            check.message = it.userMessage(res)
                         }
                     }
                 }) { Text(stringResource(R.string.common_remove), color = Palette.Coral) }

@@ -284,7 +284,8 @@ fun RetrovikaNavHost() {
                             if (previous?.destination?.route == "system/{id}" && previous.arguments?.getString("id") == id) nav.back(entry)
                             else nav.open(entry, "system/$id")
                         },
-                        onOpenGame = { nav.open(entry, "game/$it") },
+                        // Outra versão do jogo: empilha (singleTop trocaria esta página pela nova, e voltar pularia a atual).
+                        onOpenGame = { if (it != entry.arguments?.getLong("id")) nav.open(entry, "game/$it", singleTop = false) },
                         onOpenVersions = { nav.open(entry, "system/$it/versions") },
                     )
                 }
@@ -303,9 +304,9 @@ fun RetrovikaNavHost() {
  * Navega só se a tela de origem ainda é a ativa. A tela que está saindo continua clicável durante a
  * transição: sem isso, um toque duplo empilhava o mesmo jogo duas vezes.
  */
-private fun NavHostController.open(from: NavBackStackEntry, route: String) {
+private fun NavHostController.open(from: NavBackStackEntry, route: String, singleTop: Boolean = true) {
     if (from.lifecycle.currentState != Lifecycle.State.RESUMED) return
-    navigate(route) { launchSingleTop = true }
+    navigate(route) { launchSingleTop = singleTop }
 }
 
 /** Voltar pela tela que pediu: um toque duplo em "voltar" não desempilha também a tela de baixo (nem esvazia a pilha). */

@@ -342,7 +342,10 @@ private fun LibraryVersions(game: Game, onOpenGame: (Long) -> Unit, onOpenAll: (
     val app = context.container
     val all by remember(game.systemId) { app.library.bySystem(game.systemId) }.collectAsStateWithLifecycle(emptyList())
     val language = remember { context.uiLanguage() }
-    val group = remember(all, game, language) { Versions.groupOf(game, all, language) } ?: return
+    val computed by produceState<Versions.Group?>(null, all, game, language) {
+        value = withContext(Dispatchers.Default) { Versions.groupOf(game, all, language) }
+    }
+    val group = computed ?: return
     Spacer(Modifier.height(24.dp))
     SectionHeader(stringResource(R.string.details_library_versions), action = stringResource(R.string.details_library_versions_all), onAction = onOpenAll)
     Spacer(Modifier.height(6.dp))

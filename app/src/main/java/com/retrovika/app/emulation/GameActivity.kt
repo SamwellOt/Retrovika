@@ -605,6 +605,9 @@ class GameActivity : ComponentActivity() {
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
                     if (withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }) {
+                        // Se a emulação parou no meio (app para o fundo), a cópia de pausa ainda é a da tela
+                        // de início: gravá-la no próximo salvamento automático apagaria o progresso restaurado.
+                        if (retroView === view && !emulationRunning()) frozenState = data
                         toast = getString(R.string.game_progress_restored)
                     } else {
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
@@ -874,7 +877,7 @@ class GameActivity : ComponentActivity() {
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
             close()
-            lifecycleScope.launch(Dispatchers.Default) { view.reset() }
+            lifecycleScope.launch(Dispatchers.Default) { runCatching { view.reset() } }
         }
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
@@ -1032,6 +1035,7 @@ class GameActivity : ComponentActivity() {
     private fun startTranslation() {
         val view = retroView ?: return
         if (ui !is EmulationUi.Running || menuOpen || menuOpening || translation != null) return
+        if (gameLoaded && !autoSaveReady) return
         releaseAllInputs(view)
         menuOpening = true
         captureFrame(view) { _, full ->
@@ -1071,7 +1075,13 @@ class GameActivity : ComponentActivity() {
     private fun openMenu() {
         if (menuOpen || menuOpening) return
         val view = retroView
-        if (view == null || ui !is EmulationUi.Running) { finish(); return }
+        // Tela de erro: o núcleo já foi criado, então sair passa por exit() (que o destrói na hora);
+        // um finish() simples o deixaria para o onDestroy, que poderia destruir o núcleo do próximo jogo.
+        if (view == null) { finish(); return }
+        if (ui !is EmulationUi.Running) { menuActions.exit(); return }
+        // Salvamento automático sendo carregado: pausar agora carregaria o estado sem contexto GL
+        // e deixaria o menu com a cópia da tela de início. Leva só um instante.
+        if (gameLoaded && !autoSaveReady) return
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)

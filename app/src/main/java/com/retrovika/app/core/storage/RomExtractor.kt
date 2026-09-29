@@ -31,7 +31,8 @@ object RomExtractor {
         if (Archives.formatOf(archive) == null) return archive
         try {
             val entries = Archives.entries(archive)
-            val names = entries.map { it.name }
+            // __MACOSX/._Jogo.cue (metadados do Mac) não é faixa de ninguém: extraído, virava um "jogo" que não abre.
+            val names = entries.map { it.name }.filterNot { name -> name.split('/').any { FileNames.isJunk(it) } }
             val candidates = names.filter { it.substringAfterLast('.').lowercase().let { ext -> ext in system.extensions && ext !in ARCHIVE_EXTS } }
             val main = candidates.minByOrNull { SHEET_PRIORITY.indexOf(it.substringAfterLast('.').lowercase()).let { i -> if (i < 0) SHEET_PRIORITY.size else i } }
                 ?: return archive

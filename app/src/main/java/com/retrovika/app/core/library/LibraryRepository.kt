@@ -183,7 +183,10 @@ class LibraryRepository(
         Systems.all.forEach { system ->
             val dir = File(paths.roms, system.id)
             if (!dir.exists()) return@forEach
-            val folders = dir.walkTopDown().maxDepth(3).filter { it.isDirectory }.toList()
+            // Pastas ocultas e o __MACOSX de compactados feitos no Mac ficam de fora, como na pasta vinculada.
+            val folders = dir.walkTopDown().maxDepth(3)
+                .onEnter { it == dir || !FileNames.isJunk(it.name) }
+                .filter { it.isDirectory }.toList()
             // Primeiro lê todos os índices (.cue/.gdi/.m3u/.ccd): um .m3u pode citar discos em subpastas.
             // Só os que este console abre: um .ccd na pasta do PS1 (que não lê .ccd) esconderia o .img
             // que o PS1 abre, e o jogo sumiria.
@@ -200,7 +203,7 @@ class LibraryRepository(
                 }
             }
             folders.forEach { folder ->
-                val files = folder.listFiles()?.filter { it.isFile }.orEmpty()
+                val files = folder.listFiles()?.filter { it.isFile && !FileNames.isJunk(it.name) }.orEmpty()
                 // Índices que o console não abre também ficam fora da heurística por nome.
                 val siblings = files.map { it.name.lowercase() }
                     .filter { name -> name.substringAfterLast('.', "").let { it !in GameFiles.SHEET_EXTENSIONS || isPlayableSheet(it, system) } }
@@ -348,6 +351,12 @@ class LibraryRepository(
                 val file = if (Archives.isArchive(dest) && !system.keepArchives) {
                     writingRoms { RomExtractor.extract(dest, dest.parentFile!!, system) }
                 } else dest
+                // Como no download: o compactado sem jogo deste console (ou num formato que não abrimos)
+                // voltaria da extração como veio e entraria na biblioteca como um jogo que nunca roda.
+                if (!system.keepArchives && file.extension.lowercase() !in system.extensions) {
+                    file.delete()
+                    throw LocalizedException(R.string.download_unplayable, file.name, system.name)
+                }
                 copied += system to file
             } catch (c: CancellationException) {
                 part.delete()

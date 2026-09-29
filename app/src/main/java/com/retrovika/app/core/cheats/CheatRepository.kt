@@ -68,7 +68,7 @@ class CheatRepository(private val paths: StoragePaths) {
             }
             val fetched = runCatching { fetchIndex(folder) }
             fetched.getOrNull()?.let { list ->
-                cache.writeText(list.joinToString("\n"))
+                writeAtomically(cache, list.joinToString("\n"))
                 return@withContext list
             }
             // Sem internet (ou sem cota na API): a lista velha ainda serve.
@@ -105,9 +105,16 @@ class CheatRepository(private val paths: StoragePaths) {
         val local = root.resolve(systemId).apply { mkdirs() }.resolve(file.replace('/', '_'))
         val text = if (local.exists()) local.readText() else {
             val url = "$RAW/${encode(folder)}/${encode(file)}"
-            Http.getString(url).also { local.writeText(it) }
+            Http.getString(url).also { writeAtomically(local, it) }
         }
         CheatFile.parse(text)
+    }
+
+    /** Temporário + renomear: um arquivo cortado no meio (processo morto, disco cheio) seria usado para sempre. */
+    private fun writeAtomically(file: File, text: String) {
+        val tmp = File(file.path + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) tmp.delete()
     }
 
     private fun stateFile(game: Game) = root.resolve(game.systemId).apply { mkdirs() }.resolve("${game.id}.json")

@@ -28,9 +28,15 @@ class WikiClient {
      * aceita só um item de mesmo nome descrito como jogo.
      */
     suspend fun find(title: String, lang: String, igdbSlug: String? = null): WikiInfo? {
-        val id = igdbSlug?.let { runCatching { byIgdb(it) }.getOrNull() }
+        // runCatching engoliria o cancelamento (a página fechou) e seguiria buscando por título à toa.
+        val bySlug = igdbSlug?.let {
+            try { Result.success(byIgdb(it)) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+        }
+        val id = bySlug?.getOrNull()
             ?: GameTitles.clean(title).takeIf { it.isNotBlank() }?.let { byTitle(it) }
             ?: try { otherTitle(title)?.item } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+            // Falha de rede no slug sem nada achado pelo título: é erro, não "sem artigo" guardado no cache.
+            ?: bySlug?.exceptionOrNull()?.let { throw it }
             ?: return null
         return entity(id, lang)
     }

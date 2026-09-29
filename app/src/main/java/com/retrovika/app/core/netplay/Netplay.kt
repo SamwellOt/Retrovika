@@ -23,7 +23,7 @@ import kotlin.concurrent.thread
  *
  * Linhas de texto no soquete de controle:
  * - convidado → anfitrião: `INFO <token>` (antes de abrir o jogo: qual jogo e núcleo) ou `JOIN <token>`;
- * - anfitrião → convidado: `MANIFEST <json>`, `OK <atraso>`, `STATE <bytes>` seguido do estado, `RESYNC`;
+ * - anfitrião → convidado: `MANIFEST <json>`, `OK <atraso>`, `STATE <bytes> <rodada>` seguido do estado, `RESYNC`;
  * - qualquer um: `BYE`.
  * O soquete de entrada começa com `INPUT <token>`.
  */

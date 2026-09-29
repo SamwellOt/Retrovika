@@ -68,7 +68,9 @@ class WebFetcher(private val context: Context) {
         val (status, body) = result ?: throw java.net.SocketTimeoutException(url)
         if (status == 403 && isChallengePage(body)) {
             // A verificação expirou: o próximo pedido abre o site de novo.
-            withContext(Dispatchers.Main) { release() }
+            // Só se ainda for o mesmo WebView: outro pedido pode já ter aberto um novo (e estar esperando
+            // a verificação nele), e destruí-lo faria esse pedido falhar por tempo esgotado.
+            withContext(Dispatchers.Main) { lock.withLock { if (view === page) release() } }
             throw HttpStatusException(403, url)
         }
         if (status !in 200..299) throw HttpStatusException(if (status < 0) 0 else status, url)

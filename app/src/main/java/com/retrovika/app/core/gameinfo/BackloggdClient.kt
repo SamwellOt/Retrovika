@@ -1,6 +1,7 @@
 package com.retrovika.app.core.gameinfo
 
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.HttpStatusException
 import com.retrovika.app.core.net.Urls
 import com.retrovika.app.core.net.WebFetcher
 import kotlinx.coroutines.CancellationException
@@ -81,11 +82,20 @@ class BackloggdClient(
     suspend fun find(title: String, systemId: String, igdbSlug: String? = null): BackloggdInfo? {
         // O slug vem do Wikidata, que pode apontar outra versão (a de outro console): só vale se o
         // console bate; senão segue pela busca por título, que escolhe entre as versões.
+        var slugFailure: Exception? = null
         igdbSlug?.let { slug ->
-            catching { game(slug) }.getOrNull()
+            val bySlug = catching { game(slug) }
+            // 404 é "não existe"; outra falha (rede, verificação da CDN) não pode virar "não encontrado"
+            // se a busca por título também não achar, senão ficaria 15 minutos no cache.
+            bySlug.exceptionOrNull()?.let { e -> if (e !is HttpStatusException || e.code != 404) slugFailure = e as? Exception }
+            bySlug.getOrNull()
                 ?.takeIf { !Platforms.knows(systemId) || Platforms.matches(systemId, emptyList(), it.platforms) }
                 ?.let { return it }
         }
+        return byTitle(title, systemId) ?: slugFailure?.let { throw it }
+    }
+
+    private suspend fun byTitle(title: String, systemId: String): BackloggdInfo? {
         val clean = GameTitles.clean(title).ifBlank { return null }
         val candidates = suggestions(clean).filter { GameTitles.sameRomaji(it.title, clean) }
             .sortedWith(compareBy(nullsLast<Int>()) { it.year })

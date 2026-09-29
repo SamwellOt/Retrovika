@@ -1,6 +1,8 @@
 package com.retrovika.app.core.storage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FileNamesTest {
@@ -16,5 +18,13 @@ class FileNamesTest {
     fun `troca caracteres invalidos e preserva o resto`() {
         assertEquals("Zelda_ A Link.sfc", FileNames.safe("Zelda: A Link.sfc"))
         assertEquals("Chrono Trigger (USA).sfc", FileNames.safe("Chrono Trigger (USA).sfc"))
+    }
+
+    @Test
+    fun `reconhece metadados do Mac e ocultos`() {
+        assertTrue(FileNames.isJunk("__MACOSX"))
+        assertTrue(FileNames.isJunk("._Game.cue"))
+        assertTrue(FileNames.isJunk(".DS_Store"))
+        assertFalse(FileNames.isJunk("Game.cue"))
     }
 }

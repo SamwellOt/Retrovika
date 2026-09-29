@@ -33,12 +33,14 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Retrovika.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- singleTop: links e arquivos abertos com o app já aberto chegam por onNewIntent, sem uma segunda cópia. -->
             <!-- QR codes de estado compartilhado e de partida em rede: a câmera do celular abre o app. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -101,13 +102,24 @@ class NetplayController(
 
     private suspend fun hostRound(server: NetplayHost, out: DataOutputStream) {
         val fd = NetplayProtocol.detach(server.awaitInput())
-        if (!resumeEmulation()) { closeFd(fd); throw IOException("not running") }
-        val v = view() ?: run { closeFd(fd); throw IOException("no view") }
-        val state = withContext(Dispatchers.Default) { v.serializeAndStartNetplay(fd, 0, NetplayProtocol.DELAY_FRAMES, ++epoch) }
+        // Até o nativo assumir o fd, qualquer saída (inclusive cancelamento) precisa fechá-lo.
+        val v = try {
+            if (!resumeEmulation()) throw IOException("not running")
+            view() ?: throw IOException("no view")
+        } catch (t: Throwable) {
+            closeFd(fd)
+            throw t
+        }
+        val round = ++epoch
+        // Sem cancelamento no meio: com a partida já iniciada o fd é do nativo, e fechá-lo aqui também
+        // fecharia duas vezes (talvez um descritor já reaproveitado por outra coisa).
+        val state = withContext(NonCancellable + Dispatchers.Default) { v.serializeAndStartNetplay(fd, 0, NetplayProtocol.DELAY_FRAMES, round) }
         if (state == null || state.isEmpty()) { closeFd(fd); throw IOException("state") }
         withContext(Dispatchers.IO) {
             writeControl {
-                out.writeLineAscii("STATE ${state.size}")
+                // A rodada vai junto: o convidado pode ser uma Activity nova (contador zerado), e o nativo
+                // descarta todo pacote de outra rodada; sem isso a segunda partida da sessão travaria.
+                out.writeLineAscii("STATE ${state.size} $round")
                 out.write(state)
                 out.flush()
             }
@@ -180,20 +192,29 @@ class NetplayController(
 
     private suspend fun guestRound(hostAddress: String, port: Int, token: String, input: DataInputStream, delayFrames: Int) {
         val fd = NetplayProtocol.detach(NetplayGuest.connect(hostAddress, port, "INPUT $token"))
-        val state = try {
+        val (state, round) = try {
             withContext(Dispatchers.IO) {
                 val header = input.readLineAscii()
-                val size = header.removePrefix("STATE ").toIntOrNull()
-                if (!header.startsWith("STATE") || size == null || size <= 0 || size > NetplayProtocol.MAX_STATE) throw IOException(header)
-                ByteArray(size).also { input.readFully(it) }
+                val parts = header.split(' ')
+                val size = parts.getOrNull(1)?.toIntOrNull()
+                val round = parts.getOrNull(2)?.toIntOrNull()
+                if (parts[0] != "STATE" || size == null || size <= 0 || size > NetplayProtocol.MAX_STATE || round == null) throw IOException(header)
+                ByteArray(size).also { input.readFully(it) } to round
             }
         } catch (t: Throwable) {
             closeFd(fd)
             throw t
         }
-        if (!resumeEmulation()) { closeFd(fd); throw IOException("not running") }
-        val v = view() ?: run { closeFd(fd); throw IOException("no view") }
-        val ok = withContext(Dispatchers.Default) { v.unserializeAndStartNetplay(state, fd, 1, delayFrames, ++epoch) }
+        // A rodada é a do anfitrião: o nativo descarta os pacotes de outra rodada.
+        epoch = round
+        val v = try {
+            if (!resumeEmulation()) throw IOException("not running")
+            view() ?: throw IOException("no view")
+        } catch (t: Throwable) {
+            closeFd(fd)
+            throw t
+        }
+        val ok = withContext(NonCancellable + Dispatchers.Default) { v.unserializeAndStartNetplay(state, fd, 1, delayFrames, round) }
         if (!ok) { closeFd(fd); throw IOException("state") }
         ui = NetplayUi.Playing(2)
         startMonitor()
@@ -225,7 +246,12 @@ class NetplayController(
                 val current = ui as? NetplayUi.Playing ?: continue
                 val status = view()?.netplayStatus() ?: -1L
                 when {
-                    status == -2L -> { end(R.string.netplay_lost); return@launch }
+                    status == -2L -> {
+                        // Numa ressincronização o anfitrião fecha a entrada antes de o RESYNC chegar aqui:
+                        // só é queda se, passado um instante, a mesma partida continua sem conexão.
+                        delay(RESYNC_GRACE_MS)
+                        if (ui === current && view()?.netplayStatus() == -2L) { end(R.string.netplay_lost); return@launch }
+                    }
                     status >= 0 -> {
                         val waiting = status > WAIT_NOTICE_MS
                         if (waiting != current.waiting) ui = current.copy(waiting = waiting)
@@ -275,6 +301,7 @@ class NetplayController(
 
     companion object {
         private const val WAIT_NOTICE_MS = 700L
+        private const val RESYNC_GRACE_MS = 1_000L
         private const val JOIN_TIMEOUT_MS = 10_000
         private const val BYE_WAIT_MS = 2_000L
     }

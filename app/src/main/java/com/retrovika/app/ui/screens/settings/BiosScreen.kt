@@ -81,20 +81,21 @@ fun BiosScreen(onBack: () -> Unit) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        // Contexto da aplicação, pego fora da corrotina: a Activity pode ser recriada (rotação) antes da
+        // importação terminar, e capturá-la aqui a manteria viva até o fim.
+        val res = context.localized()
         app.scope.launch(Dispatchers.Main) {
             // O escopo do app não tem tratador: uma exceção solta aqui derrubaria o processo.
             try {
                 status.errors = null
                 val found = bios.import(uris)
-                // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
-                val res = context.localized()
                 status.message = if (found.isEmpty()) res.getString(R.string.bios_ui_none_recognized)
                 else res.getString(R.string.bios_ui_imported, found.joinToString())
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
                 status.message = null
-                status.errors = t.userMessage(context)
+                status.errors = t.userMessage(res)
             }
             status.version++
         }

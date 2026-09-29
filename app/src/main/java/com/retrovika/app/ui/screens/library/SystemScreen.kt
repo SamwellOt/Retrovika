@@ -95,6 +95,7 @@ import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Unit, onOpenBios: () -> Unit, onOpenVersions: () -> Unit) {
@@ -123,9 +124,10 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         // No escopo do app: sair da tela no meio da cópia não a interrompe nem deixa arquivos pela metade.
+        // Contexto da aplicação, pego fora da corrotina: a Activity pode ser recriada (rotação) antes da
+        // importação terminar, e capturá-la aqui a manteria viva até o fim.
+        val res = context.localized()
         app.scope.launch(Dispatchers.Main) {
-            // Contexto da aplicação: a Activity pode ser recriada (rotação) antes da importação terminar.
-            val res = context.localized()
             importStatus.message = res.resources.getQuantityString(R.plurals.system_importing, uris.size, uris.size)
             importStatus.errors = null
             // O escopo do app não tem tratador: uma exceção solta aqui derrubaria o processo.
@@ -140,7 +142,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 throw c
             } catch (t: Throwable) {
                 importStatus.message = null
-                importStatus.errors = t.userMessage(context)
+                importStatus.errors = t.userMessage(res)
             }
         }
     }
@@ -150,7 +152,8 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val core = system.core(selectedCore?.ifEmpty { bench?.takeIf { !it.skipped }?.chosen })
     val language = remember { context.uiLanguage() }
     // Só a contagem: a tela de versões refaz os grupos com os detalhes.
-    val repeated = remember(all, language) { Versions.groups(all, language).size }
+    // Fora da thread principal: com milhares de ROMs o agrupamento travava a transição e a rolagem.
+    val repeated by produceState(0, all, language) { value = withContext(Dispatchers.Default) { Versions.groups(all, language).size } }
 
     val accent = system.accentColor()
     LazyVerticalGrid(
