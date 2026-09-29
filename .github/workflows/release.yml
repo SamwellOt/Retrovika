@@ -1,5 +1,6 @@
 # Publica uma release com o APK quando uma tag v* é enviada (ex.: git push origin v0.2.0)
 # ou quando o workflow é disparado à mão com o nome da tag, que é criada no commit compilado.
+# Disparado à mão para uma release que já existe, troca o APK, relê as notas e move a tag para o commit.
 #
 # Assinatura: com os secrets RETROVIKA_KEYSTORE_BASE64, RETROVIKA_KEYSTORE_PASSWORD,
 # RETROVIKA_KEY_ALIAS e RETROVIKA_KEY_PASSWORD, o APK sai com a chave do projeto e atualiza
@@ -68,7 +69,13 @@ jobs:
           notes=".github/release-notes/$TAG.md"
           if [ -f "$notes" ]; then args=(--notes-file "$notes"); else args=(--generate-notes); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # Republicar uma release (APK corrigido): as notas são relidas do arquivo e a tag passa
+            # para o commit compilado, para APK, texto e código-fonte da release baterem.
             gh release upload "$TAG" "$APK" --clobber
+            if [ -f "$notes" ]; then gh release edit "$TAG" --notes-file "$notes"; fi
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              git push -f origin "$GITHUB_SHA:refs/tags/$TAG"
+            fi
           else
             gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "Retrovika ${TAG#v}" "${args[@]}"
           fi
