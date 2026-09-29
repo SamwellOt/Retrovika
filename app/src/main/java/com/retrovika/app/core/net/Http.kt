@@ -173,7 +173,7 @@ object Http {
             var inParts = false
             val cookies = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
             if (parallel > 1 && !cookies) {
-                downloadInParts(url, part, headers, http, parallel, onBytes, onProgress)?.let { done ->
+                downloadInParts(url, part, headers, http, parallel, onBytes, onProgress, onWait)?.let { done ->
                     read = done.total
                     total = done.total
                     if (serverName) remoteName = done.remoteName
@@ -293,7 +293,7 @@ object Http {
      */
     private suspend fun downloadInParts(
         url: String, part: File, headers: Map<String, String>, http: OkHttpClient, connections: Int,
-        onBytes: (Long, Long) -> Unit, onProgress: (Float) -> Unit,
+        onBytes: (Long, Long) -> Unit, onProgress: (Float) -> Unit, onWait: (Long) -> Unit,
     ): PartsResult? = coroutineScope {
         // HTTP/1.1: no HTTP/2 os pedaços dividiriam uma conexão só, e o limite por conexão continuaria valendo.
         val h1 = http.newBuilder().protocols(listOf(Protocol.HTTP_1_1)).build()
@@ -343,11 +343,11 @@ object Http {
                                 val current = piece ?: synchronized(queue) { queue.removeFirstOrNull() }
                                 if (current == null) { active.decrementAndGet(); break }
                                 piece = null
-                                val finished = fetchPiece(h1, url, headers, current, channel, response, done, active, busyWaited, ::report)
+                                val rest = fetchPiece(h1, url, headers, current, channel, response, done, active, busyWaited, ::report, onWait)
                                 response = null
-                                if (!finished) {
-                                    // Ocupado com outras conexões ainda trabalhando: esta sai e o pedaço volta à fila.
-                                    synchronized(queue) { queue.addFirst(current) }
+                                if (rest != null) {
+                                    // Ocupado com outras conexões ainda trabalhando: esta sai e o que falta do pedaço volta à fila.
+                                    synchronized(queue) { queue.addFirst(rest) }
                                     break
                                 }
                             }
@@ -362,9 +362,8 @@ object Http {
                 while (true) {
                     val current = synchronized(queue) { queue.removeFirstOrNull() } ?: break
                     active.set(1)
-                    if (!fetchPiece(h1, url, headers, current, channel, null, done, active, busyWaited, ::report)) {
-                        synchronized(queue) { queue.addFirst(current) }
-                    }
+                    fetchPiece(h1, url, headers, current, channel, null, done, active, busyWaited, ::report, onWait)
+                        ?.let { rest -> synchronized(queue) { queue.addFirst(rest) } }
                 }
             } catch (e: NoRangesException) {
                 raf.setLength(0)
@@ -387,13 +386,15 @@ object Http {
 
     /**
      * Baixa [piece] e grava na posição dele. [initial] é uma resposta já aberta que começa no início do
-     * pedaço (o pedido de teste). Devolve false quando o servidor está ocupado e há outras conexões para
-     * continuar; com esta sendo a última, espera o Retry-After (dentro do limite de [BUSY_BUDGET_MS]).
+     * pedaço (o pedido de teste). Devolve null com o pedaço completo, ou o que falta dele quando o servidor está
+     * ocupado e há outras conexões para continuar (os bytes já gravados ficam). Sendo a última conexão, espera
+     * o Retry-After (dentro do limite de [BUSY_BUDGET_MS]), avisando [onWait] como o download comum.
      */
     private suspend fun fetchPiece(
         http: OkHttpClient, url: String, headers: Map<String, String>, piece: Piece, channel: FileChannel,
         initial: Response?, done: AtomicLong, active: AtomicInteger, busyWaited: AtomicLong, report: () -> Unit,
-    ): Boolean {
+        onWait: (Long) -> Unit,
+    ): Piece? {
         var pos = piece.start
         var opened = initial
         var drops = 0
@@ -439,12 +440,14 @@ object Http {
                 continue
             }
             if (wait > 0) {
-                if (active.get() > 1) { active.decrementAndGet(); return false }
+                if (active.get() > 1) { active.decrementAndGet(); return Piece(pos, piece.end) }
                 if (busyWaited.addAndGet(wait) > BUSY_BUDGET_MS) throw LocalizedException(R.string.download_server_busy)
+                onWait(System.currentTimeMillis() + wait)
                 delay(wait)
+                onWait(0)
             }
         }
-        return true
+        return null
     }
 
     private const val PROGRESS_INTERVAL_NS = 150_000_000L

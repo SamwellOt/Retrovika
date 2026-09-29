@@ -17,6 +17,11 @@ import kotlin.math.roundToInt
  */
 class MeikiOcr(pack: OcrPack) : Closeable {
 
+    // Antes de qualquer classe do ONNX: o SessionOptions (e o OrtEnvironment) carregam a ponte JNI na
+    // inicialização estática, e ela só carrega com a libonnxruntime.so do pacote já na memória. Se falhar ali,
+    // a classe fica inutilizável até o app reabrir.
+    init { loadRuntime(pack) }
+
     private val env: OrtEnvironment
     private val detector: OrtSession
     private val recognizer: OrtSession
@@ -29,7 +34,6 @@ class MeikiOcr(pack: OcrPack) : Closeable {
     }
 
     init {
-        loadRuntime(pack)
         env = OrtEnvironment.getEnvironment()
         detector = env.createSession(pack.model(OcrPack.DETECTOR).path, options)
         recognizer = env.createSession(pack.model(OcrPack.RECOGNIZER).path, options)

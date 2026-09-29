@@ -60,7 +60,29 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
     /** Últimos trechos traduzidos nesta sessão: a IA mantém os nomes e o tom entre uma tela e outra. */
     private val history = ArrayDeque<String>()
 
+    /** Traduções em andamento e se [close] já foi pedido: os modelos só são liberados quando a última termina. */
+    private val lifecycle = Any()
+    private var running = 0
+    private var closed = false
+
     suspend fun translate(
+        frame: OcrFrame, target: String, ai: AiConfig?, game: GeminiText.GameContext, onStage: (Stage) -> Unit,
+    ): Result {
+        synchronized(lifecycle) {
+            if (closed) throw CancellationException("tradutor fechado")
+            running++
+        }
+        try {
+            return translateOpen(frame, target, ai, game, onStage)
+        } finally {
+            // O cancelamento não interrompe a leitura nativa do MeikiOCR: fechar as sessões dele no meio dela
+            // derrubaria o app. Quem fecha por último é quem libera.
+            val release = synchronized(lifecycle) { running--; closed && running == 0 }
+            if (release) releaseAll()
+        }
+    }
+
+    private suspend fun translateOpen(
         frame: OcrFrame, target: String, ai: AiConfig?, game: GeminiText.GameContext, onStage: (Stage) -> Unit,
     ): Result {
         onStage(Stage.READING)
@@ -199,6 +221,11 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
     }
 
     override fun close() {
+        val now = synchronized(lifecycle) { closed = true; running == 0 }
+        if (now) releaseAll()
+    }
+
+    private fun releaseAll() {
         runCatching { recognizer.close() }
         runCatching { meiki?.close() }
         meiki = null

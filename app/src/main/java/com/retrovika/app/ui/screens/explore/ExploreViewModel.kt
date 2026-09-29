@@ -8,6 +8,7 @@ import com.retrovika.app.AppContainer
 import com.retrovika.app.core.catalog.CatalogEntry
 import com.retrovika.app.core.catalog.Genre
 import com.retrovika.app.core.catalog.RomVariant
+import com.retrovika.app.core.catalog.downloadKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -137,10 +138,17 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
      * usuário já via, e a grade pulava junto com o cartão que segura a rolagem. Os cartões até o último já visto
      * ficam onde estão; só os de baixo, ainda fora da tela, seguem a ordem nova.
      */
-    private fun stable(current: List<CatalogEntry>, target: List<CatalogEntry>): List<CatalogEntry> {
+    private fun stable(current: List<CatalogEntry>, target: List<CatalogEntry>, onlyIn: Set<String>? = null): List<CatalogEntry> {
         val keep = (seenUntil + 1).coerceIn(0, current.size)
-        return app.catalog.mergeDuplicates(current.subList(0, keep) + target)
+        val kept = current.subList(0, keep).let { seen -> if (onlyIn == null) seen else seen.filter { it.downloadKey in onlyIn } }
+        return app.catalog.mergeDuplicates(kept + target)
     }
+
+    /**
+     * A lista na tela veio do disco ([CatalogSnapshots]): quando a busca termina, os cartões já vistos só
+     * ficam se ainda estão no resultado (um jogo que saiu do site não pode continuar no topo).
+     */
+    @Volatile private var showingSnapshot = false
 
     fun sourceName(id: String): String? = realSources.firstOrNull { it.id == id }?.name
 
@@ -192,12 +200,14 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         searchJob = viewModelScope.launch {
             if (debounce) delay(350)
             seenUntil = -1
+            showingSnapshot = false
             _state.update {
                 it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false, partialFailure = false)
             }
             // A última lista deste filtro aparece na hora; a busca abaixo a atualiza no lugar.
             snapshotKey(_state.value)?.let { key ->
                 app.catalogSnapshots.read(key)?.let { saved ->
+                    showingSnapshot = true
                     _state.update { it.copy(entries = saved.entries, totalResults = saved.totalResults) }
                 }
             }
@@ -276,7 +286,9 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             return
         }
         // O resultado final contém todos os parciais: aqui também nada que já apareceu muda de lugar.
-        _state.update { it.copy(entries = stable(it.entries, before + first.entries), waitingSlowSources = false) }
+        val fresh = if (page == 1 && showingSnapshot) (before + first.entries).mapTo(HashSet()) { it.downloadKey } else null
+        showingSnapshot = false
+        _state.update { it.copy(entries = stable(it.entries, before + first.entries, onlyIn = fresh), waitingSlowSources = false) }
         if (first.partial) {
             // Alguma fonte falhou: os jogos das outras ficam, mas a página não avança (senão a daquela
             // fonte nunca seria pedida de novo) e o preenchimento automático para por aqui.
