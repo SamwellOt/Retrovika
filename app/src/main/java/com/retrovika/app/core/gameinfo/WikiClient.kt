@@ -65,10 +65,7 @@ class WikiClient {
             found
         }
         for (query in searchQueries(clean)) {
-            val games = searchArticles(query).filter { p ->
-                val description = p.description.lowercase()
-                ("game" in description || "video game" in p.intro.lowercase()) && "series" !in description
-            }
+            val games = searchArticles(query).filter { it.isGame() }
             val page = games.take(MAX_CHECKED).firstOrNull { hasName(it) } ?: continue
             val name = GameTitles.clean(page.title)
             if (GameTitles.same(name, clean)) return null
@@ -76,6 +73,15 @@ class WikiClient {
             return OtherTitle(name, page.item, igdb)
         }
         return null
+    }
+
+    /**
+     * Artigo sobre um jogo: a descrição curta termina em "game" ("2001 video game"). Empresas ("Japanese
+     * video game company"), listas e séries citam o jogo em itálico e não podem passar.
+     */
+    private fun Article.isGame(): Boolean {
+        val d = description.trim().lowercase()
+        return if (d.isNotEmpty()) d.endsWith("game") else Regex("""\bis an? [^.]*video game\b""").containsMatchIn(intro.take(INTRO_CHARS))
     }
 
     /** O código (wikitexto) do artigo inteiro. */

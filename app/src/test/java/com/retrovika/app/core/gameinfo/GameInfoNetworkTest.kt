@@ -117,9 +117,9 @@ class GameInfoNetworkTest {
                 }
             }
         }
+        println("  $other")
         assertNotNull("nome em inglês não encontrado", other)
         assertTrue(other!!.title, GameTitles.same(other.title, "Flower, Sun, and Rain"))
-        println("  ${other.title} · ${other.item} · IGDB ${other.igdbSlug}")
         // O mesmo nome nos dois lados não é "outro título".
         assertEquals(null, wiki.otherTitle("Chrono Trigger (USA)"))
     }
