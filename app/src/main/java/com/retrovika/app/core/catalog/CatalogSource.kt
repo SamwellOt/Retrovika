@@ -28,6 +28,8 @@ data class CatalogPage(
     val totalPages: Int,
     val totalResults: Int,
     val approximate: Boolean = false,
+    /** Busca em várias fontes em que alguma falhou: a página está incompleta e deve ser pedida de novo. */
+    val partial: Boolean = false,
 )
 
 /**

@@ -21,7 +21,7 @@ class GameInfoRepository(
      * quando ele não acha nada, tenta o nome em inglês e o slug do IGDB pelo Wikidata/Wikipedia.
      */
     suspend fun backloggd(title: String, systemId: String): BackloggdInfo? =
-        cached(backloggdCache, "$systemId|${GameTitles.key(title)}") {
+        cached(backloggdCache, "$systemId|${GameTitles.key(title)}", keep = { it?.reviewsFailed != true }) {
             backloggd.find(title, systemId) ?: otherTitle(title)?.let { backloggd.find(it.title, systemId, it.igdbSlug) }
         }
 
@@ -41,11 +41,17 @@ class GameInfoRepository(
     suspend fun wiki(title: String, lang: String, igdbSlug: String?): WikiInfo? =
         cached(wikiCache, "$lang|${igdbSlug ?: GameTitles.key(title)}") { wiki.find(title, lang, igdbSlug) }
 
-    private suspend fun <T> cached(cache: LinkedHashMap<String, Cached<T>>, key: String, load: suspend () -> T): T {
+    /** [keep] decide se o resultado vai para o cache (um resultado incompleto é pedido de novo na próxima vez). */
+    private suspend fun <T> cached(
+        cache: LinkedHashMap<String, Cached<T>>,
+        key: String,
+        keep: (T) -> Boolean = { true },
+        load: suspend () -> T,
+    ): T {
         val now = System.currentTimeMillis()
         synchronized(cache) { cache[key] }?.takeIf { now - it.at < TTL_MS }?.let { return it.value }
         val value = load()
-        synchronized(cache) { cache[key] = Cached(value, now) }
+        if (keep(value)) synchronized(cache) { cache[key] = Cached(value, now) }
         return value
     }
 

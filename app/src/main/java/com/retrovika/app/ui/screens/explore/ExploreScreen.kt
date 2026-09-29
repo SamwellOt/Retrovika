@@ -272,6 +272,20 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
             )
         }
 
+        // Algum site não respondeu nesta página: os jogos dos outros ficam, e dá para pedir de novo.
+        if (state.partialFailure && !state.loading) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "message") {
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(stringResource(R.string.explore_partial_failure), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
+                    GhostButton(stringResource(R.string.common_retry), vm::retryPartial, icon = Icons.Rounded.Refresh)
+                }
+            }
+        }
+
         if (state.loading && state.entries.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }, contentType = "loading") {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {

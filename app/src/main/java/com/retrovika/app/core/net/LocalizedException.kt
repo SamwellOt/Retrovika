@@ -9,6 +9,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
+import kotlinx.serialization.SerializationException
 
 /**
  * Erro que chega ao usuário (ex.: na lista de downloads). Guarda o recurso de texto em vez da
@@ -30,6 +31,15 @@ fun Throwable.userMessage(context: Context): String {
         this is UnknownHostException || this is ConnectException -> res.getString(R.string.common_error_no_internet)
         this is SocketTimeoutException -> res.getString(R.string.common_error_timeout)
         this is SSLException -> res.getString(R.string.common_error_secure_connection)
+        // Resposta HTTP de erro: o código vira uma frase, em vez de "HTTP 404: <url>".
+        this is HttpStatusException -> when (code) {
+            404, 410 -> res.getString(R.string.common_error_http_not_found)
+            401, 403 -> res.getString(R.string.common_error_http_forbidden)
+            in 500..599 -> res.getString(R.string.common_error_http_server, code)
+            else -> res.getString(R.string.common_error_http_other, code)
+        }
+        // JSON fora do formato esperado (a API mudou ou devolveu outra coisa).
+        this is SerializationException -> res.getString(R.string.common_error_bad_data)
         "ENOSPC" in raw || "No space left" in raw -> res.getString(R.string.common_error_no_space)
         this is OutOfMemoryError -> res.getString(R.string.common_error_memory)
         raw.isNotBlank() -> raw

@@ -53,8 +53,13 @@ data class ExploreState(
     @StringRes val error: Int? = null,
     /** Algum site já respondeu sem jogos e os mais lentos ainda estão buscando: a tela explica a espera. */
     val waitingSlowSources: Boolean = false,
+    /**
+     * A última página veio sem alguma fonte (site fora do ar): os jogos das outras aparecem, mas a página
+     * não conta como carregada. A rolagem para aqui e a tela oferece tentar de novo a mesma página.
+     */
+    val partialFailure: Boolean = false,
 ) {
-    val canLoadMore get() = !loading && error == null && page < totalPages
+    val canLoadMore get() = !loading && error == null && !partialFailure && page < totalPages
     val aggregated get() = sourceId == ALL_SOURCES
     /** Primeira página ainda chegando: a tela mostra cartões-esqueleto em vez da lista vazia. */
     val initialLoading get() = loading && entries.isEmpty() && error == null
@@ -137,7 +142,9 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(350)
-            _state.update { it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false) }
+            _state.update {
+                it.copy(entries = emptyList(), page = 0, totalPages = 1, loading = true, error = null, waitingSlowSources = false, partialFailure = false)
+            }
             fetch(1)
         }
     }
@@ -151,6 +158,16 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         }
     }
 
+    /** Pede de novo a página que veio sem alguma fonte; as que responderam vêm do cache. */
+    fun retryPartial() {
+        val s = _state.value
+        if (!s.partialFailure || searchJob?.isActive == true) return
+        searchJob = viewModelScope.launch {
+            _state.update { it.copy(loading = true, partialFailure = false) }
+            fetch(s.page + 1)
+        }
+    }
+
     /** Uma página da fonte atual (ou de todas), interpretada fora da thread principal. */
     private suspend fun fetchPage(s: ExploreState, page: Int, onPartial: ((CatalogPage) -> Unit)? = null): CatalogPage =
         withContext(Dispatchers.Default) {
@@ -159,10 +176,16 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
         }
 
     /** Acrescenta uma página ao estado; o total vem da 1ª e as seguintes só o corrigem para cima. */
-    private fun appendPage(result: CatalogPage) = _state.update {
+    private fun appendPage(result: CatalogPage) {
+        appendPage(result, advance = true)
+    }
+
+    /** Com [advance] falso (página parcial), mostra os jogos sem dar a página por carregada. */
+    private fun appendPage(result: CatalogPage, advance: Boolean): Unit = _state.update {
         it.copy(
             entries = (it.entries + result.entries).distinctBy { e -> e.sourceId + e.id },
-            page = maxOf(it.page, result.page), totalPages = maxOf(result.totalPages, result.page),
+            page = if (advance) maxOf(it.page, result.page) else it.page,
+            totalPages = maxOf(result.totalPages, result.page),
             totalResults = if (result.page == 1) result.totalResults else maxOf(it.totalResults, result.totalResults),
             totalApproximate = if (result.page == 1) result.approximate else it.totalApproximate && result.approximate,
         )
@@ -188,6 +211,13 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
             return
         }
         _state.update { it.copy(entries = before, waitingSlowSources = false) }
+        if (first.partial) {
+            // Alguma fonte falhou: os jogos das outras ficam, mas a página não avança (senão a daquela
+            // fonte nunca seria pedida de novo) e o preenchimento automático para por aqui.
+            appendPage(first, advance = false)
+            _state.update { it.copy(loading = false, partialFailure = true) }
+            return
+        }
         appendPage(first)
 
         // Filtro que rende pouco por página: as próximas vêm em paralelo até encher a tela.

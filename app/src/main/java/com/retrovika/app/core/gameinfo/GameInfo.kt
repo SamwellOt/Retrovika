@@ -81,6 +81,8 @@ data class BackloggdInfo(
     val timeToMaster: String?,
     val igdbUrl: String?,
     val reviews: List<BackloggdReview> = emptyList(),
+    /** O pedido das reviews falhou: o resto vale, mas não fica no cache (a próxima visita tenta de novo). */
+    val reviewsFailed: Boolean = false,
 )
 
 /** Nota da crítica registrada no Wikidata ("94/100" do Metacritic, "39/40" da Famitsu…). */
