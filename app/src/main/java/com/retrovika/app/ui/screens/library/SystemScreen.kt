@@ -78,6 +78,12 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.VideogameAsset
 import com.retrovika.app.ui.components.EmptyState
+import com.retrovika.app.ui.components.SurfaceCard
+import com.retrovika.app.core.library.Versions
+import com.retrovika.app.core.settings.uiLanguage
+import androidx.compose.material.icons.rounded.Layers
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import com.retrovika.app.ui.components.GameCard
 import com.retrovika.app.ui.components.GameCardSkeleton
 import com.retrovika.app.ui.components.bleed
@@ -89,7 +95,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
-fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Unit, onOpenBios: () -> Unit) {
+fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Unit, onOpenBios: () -> Unit, onOpenVersions: () -> Unit) {
     val system = Systems.byId(systemId) ?: return
     val context = LocalContext.current
     val app = context.container
@@ -130,6 +136,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     }
 
     val core = system.core(selectedCore)
+    val language = remember { context.uiLanguage() }
+    // Só a contagem: a tela de versões refaz os grupos com os detalhes.
+    val repeated = remember(all, language) { Versions.groups(all, language).size }
 
     val accent = system.accentColor()
     LazyVerticalGrid(
@@ -245,6 +254,19 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                     style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
                 )
+                if (repeated > 0) {
+                    SurfaceCard(Modifier.fillMaxWidth().padding(bottom = 14.dp), onClick = onOpenVersions) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconTile(Icons.Rounded.Layers, Palette.Cyan, size = 36.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(countString(R.plurals.system_versions_title, repeated), style = MaterialTheme.typography.titleSmall)
+                                Text(stringResource(R.string.system_versions_subtitle), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+                            }
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.TextSecondary)
+                        }
+                    }
+                }
                 if (all.isNotEmpty()) {
                     SectionHeader(stringResource(R.string.system_games), inset = 4.dp)
                     Spacer(Modifier.height(12.dp))

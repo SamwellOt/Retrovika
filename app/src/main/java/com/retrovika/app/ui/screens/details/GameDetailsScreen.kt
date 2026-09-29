@@ -54,6 +54,7 @@ import coil3.compose.AsyncImage
 import com.retrovika.app.container
 import com.retrovika.app.core.dat.DatRepository
 import com.retrovika.app.core.library.GameSource
+import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
@@ -85,6 +86,11 @@ import com.retrovika.app.ui.components.readableAccent
 import com.retrovika.app.ui.screens.home.formatPlayTime
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.theme.Palette
+import com.retrovika.app.core.library.Versions
+import com.retrovika.app.core.settings.uiLanguage
+import com.retrovika.app.ui.screens.library.label
+import com.retrovika.app.ui.components.Badge
+import androidx.compose.material.icons.rounded.Star
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.map
@@ -93,7 +99,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit) {
+fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit, onOpenVersions: (String) -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val scope = rememberCoroutineScope()
@@ -212,6 +218,8 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 }
             }
 
+            LibraryVersions(g, onOpenGame = onOpenGame, onOpenAll = { onOpenVersions(g.systemId) })
+
             if (app.dat.supports(g.systemId)) {
                 Spacer(Modifier.height(24.dp))
                 SectionHeader(stringResource(R.string.details_identify_title))
@@ -321,6 +329,45 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } },
             containerColor = Palette.SurfaceHigh,
         )
+    }
+}
+
+/** Outras versões deste jogo na biblioteca, com a recomendada marcada; tocar abre a página dela. */
+@Composable
+private fun LibraryVersions(game: Game, onOpenGame: (Long) -> Unit, onOpenAll: () -> Unit) {
+    val context = LocalContext.current
+    val app = context.container
+    val all by remember(game.systemId) { app.library.bySystem(game.systemId) }.collectAsStateWithLifecycle(emptyList())
+    val language = remember { context.uiLanguage() }
+    val group = remember(all, game, language) { Versions.groupOf(game, all, language) } ?: return
+    Spacer(Modifier.height(24.dp))
+    SectionHeader(stringResource(R.string.details_library_versions), action = stringResource(R.string.details_library_versions_all), onAction = onOpenAll)
+    Spacer(Modifier.height(6.dp))
+    group.all.forEach { rated ->
+        val current = rated.game.id == game.id
+        Row(
+            Modifier.fillMaxWidth()
+                .clickable(enabled = !current) { onOpenGame(rated.game.id) }
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (rated === group.best) Icons.Rounded.Star else Icons.AutoMirrored.Rounded.InsertDriveFile, null,
+                tint = if (rated === group.best) Palette.Sun else Palette.TextMuted, modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    rated.game.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = if (current) Palette.TextPrimary else Palette.TextSecondary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 3.dp)) {
+                    if (rated === group.best) Badge(stringResource(R.string.versions_recommended), Palette.Sun)
+                    if (current) Badge(stringResource(R.string.details_library_versions_this), Palette.Neon)
+                    rated.tags.take(2).forEach { Badge(stringResource(it.label()), Palette.Cyan) }
+                }
+            }
+        }
     }
 }
 

@@ -44,6 +44,30 @@ class DatRepository(
         return Identification.Found(match, versions)
     }
 
+    /**
+     * Identifica de uma vez os [games] ainda não verificados, avisando o progresso (feitos, total).
+     * Devolve os que bateram com o DAT; quem chama grava o resultado. Um arquivo ilegível só fica de fora.
+     */
+    suspend fun identifyAll(games: List<Game>, onProgress: (Int, Int) -> Unit): List<Pair<Game, DatEntry>> {
+        val pending = games.filter { !it.verified && supports(it.systemId) }
+        val found = mutableListOf<Pair<Game, DatEntry>>()
+        pending.forEachIndexed { i, game ->
+            onProgress(i, pending.size)
+            val result = try {
+                identify(game)
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (t: java.io.IOException) {
+                // Sem internet para baixar o DAT: nenhum outro jogo vai conseguir, então para aqui.
+                if (dao.countHashed(game.systemId) == 0) throw t
+                null
+            }
+            if (result is Identification.Found) found += game to result.match
+        }
+        onProgress(pending.size, pending.size)
+        return found
+    }
+
     /** Evita baixar e indexar o mesmo DAT duas vezes quando vários jogos são identificados juntos. */
     private val loadLock = Mutex()
 

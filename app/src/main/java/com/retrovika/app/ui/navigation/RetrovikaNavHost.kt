@@ -90,6 +90,7 @@ import com.retrovika.app.ui.screens.explore.ExploreScreen
 import com.retrovika.app.ui.screens.home.HomeScreen
 import com.retrovika.app.ui.screens.library.LibraryScreen
 import com.retrovika.app.ui.screens.library.SystemScreen
+import com.retrovika.app.ui.screens.library.VersionsScreen
 import com.retrovika.app.ui.screens.settings.BiosScreen
 import com.retrovika.app.ui.screens.settings.CoresScreen
 import com.retrovika.app.ui.screens.settings.SettingsScreen
@@ -244,6 +245,14 @@ fun RetrovikaNavHost() {
                         onBack = { nav.back(entry) },
                         onOpenGame = { nav.open(entry, "game/$it") },
                         onOpenBios = { nav.open(entry, "settings/bios") },
+                        onOpenVersions = { nav.open(entry, "system/${entry.arguments?.getString("id").orEmpty()}/versions") },
+                    )
+                }
+                composable("system/{id}/versions", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                    VersionsScreen(
+                        systemId = entry.arguments?.getString("id").orEmpty(),
+                        onBack = { nav.back(entry) },
+                        onOpenGame = { nav.open(entry, "game/$it") },
                     )
                 }
                 composable("game/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
@@ -256,6 +265,8 @@ fun RetrovikaNavHost() {
                             if (previous?.destination?.route == "system/{id}" && previous.arguments?.getString("id") == id) nav.back(entry)
                             else nav.open(entry, "system/$id")
                         },
+                        onOpenGame = { nav.open(entry, "game/$it") },
+                        onOpenVersions = { nav.open(entry, "system/$it/versions") },
                     )
                 }
             }
