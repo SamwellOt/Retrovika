@@ -230,13 +230,21 @@ class BackloggdClient(
             runCatching { Http.json.parseToJsonElement(s.data()).jsonObject }.getOrNull()
                 ?.takeIf { it["@type"]?.jsonPrimitive?.contentOrNull == "AggregateRating" }
         }
-        val rating = ld?.get("ratingValue")?.jsonPrimitive?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() }
-        val ratingCount = ld?.get("ratingCount")?.jsonPrimitive?.let { it.intOrNull ?: it.contentOrNull?.toIntOrNull() }
+        val ldRating = ld?.get("ratingValue")?.jsonPrimitive?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() }
+        val ldCount = ld?.get("ratingCount")?.jsonPrimitive?.let { it.intOrNull ?: it.contentOrNull?.toIntOrNull() }
 
         // A distribuição aparece duas vezes (layouts de celular e de computador): basta a primeira.
         val histogram = doc.selectFirst("#ratings-bars-height")?.select("[data-tippy-content]")?.mapNotNull {
             it.attr("data-tippy-content").substringBefore('|').trim().replace(",", "").toIntOrNull()
         }.orEmpty().takeIf { it.size == 10 }.orEmpty()
+
+        // O JSON-LD pode vir desatualizado (cache da CDN: 3,5 no app, 3,9 no site). A distribuição é a mesma
+        // que o site usa para a média (Σ nota × votos / Σ votos): se divergem, vale a distribuição.
+        val votes = histogram.sum()
+        val histogramRating = if (votes > 0) histogram.withIndex().sumOf { (i, n) -> n * (i + 1) / 2.0 } / votes else null
+        val stale = histogramRating != null && (ldRating == null || Math.abs(histogramRating - ldRating) > 0.005)
+        val rating = if (stale) histogramRating else ldRating
+        val ratingCount = if (stale) votes else ldCount
 
         val title = doc.selectFirst("#game-profile h1")?.text()?.trim()
             ?: doc.selectFirst("h1")?.text()?.trim() ?: slug

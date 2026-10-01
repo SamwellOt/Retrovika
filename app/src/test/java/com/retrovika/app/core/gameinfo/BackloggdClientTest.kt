@@ -77,6 +77,14 @@ class BackloggdClientTest {
     """.trimIndent()
 
     @Test
+    fun `json-ld desatualizado perde para a distribuicao`() {
+        val old = page.replace("4.159190937943853", "3.5").replace("57057", "45")
+        val info = client.parseGame(old, "super-mario-64")
+        assertEquals(4.159, info.rating!!, 0.001)
+        assertEquals(57029, info.ratingCount)
+    }
+
+    @Test
     fun `le nota distribuicao contadores e ficha da pagina do jogo`() {
         val info = client.parseGame(page, "super-mario-64")
         assertEquals("Super Mario 64", info.title)
