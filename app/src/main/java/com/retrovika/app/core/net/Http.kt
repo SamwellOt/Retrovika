@@ -169,6 +169,7 @@ object Http {
             var busyWait = 0L
             var dropTries = 0
             var lastReport = 0L
+            var restart = false
             // Em partes quando dá; senão (servidor sem Range, arquivo pequeno, ocupado), o download comum abaixo.
             var inParts = false
             val cookies = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
@@ -203,6 +204,14 @@ object Http {
                         // Queda logo depois do último byte de um arquivo sem tamanho anunciado: o pedido de
                         // continuação volta 416 porque não falta nada.
                         if (res.code == 416 && read > 0 && total <= 0) return@executeCancellable true
+                        // Servidor que não atende a continuação (script de download com link assinado): o
+                        // que já veio é descartado e o arquivo recomeça do zero, sem Range.
+                        if (res.code == 416 && read > 0) {
+                            FileOutputStream(part).close()
+                            read = 0
+                            restart = true
+                            return@executeCancellable false
+                        }
                         if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
                         // 206 continua de onde parou; 200 manda o arquivo inteiro de novo.
                         val resumed = read > 0 && res.code == 206
@@ -246,6 +255,10 @@ object Http {
                     continue
                 }
                 if (finished) break
+                if (restart) {
+                    restart = false
+                    continue
+                }
                 busyTries++
                 busyWaited += busyWait
                 onWait(System.currentTimeMillis() + busyWait)
@@ -405,7 +418,8 @@ object Http {
             when {
                 res.code == 503 || res.code == 429 ->
                     retryAfterMs(res.header("Retry-After")) ?: BUSY_WAITS_MS[minOf(busyTries++, BUSY_WAITS_MS.size - 1)]
-                res.code == 200 -> throw NoRangesException()
+                // 200 (arquivo inteiro) ou 416: o servidor não atende pedaços; o download comum assume.
+                res.code == 200 || res.code == 416 -> throw NoRangesException()
                 res.code != 206 -> throw LocalizedException(R.string.download_http_error, res.code, url)
                 else -> {
                     val input = res.body!!.byteStream()
