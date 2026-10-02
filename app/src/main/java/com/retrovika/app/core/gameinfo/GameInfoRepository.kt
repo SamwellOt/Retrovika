@@ -33,7 +33,8 @@ class GameInfoRepository(
         }
     }
 
-    private val backloggdStore = Store("backloggd", BackloggdInfo.serializer().nullable)
+    // "backloggd2": descarta o cache em disco da 0.5.5 ou anterior, que guardava a nota errada do JSON-LD por 3 dias.
+    private val backloggdStore = Store("backloggd2", BackloggdInfo.serializer().nullable)
     private val wikiStore = Store("wiki", WikiInfo.serializer().nullable)
     private val hltbStore = Store("hltb", HltbInfo.serializer().nullable)
 
