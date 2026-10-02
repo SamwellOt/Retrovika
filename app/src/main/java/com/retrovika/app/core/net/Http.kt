@@ -118,6 +118,20 @@ object Http {
         }
     }
 
+    /**
+     * Versão do arquivo em [url] por um HEAD: o ETag ou, sem ele, o Last-Modified (com a data em milissegundos,
+     * para comparar com a do arquivo local). Nulo quando o servidor não informa nenhum dos dois.
+     */
+    suspend fun fileVersion(url: String): Pair<String, Long?>? = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(url).head().build()
+        client.newCall(request).executeCancellable { res ->
+            if (!res.isSuccessful) throw HttpStatusException(res.code, url)
+            val modified = res.headers.getDate("Last-Modified")?.time
+            val tag = res.header("ETag") ?: res.header("Last-Modified") ?: return@executeCancellable null
+            tag to modified
+        }
+    }
+
     /** POST de formulário (application/x-www-form-urlencoded), usado por fontes que expõem os links via AJAX. */
     suspend fun postForm(url: String, form: Map<String, String>, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         val body = FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()

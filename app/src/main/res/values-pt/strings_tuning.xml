@@ -8,6 +8,7 @@
     <string name="tune_chosen">Qualidade %1$s escolhida para este aparelho (%2$d%% da velocidade)</string>
     <string name="tune_slowdown">Este jogo está abaixo da velocidade total. Da próxima vez ele abre em \"%1$s\".</string>
     <string name="tune_slowdown_user">Este jogo está abaixo da velocidade total em \"%1$s\". Uma qualidade menor na página do console pode ajudar.</string>
+    <string name="tune_crash_lowered">Da última vez este jogo fechou sozinho. Agora ele abre em \"%1$s\", que usa menos memória.</string>
     <string name="tune_failed">Não deu para medir este jogo: ele não rodou em nenhum nível de qualidade. Continua valendo o ajuste anterior.</string>
 
     <string name="tune_auto">Automático</string>
@@ -17,6 +18,7 @@
     <string name="tune_source_game">Ajustado para este jogo: %1$s.</string>
     <string name="tune_source_game_measured">Ajustado para este jogo: %1$s (%2$d%% da velocidade).</string>
     <string name="tune_source_game_slowdown">Baixado para %1$s depois que este jogo rodou devagar.</string>
+    <string name="tune_source_game_crashed">Baixado para %1$s depois que este jogo fechou sozinho.</string>
 
     <string name="tune_game_title">Qualidade neste aparelho</string>
     <string name="tune_game_subtitle">Mede este jogo em cada nível de qualidade e guarda o melhor só para ele.</string>

@@ -18,6 +18,7 @@ fun tuneSourceText(e: EffectivePreset): String {
         TuneSource.MEASURED -> if (percent != null) stringResource(R.string.tune_source_measured, label, percent) else stringResource(R.string.tune_source_estimated, label)
         TuneSource.GAME -> when {
             percent != null -> stringResource(R.string.tune_source_game_measured, label, percent)
+            e.crashed -> stringResource(R.string.tune_source_game_crashed, label)
             e.slowdown -> stringResource(R.string.tune_source_game_slowdown, label)
             else -> stringResource(R.string.tune_source_game, label)
         }

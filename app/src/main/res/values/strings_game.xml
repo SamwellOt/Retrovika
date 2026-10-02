@@ -21,6 +21,8 @@
     <string name="game_error_load_game">The core couldn\'t open this file. It may be corrupted or from another region/format.</string>
     <string name="game_error_load_game_bios">Some cores for this console need a BIOS that is missing or invalid. Import it in Settings › BIOS:</string>
     <string name="vulkan_fallback">Vulkan didn\'t start on this device: the core is drawing on the CPU instead.</string>
+    <string name="vulkan_off_crashes">%1$s closed the game more than once with Vulkan on this device: it now draws on the CPU. Vulkan can be turned back on in the console page.</string>
+    <string name="core_updated">%1$s was updated to its newest version.</string>
     <string name="game_error_gl">Your device doesn\'t support the OpenGL ES version this core requires.</string>
     <string name="game_error_serialization">Failed to read or write the save state.</string>
     <string name="game_error_unexpected">Unexpected emulator error (code %d).</string>

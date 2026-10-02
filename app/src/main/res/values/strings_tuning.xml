@@ -8,6 +8,7 @@
     <string name="tune_chosen">%1$s quality chosen for this device (%2$d%% speed)</string>
     <string name="tune_slowdown">This game is running below full speed. Next time it opens at \"%1$s\".</string>
     <string name="tune_slowdown_user">This game is running below full speed at \"%1$s\". A lower quality on the console page may help.</string>
+    <string name="tune_crash_lowered">Last time this game closed unexpectedly. It now opens at \"%1$s\", which uses less memory.</string>
     <string name="tune_failed">Couldn\'t measure this game: it didn\'t run at any quality level. The previous setting stays.</string>
 
     <string name="tune_auto">Auto</string>
@@ -17,6 +18,7 @@
     <string name="tune_source_game">Tuned for this game: %1$s.</string>
     <string name="tune_source_game_measured">Tuned for this game: %1$s (%2$d%% speed).</string>
     <string name="tune_source_game_slowdown">Lowered to %1$s after this game ran slow.</string>
+    <string name="tune_source_game_crashed">Lowered to %1$s after this game closed unexpectedly.</string>
 
     <string name="tune_game_title">Quality on this device</string>
     <string name="tune_game_subtitle">Measures this game at each quality level and keeps the best one for it alone.</string>

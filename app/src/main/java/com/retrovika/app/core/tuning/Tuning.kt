@@ -22,6 +22,8 @@ data class TuneResult(
     val skipped: Boolean = false,
     /** Gravado pelo vigia de velocidade durante o jogo, não pelo teste. */
     val slowdown: Boolean = false,
+    /** Gravado porque o jogo derrubou o app neste nível (ver SessionGuard). */
+    val crashed: Boolean = false,
 ) {
     val presetOrNull: Preset? get() = runCatching { Preset.valueOf(preset) }.getOrNull()
 
@@ -32,7 +34,7 @@ data class TuneResult(
 enum class TuneSource { USER, GAME, MEASURED, ESTIMATED }
 
 /** O que roda de fato e por quê (a tela mostra a origem). */
-data class EffectivePreset(val preset: Preset, val source: TuneSource, val speed: Float? = null, val slowdown: Boolean = false)
+data class EffectivePreset(val preset: Preset, val source: TuneSource, val speed: Float? = null, val slowdown: Boolean = false, val crashed: Boolean = false)
 
 object Tuning {
     /** Pouca folga não deixa tentar o degrau acima: ele custa mais que o atual. */
@@ -62,7 +64,7 @@ object Tuning {
         core: CoreInfo, profile: DeviceProfile, userChoice: Preset?, game: TuneResult?, console: TuneResult?,
     ): EffectivePreset? {
         if (core.presets.isEmpty()) return null
-        game?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let { return EffectivePreset(it.presetOrNull!!, TuneSource.GAME, it.speed, it.slowdown) }
+        game?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let { return EffectivePreset(it.presetOrNull!!, TuneSource.GAME, it.speed, it.slowdown, it.crashed) }
         userChoice?.takeIf { it in core.presets }?.let { return EffectivePreset(it, TuneSource.USER) }
         console?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let { return EffectivePreset(it.presetOrNull!!, TuneSource.MEASURED, it.speed) }
         return EffectivePreset(estimate(profile.tier, core)!!, TuneSource.ESTIMATED)

@@ -108,6 +108,8 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             return path
         }
         setState(core.id, CoreState.Downloading(0f))
+        // A versão do buildbot, para saber depois se saiu uma mais nova ([stageUpdate]); sem ela, vale a data do arquivo.
+        val version = runCatching { Http.fileVersion(downloadUrl(core.id))?.first }.getOrNull()
         return try {
             val zip = File(paths.downloadsTmp, "${core.id}.zip")
             val target = downloadedFile(core.id)
@@ -139,6 +141,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             // Bibliotecas carregadas dinamicamente devem ser somente leitura (exigência do Android 14+).
             target.setWritable(false, false)
             target.setReadOnly()
+            version?.let { writeVersion(versionFile(core.id), it) }
             installAssets(core)
             refresh()
             target.absolutePath
@@ -177,15 +180,115 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
 
     fun uninstall(coreId: String) {
         downloadedFile(coreId).let { it.setWritable(true); it.delete() }
+        stagedFile(coreId).let { it.setWritable(true); it.delete() }
+        versionFile(coreId).delete()
+        stagedVersionFile(coreId).delete()
         _states.update { it - coreId }
         refresh()
     }
+
+    // region Atualização
+
+    /** Versão do núcleo baixado (ETag do buildbot) ao lado do .so; a versão nova à espera da próxima abertura. */
+    private fun versionFile(coreId: String) = File(paths.cores, "$coreId.version")
+    private fun stagedFile(coreId: String) = File(paths.cores, "$coreId.next")
+    private fun stagedVersionFile(coreId: String) = File(paths.cores, "$coreId.next.version")
+    private fun checkedFile(coreId: String) = File(paths.cores, "$coreId.checked")
+
+    private fun writeVersion(file: File, version: String) = runCatching { file.writeText(version) }
+
+    private fun bundled(coreId: String) = File(context.applicationInfo.nativeLibraryDir, "lib${coreId}_libretro_android.so").exists()
+
+    /**
+     * Identifica a versão instalada de [coreId]: muda quando o núcleo é atualizado. O que foi aprendido sobre uma
+     * versão (o Vulkan dela derruba o app, por exemplo) não precisa valer para a seguinte.
+     */
+    fun buildId(coreId: String): String {
+        if (bundled(coreId)) return "apk:" + runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        return runCatching { versionFile(coreId).readText() }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: "file:${downloadedFile(coreId).lastModified()}"
+    }
+
+    /**
+     * Baixa em segundo plano a versão nova de [core], se o buildbot tiver uma, para valer na próxima abertura
+     * ([applyStagedUpdate]): o .so em uso não é trocado no meio do jogo. Só para núcleos baixados (os do APK vêm com o
+     * app), no máximo a cada [UPDATE_CHECK_MS] e fora de rede limitada (dados móveis). Os núcleos experimentais (o
+     * LRPS2, por exemplo) recebem correções de quedas quase todo dia, e o que foi baixado na primeira vez ficava para
+     * sempre. Verdadeiro se uma versão nova ficou pronta.
+     */
+    suspend fun stageUpdate(core: CoreInfo): Boolean = withContext(Dispatchers.IO) {
+        val installed = downloadedFile(core.id)
+        if (bundled(core.id) || !installed.exists() || metered()) return@withContext false
+        val checked = checkedFile(core.id)
+        if (System.currentTimeMillis() - checked.lastModified() < UPDATE_CHECK_MS) return@withContext false
+        lockFor(core.id).withLock {
+            val url = downloadUrl(core.id)
+            val (remote, modified) = Http.fileVersion(url) ?: return@withLock false
+            runCatching { checked.writeText(remote) }
+            val staged = runCatching { stagedVersionFile(core.id).readText() }.getOrNull()
+            if (staged == remote && stagedFile(core.id).exists()) return@withLock false
+            val current = runCatching { versionFile(core.id).readText() }.getOrNull()
+            // Sem a versão gravada (instalado por uma versão anterior do app): mais nova que o download dele.
+            val newer = if (current != null) current != remote else modified != null && modified > installed.lastModified()
+            if (!newer) return@withLock false
+
+            val zip = File(paths.downloadsTmp, "${core.id}-update.zip")
+            val tmp = File(paths.cores, "${core.id}.next.tmp")
+            try {
+                Http.download(url, zip)
+                Zip.extractFirst(zip, tmp) { it.endsWith(".so") } ?: return@withLock false
+                if (!elfMatches(readHeader(tmp), abi)) return@withLock false
+                val target = stagedFile(core.id)
+                target.setWritable(true)
+                target.delete()
+                if (!tmp.renameTo(target)) return@withLock false
+                target.setWritable(false, false)
+                target.setReadOnly()
+                writeVersion(stagedVersionFile(core.id), remote)
+                true
+            } finally {
+                zip.delete()
+                tmp.delete()
+            }
+        }
+    }
+
+    /**
+     * Põe no lugar a versão que [stageUpdate] deixou pronta. Chamar antes de abrir o núcleo: o arquivo antigo pode
+     * continuar mapeado por um núcleo que o Android não descarregou, e segue valendo para ele (o novo é outro inode).
+     * Verdadeiro se trocou.
+     */
+    suspend fun applyStagedUpdate(coreId: String): Boolean = withContext(Dispatchers.IO) {
+        val staged = stagedFile(coreId)
+        if (!staged.exists() || bundled(coreId)) return@withContext false
+        lockFor(coreId).withLock {
+            val target = downloadedFile(coreId)
+            target.setWritable(true)
+            if (target.exists() && !target.delete()) return@withLock false
+            if (!staged.renameTo(target)) return@withLock false
+            target.setWritable(false, false)
+            target.setReadOnly()
+            val version = stagedVersionFile(coreId)
+            if (!version.renameTo(versionFile(coreId))) versionFile(coreId).delete()
+            refresh()
+            true
+        }
+    }
+
+    private fun metered(): Boolean = runCatching {
+        context.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
+    }.getOrDefault(true)
+
+    // endregion
 
     private fun setState(coreId: String, state: CoreState) = _states.update { it + (coreId to state) }
 
     companion object {
         /** As mesmas de `abiFilters` no build.gradle.kts. */
         val SUPPORTED_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+
+        /** Intervalo mínimo entre duas consultas ao buildbot por versão nova de um núcleo. */
+        private const val UPDATE_CHECK_MS = 24 * 60 * 60 * 1000L
 
         /** Classe ELF (1 = 32 bits, 2 = 64 bits) e e_machine de cada ABI. */
         private val ELF_TARGETS = mapOf(

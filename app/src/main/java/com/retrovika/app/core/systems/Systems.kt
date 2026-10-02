@@ -233,12 +233,15 @@ object Systems {
                     // Os níveis mexem no que pesa na GPU (resolução, mistura de cores, leitura de volta ao CPU) e, no
                     // leve, poupam a CPU (salto de ciclos do EE, acesso rápido ao disco). O resto (EE e VU1 recompilados,
                     // MTVU, fastmem) já vem ligado no núcleo. Os valores são os da lista do próprio núcleo.
+                    // A leitura de volta sem sincronizar vale até o equilibrado: a "Accurate" para a CPU esperando a GPU a
+                    // cada leitura, e no celular isso derruba a velocidade em menus e telas de salvar (o núcleo avisa que o
+                    // erro, sem ela, aparece só em poucos jogos). Fica a exata no nível de qualidade.
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf(
                             "pcsx2_upscale_multiplier" to "1x (Native)", "pcsx2_blending_accuracy" to "Minimum",
                             "pcsx2_hw_download_mode" to "Unsynchronized", "pcsx2_ee_cycle_skip" to "Mild Underclock", "pcsx2_fastcdvd" to "enabled",
                         ),
-                        Preset.BALANCED to mapOf("pcsx2_upscale_multiplier" to "2x"),
+                        Preset.BALANCED to mapOf("pcsx2_upscale_multiplier" to "2x", "pcsx2_hw_download_mode" to "Unsynchronized"),
                         Preset.QUALITY to mapOf("pcsx2_upscale_multiplier" to "4x", "pcsx2_blending_accuracy" to "Medium"),
                     ),
                     // O que depende do aparelho: o renderizador (Vulkan quando o aparelho o tem; senão o por software, o

@@ -54,6 +54,8 @@
     <string name="system_core_beta">%1$s (beta)</string>
     <string name="system_vulkan_auto">Vulkan quando funciona</string>
     <string name="system_vulkan_off">Sem Vulkan</string>
+    <string name="system_vulkan_failed">O Vulkan foi desligado neste aparelho depois de fechar o jogo. Uma versão nova do núcleo tenta de novo sozinha.</string>
+    <string name="system_vulkan_retry">Tentar de novo</string>
     <string name="system_preset">Perfil de desempenho</string>
     <string name="system_formats">Formatos: %1$s</string>
     <string name="system_games">Jogos</string>

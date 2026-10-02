@@ -14,6 +14,7 @@ class VulkanHealthTest {
         override fun string(key: String) = strings[key]
         override fun put(key: String, value: Int, sync: Boolean) { ints[key] = value }
         override fun put(key: String, value: String) { strings[key] = value }
+        override fun remove(key: String) { ints.remove(key); strings.remove(key) }
         override fun clear() { ints.clear(); strings.clear() }
     }
 
@@ -105,5 +106,55 @@ class VulkanHealthTest {
         assertFalse(health.bridgeWorks("b") { error("driver") })
         health.reset()
         assertTrue(health.bridgeWorks("b") { true })
+    }
+
+    @Test
+    fun `duas quedas seguidas no meio do jogo desligam o Vulkan`() {
+        val health = VulkanHealth(MemoryStore())
+        assertFalse(health.sessionCrashed(core, device))
+        assertTrue(health.shouldTry(core, device))
+        assertTrue(health.sessionCrashed(core, device))
+        assertFalse(health.shouldTry(core, device))
+        assertTrue(health.isOff(core, device))
+    }
+
+    @Test
+    fun `quedas raras entre sessoes boas nao desligam`() {
+        val health = VulkanHealth(MemoryStore())
+        repeat(5) {
+            assertFalse(health.sessionCrashed(core, device))
+            health.sessionEnded(core)
+            health.sessionEnded(core)
+        }
+        assertTrue(health.shouldTry(core, device))
+    }
+
+    @Test
+    fun `quedas em mais da metade das sessoes desligam`() {
+        val health = VulkanHealth(MemoryStore())
+        assertFalse(health.sessionCrashed(core, device))
+        health.sessionEnded(core)
+        assertFalse(health.sessionCrashed(core, device))
+        health.sessionEnded(core)
+        assertTrue(health.sessionCrashed(core, device))
+    }
+
+    @Test
+    fun `uma versao nova do nucleo tenta o Vulkan de novo`() {
+        val health = VulkanHealth(MemoryStore())
+        health.attemptFailed(core, "$device|v1")
+        assertFalse(health.shouldTry(core, "$device|v1"))
+        assertTrue(health.shouldTry(core, "$device|v2"))
+    }
+
+    @Test
+    fun `tentar de novo esquece as falhas so daquele nucleo`() {
+        val health = VulkanHealth(MemoryStore())
+        health.attemptFailed(core, device)
+        health.attemptFailed("ppsspp", device)
+        health.forget(core)
+        assertTrue(health.shouldTry(core, device))
+        assertFalse(health.isOff(core, device))
+        assertTrue(health.isOff("ppsspp", device))
     }
 }

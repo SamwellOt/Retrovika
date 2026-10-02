@@ -21,6 +21,8 @@
     <string name="game_error_load_game">O núcleo não conseguiu abrir este arquivo. Ele pode estar corrompido ou ser de outra região/formato.</string>
     <string name="game_error_load_game_bios">Alguns núcleos deste console precisam de uma BIOS que está faltando ou é inválida. Importe em Ajustes › BIOS:</string>
     <string name="vulkan_fallback">O Vulkan não iniciou neste aparelho: o núcleo está desenhando pela CPU.</string>
+    <string name="vulkan_off_crashes">O %1$s fechou o jogo mais de uma vez com Vulkan neste aparelho: agora ele desenha pela CPU. Dá para religar o Vulkan na página do console.</string>
+    <string name="core_updated">%1$s foi atualizado para a versão mais recente.</string>
     <string name="game_error_gl">Seu aparelho não suporta a versão de OpenGL ES exigida por este núcleo.</string>
     <string name="game_error_serialization">Falha ao ler ou gravar o save state.</string>
     <string name="game_error_unexpected">Erro inesperado no emulador (código %d).</string>

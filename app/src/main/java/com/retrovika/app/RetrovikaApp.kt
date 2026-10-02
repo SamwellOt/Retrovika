@@ -40,6 +40,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.core.tuning.SessionGuard
 import com.retrovika.app.core.tuning.VulkanHealth
 import com.swordfish.libretrodroid.LibretroDroid
 import com.retrovika.app.ui.share.Incoming
@@ -67,6 +68,12 @@ class AppContainer(app: Application) {
         if (detected.vulkan && vulkanHealth.bridgeWorks(bridgeBuild(app)) { LibretroDroid.probeVulkan() }) detected
         else detected.copy(vulkan = false)
     }
+    /** O jogo na frente do usuário, para a abertura seguinte saber se o processo morreu com ele (ver SessionGuard). */
+    val sessions = SessionGuard(java.io.File(app.filesDir, "${com.retrovika.app.emulation.GameActivity.BENCH_DIR}/session.json"))
+
+    /** Como o [vulkanHealth] identifica o Vulkan de [coreId] aqui: este aparelho e a versão instalada do núcleo. */
+    suspend fun vulkanKey(coreId: String): String =
+        "${deviceProfile.await().signature}|${kotlinx.coroutines.withContext(Dispatchers.IO) { cores.buildId(coreId) }}"
     /** OCR para jogos japoneses, baixado sob demanda em Ajustes. */
     val ocrPack = OcrPack(app, scope, cores.abi)
     val bios = BiosManager(paths, app.contentResolver)

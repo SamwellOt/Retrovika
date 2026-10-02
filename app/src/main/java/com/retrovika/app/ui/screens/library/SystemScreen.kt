@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -264,6 +265,21 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                             // O que foi medido vale para o renderizador de antes: o novo é medido de novo na próxima abertura.
                             SelectChip(stringResource(R.string.system_vulkan_auto), !vulkanOff, onClick = { scope.launch { app.settings.setVulkanDisabled(core.id, false); app.settings.clearTuning(system.id, all.map { it.id }) } })
                             SelectChip(stringResource(R.string.system_vulkan_off), vulkanOff, onClick = { scope.launch { app.settings.setVulkanDisabled(core.id, true); app.settings.clearTuning(system.id, all.map { it.id }) } })
+                        }
+                        // Desligado pelas quedas neste aparelho (VulkanHealth): o usuário pode querer tentar de novo.
+                        var failedHere by remember(core.id) { mutableStateOf(false) }
+                        LaunchedEffect(core.id) { failedHere = app.vulkanHealth.isOff(core.id, app.vulkanKey(core.id)) }
+                        if (failedHere && !vulkanOff) {
+                            Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(stringResource(R.string.system_vulkan_failed), style = MaterialTheme.typography.labelSmall, color = Palette.Coral, modifier = Modifier.weight(1f))
+                                androidx.compose.material3.TextButton(onClick = {
+                                    app.vulkanHealth.forget(core.id)
+                                    failedHere = false
+                                    scope.launch { app.settings.clearTuning(system.id, all.map { it.id }) }
+                                }) {
+                                    Text(stringResource(R.string.system_vulkan_retry), style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                         }
                     }
                     bench?.let { b ->

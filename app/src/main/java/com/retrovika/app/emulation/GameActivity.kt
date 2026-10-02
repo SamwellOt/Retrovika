@@ -65,6 +65,8 @@ import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.core.tuning.DeviceProfile
 import com.retrovika.app.core.tuning.EffectivePreset
+import com.retrovika.app.core.tuning.ExitKind
+import com.retrovika.app.core.tuning.PlaySession
 import com.retrovika.app.core.tuning.SpeedWatch
 import com.retrovika.app.core.tuning.TuneSource
 import com.retrovika.app.core.tuning.TuneResult
@@ -226,6 +228,10 @@ class GameActivity : ComponentActivity() {
     private var vulkanAttempt = false
     /** Esta abertura usa Vulkan: uma perda do contexto no meio do jogo também desliga o Vulkan do núcleo. */
     private var vulkanLaunch = false
+    /** O jogo na frente do usuário, para o SessionGuard; nulo antes do primeiro quadro (aí vale a tentativa de Vulkan). */
+    private var playSession: PlaySession? = null
+    /** Quando o primeiro quadro chegou (elapsedRealtime): uma sessão longa que termina bem conta a favor do Vulkan. */
+    private var playSessionStart = 0L
     private val sramLock = Any()
     /** A última SRAM gravada: sem mudança, o arquivo não é escrito de novo. */
     private var lastSram: ByteArray? = null
@@ -329,6 +335,9 @@ class GameActivity : ComponentActivity() {
         val sharedCore = intent.getStringExtra(EXTRA_CORE_ID)?.takeIf { id -> system.cores.any { it.id == id } }
         val userCore = sharedCore ?: game.coreOverride ?: app.settings.coreFor(system.id).first()
         core = system.core(userCore ?: app.settings.effectiveCoreFor(system.id).first())
+        // A versão nova do núcleo baixada na sessão anterior entra agora, antes de qualquer abertura dele.
+        if (app.cores.applyStagedUpdate(core.id)) toast = getString(R.string.core_updated, core.displayName)
+        handleDeadSession()
         val padCore = system.id
         val gameId = game.id
         // O controle próprio do jogo, quando existe, vence o do console.
@@ -495,6 +504,67 @@ class GameActivity : ComponentActivity() {
         toast = getString(R.string.tune_slowdown, getString(lower.label))
     }
 
+    // region Quedas no meio do jogo
+
+    /** O primeiro quadro chegou: daqui em diante, se o processo morrer com o jogo na frente, a próxima abertura sabe. */
+    private suspend fun openSession() {
+        val level = if (guestSession) null else effectivePreset(core)
+        val session = PlaySession(
+            systemId = system.id, coreId = core.id, gameId = game.id,
+            vulkan = vulkanLaunch, vulkanKey = if (vulkanLaunch) app.vulkanKey(core.id) else null,
+            preset = level?.preset?.name, userPreset = level?.source == TuneSource.USER,
+            pid = android.os.Process.myPid(),
+        )
+        if (isFinishing || isDestroyed) return
+        playSession = session
+        playSessionStart = android.os.SystemClock.elapsedRealtime()
+        if (activityResumed) app.sessions.open(session)
+    }
+
+    /** O jogo saiu da frente sem queda. Uma sessão longa com Vulkan conta a favor dele (uma vez por sessão). */
+    private fun closeSession() {
+        val session = playSession ?: return
+        app.sessions.close()
+        if (session.vulkan && playSessionStart > 0 && android.os.SystemClock.elapsedRealtime() - playSessionStart >= CLEAN_SESSION_MS) {
+            playSessionStart = 0
+            app.vulkanHealth.sessionEnded(session.coreId)
+        }
+    }
+
+    /**
+     * O processo anterior morreu com um jogo na frente (ver SessionGuard). Aquele jogo passa a abrir um nível abaixo
+     * (resolução alta é o que mais gasta memória de vídeo) e, se rodava com Vulkan, a queda conta contra o Vulkan do
+     * núcleo. Avisa quando é o jogo, ou o núcleo, que está abrindo agora.
+     */
+    private suspend fun handleDeadSession() {
+        val (session, exit) = app.sessions.takeDead(android.os.Process.myPid(), ::exitReason) ?: return
+        if (exit == ExitKind.OTHER) return
+        val crashedCore = Systems.byId(session.systemId)?.cores?.firstOrNull { it.id == session.coreId } ?: return
+        if (session.vulkan && exit == ExitKind.CRASH && session.vulkanKey != null &&
+            app.vulkanHealth.sessionCrashed(session.coreId, session.vulkanKey)
+        ) {
+            // O nível daquele jogo foi escolhido para o Vulkan: sem ele, o console é medido de novo.
+            app.settings.clearTuning(session.systemId, listOf(session.gameId))
+            if (session.coreId == core.id) toast = getString(R.string.vulkan_off_crashes, crashedCore.displayName)
+            return
+        }
+        if (session.userPreset) return
+        val lower = session.preset?.let { runCatching { Preset.valueOf(it) }.getOrNull() }?.let { Tuning.lower(crashedCore, it) } ?: return
+        val profile = app.deviceProfile.await()
+        app.settings.setGameTuning(session.gameId, TuneResult(crashedCore.id, lower.name, null, profile.signature, System.currentTimeMillis(), crashed = true))
+        if (session.gameId == game.id) toast = getString(R.string.tune_crash_lowered, getString(lower.label))
+    }
+
+    /** O motivo que o sistema guardou para a morte do processo [pid] (Android 11+); nulo quando não sabe. */
+    private fun exitReason(pid: Int): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return runCatching {
+            getSystemService(android.app.ActivityManager::class.java).getHistoricalProcessExitReasons(packageName, pid, 1).firstOrNull()?.reason
+        }.getOrNull()
+    }
+
+    // endregion
+
     private enum class GameSource { Ok, NeedsFileAccess, Inaccessible, NotFound }
 
     /** Aponta [data] para o arquivo do jogo: caminho real quando dá, senão os arquivos virtuais do SAF. */
@@ -559,7 +629,7 @@ class GameActivity : ComponentActivity() {
     private suspend fun vulkanAllowed(core: CoreInfo): Boolean {
         if (!core.vulkan || intent.getBooleanExtra(EXTRA_NO_VULKAN, false) || app.settings.vulkanDisabled(core.id).first()) return false
         val device = app.deviceProfile.await()
-        return device.vulkan && app.vulkanHealth.shouldTry(core.id, device.signature)
+        return device.vulkan && app.vulkanHealth.shouldTry(core.id, app.vulkanKey(core.id))
     }
 
     private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>, vulkan: Boolean) = data.apply {
@@ -781,7 +851,7 @@ class GameActivity : ComponentActivity() {
                 vulkanSettled = true
                 when {
                     outcome?.first == true -> app.vulkanHealth.attemptSucceeded(core.id)
-                    outcome?.second == GLRetroView.ERROR_GL_NOT_COMPATIBLE -> app.vulkanHealth.attemptFailed(core.id, app.deviceProfile.await().signature)
+                    outcome?.second == GLRetroView.ERROR_GL_NOT_COMPATIBLE -> app.vulkanHealth.attemptFailed(core.id, app.vulkanKey(core.id))
                     // Outro erro, ou demorou: não prova nada sobre o Vulkan.
                     else -> app.vulkanHealth.attemptAborted(core.id)
                 }
@@ -839,7 +909,7 @@ class GameActivity : ComponentActivity() {
                         if ((vulkanAttempt || vulkanLaunch) && retroView === view) {
                             vulkanAttempt = false
                             vulkanLaunch = false
-                            app.vulkanHealth.attemptFailed(core.id, app.deviceProfile.await().signature)
+                            app.vulkanHealth.attemptFailed(core.id, app.vulkanKey(core.id))
                             // O que foi medido (com Vulkan) não vale mais: o próximo jogo mede de novo, sem ele.
                             app.settings.clearTuning(system.id, listOf(game.id))
                             setIntent(intent.putExtra(EXTRA_NO_VULKAN, true))
@@ -859,6 +929,10 @@ class GameActivity : ComponentActivity() {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (retroView === view) gameLoaded = true
             if (vulkanAttempt) { vulkanAttempt = false; app.vulkanHealth.attemptSucceeded(core.id) }
+            if (retroView === view) openSession()
+            // Núcleo experimental: a versão nova, se houver, é baixada agora (sem atrapalhar o carregamento) e entra na
+            // próxima abertura. Eles recebem correções de quedas quase todo dia.
+            if (core.experimental) { val c = core; app.scope.launch { runCatching { app.cores.stageUpdate(c) } } }
             val received = pendingStateFile
             val guestOf = netGuest
             if (guestOf != null) {
@@ -983,6 +1057,7 @@ class GameActivity : ComponentActivity() {
             return
         }
         activityResumed = true
+        playSession?.let { app.sessions.open(it) }
         hideSystemBars()
         updateEmulationState()
     }
@@ -991,6 +1066,9 @@ class GameActivity : ComponentActivity() {
         activityResumed = false
         persist(auto = settings.autoSave)
         updateEmulationState()
+        // Fora da frente, uma morte do processo (o sistema liberando memória) não diz nada do jogo. Saindo da tela, o
+        // registro fica até o núcleo ser descarregado no onDestroy: uma queda ao fechar o Vulkan também conta.
+        if (!isFinishing && !isChangingConfigurations) closeSession()
         super.onPause()
     }
 
@@ -1004,7 +1082,9 @@ class GameActivity : ComponentActivity() {
         translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
+        // Descarrega o núcleo (o GLRetroView observa este ciclo de vida) e só então dá a sessão por encerrada.
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
+        closeSession()
         benchOwner?.registry?.currentState = Lifecycle.State.DESTROYED
         retroView = null
         remoteView?.let { app.remote.detach(it) }
@@ -1322,6 +1402,7 @@ class GameActivity : ComponentActivity() {
             flushPlayTime()
             retroView = null
             emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
+            closeSession()
             finish()
         }
     }
@@ -1634,6 +1715,8 @@ class GameActivity : ComponentActivity() {
         private const val RUMBLE_MAX_MS = 10_000L
         private const val BENCH_LOAD_TIMEOUT_MS = 25_000L
         private const val BENCH_LOAD_TIMEOUT_VULKAN_MS = 60_000L
+        /** Uma sessão com Vulkan que passa disto e termina sem queda desconta uma queda anterior (VulkanHealth). */
+        private const val CLEAN_SESSION_MS = 5 * 60_000L
         private const val BENCH_WARMUP_MS = 1_500L
         private const val BENCH_MEASURE_MS = 4_000L
         private const val BENCH_SAMPLE_MS = 250L
