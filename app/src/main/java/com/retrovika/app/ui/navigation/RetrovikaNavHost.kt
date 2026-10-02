@@ -111,6 +111,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.retrovika.app.ui.share.ReceiveChooser
 import com.retrovika.app.ui.share.ReceiveHost
+import com.retrovika.app.ui.components.ChallengeHost
 import com.retrovika.app.ui.share.NetplayJoin
 import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.ui.share.rememberReceiveLaunchers
@@ -178,6 +179,7 @@ fun RetrovikaNavHost() {
     var joiningLink by rememberSaveable { mutableStateOf<String?>(null) }
     val joining = remember(joiningLink) { joiningLink?.let { RetrovikaLink.parse(it) as? RetrovikaLink.Netplay } }
     ReceiveHost(onNetplay = { joiningLink = it.toUri() })
+    ChallengeHost()
     joining?.let { link -> NetplayJoin(link, onDone = { joiningLink = null }) }
 
     // Uma vez por processo: girar a tela ou trocar o idioma recria a Activity, e refazer a varredura

@@ -37,7 +37,12 @@ import java.security.SecureRandom
  * `fetch` seguidos com 429 e uma nova verificação. Quando a verificação volta no meio da sessão, o site é
  * aberto de novo e o pedido, refeito uma vez.
  */
-class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
+class WebFetcher(
+    private val context: Context,
+    private val minGapMs: Long = 0,
+    /** Onde mostrar ao usuário a verificação que não passou sozinha ([askUser]). */
+    private val prompt: ChallengePrompt? = null,
+) {
     private val main = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val lock = Mutex()
     private var view: WebView? = null
@@ -133,9 +138,10 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
 
     /**
      * Abre [url] para passar pela verificação daquele domínio (ex.: o servidor de arquivos de um site),
-     * deixando a liberação no [CookieManager] para um download feito fora do WebView.
+     * deixando a liberação no [CookieManager] para um download feito fora do WebView. False quando a
+     * verificação não passou no prazo (ela pode estar pedindo um toque: ver [askUser]).
      */
-    suspend fun solve(url: String) {
+    suspend fun solve(url: String): Boolean = try {
         // WebView próprio, descartado no fim: trocar a página do compartilhado derrubaria os pedidos que
         // outros downloads e a busca ainda esperam dele. A liberação fica no CookieManager, que é global.
         withContext(Dispatchers.Main) {
@@ -143,7 +149,13 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             web.stopLoading()
             web.destroy()
         }
+        true
+    } catch (e: HttpStatusException) {
+        false
     }
+
+    /** Mostra a verificação de [url] ao usuário (quando há tela para isso) e espera: true se passou. */
+    suspend fun askUser(url: String): Boolean = prompt?.ask(url) ?: false
 
     /** O fetch e a geração do WebView em que ele saiu. */
     private suspend fun runFetch(origin: String, url: String, method: String, body: String?, contentType: String?, referrer: String?): Pair<Response, Int> {
@@ -229,19 +241,11 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         return web
     }
 
-    /**
-     * O documento da página já foi lido (readyState "interactive" ou "complete"), tem título e não é a
-     * verificação. O título vem do próprio documento: o do WebView pode ser a URL antes de a página chegar.
-     */
+    /** A página já passou da verificação ([pageCleared]). */
     private suspend fun documentReady(web: WebView): Boolean {
         val raw = CompletableDeferred<String?>()
-        web.evaluateJavascript("JSON.stringify([document.readyState, document.title])") { raw.complete(it) }
-        val state = runCatching {
-            val inner = Http.json.parseToJsonElement(raw.await() ?: return false).jsonPrimitive.content
-            Http.json.parseToJsonElement(inner).jsonArray.map { it.jsonPrimitive.content }
-        }.getOrNull() ?: return false
-        val (ready, title) = state.getOrNull(0) to state.getOrNull(1).orEmpty()
-        return ready != "loading" && title.isNotBlank() && !isChallengeTitle(title)
+        web.evaluateJavascript(PAGE_STATE_JS) { raw.complete(it) }
+        return pageCleared(raw.await())
     }
 
     private fun scheduleRelease() {
@@ -275,6 +279,26 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             title.contains("Establishing a secure connection", true) || title.contains("Just a moment", true)
 
         fun isChallengePage(html: String): Boolean = isChallengeTitle(html.take(600))
+
+        /** Estado da página para [pageCleared]: readyState, título e host do documento. */
+        const val PAGE_STATE_JS = "JSON.stringify([document.readyState, document.title, location.hostname])"
+
+        /**
+         * O documento ([PAGE_STATE_JS], como o evaluateJavascript devolve) já foi lido e não é a verificação.
+         * O título vem do próprio documento: o do WebView pode ser a URL antes de a página chegar. Uma página
+         * sem título também vale (a raiz do servidor de arquivos do RomsFun é texto puro): o host vazio é que
+         * diz que ainda é o about:blank do começo, e a verificação sempre tem título.
+         */
+        fun pageCleared(evaluated: String?): Boolean {
+            val state = runCatching {
+                val inner = Http.json.parseToJsonElement(evaluated ?: return false).jsonPrimitive.content
+                Http.json.parseToJsonElement(inner).jsonArray.map { it.jsonPrimitive.content }
+            }.getOrNull() ?: return false
+            val ready = state.getOrNull(0).orEmpty()
+            val title = state.getOrNull(1).orEmpty()
+            val host = state.getOrNull(2).orEmpty()
+            return ready.isNotEmpty() && ready != "loading" && host.isNotEmpty() && !isChallengeTitle(title)
+        }
 
         /** Resposta do OkHttp que é a verificação da CDN, não um erro de verdade. */
         fun isChallenge(error: Throwable): Boolean = error is HttpStatusException && (error.code == 403 || error.code == 503)

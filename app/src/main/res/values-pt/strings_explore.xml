@@ -92,7 +92,9 @@
     <string name="explore_open_game">Abrir página do jogo</string>
 
     <string name="catalog_romsfun_description">Acervo enorme, inclusive consoles que o CDRomance não tem (3DS, Wii, arcade, 3DO, Amiga, MSX…). As páginas carregam por um navegador invisível, por causa da proteção do site.</string>
-    <string name="web_check_blocked">%s pediu uma verificação que não deu para passar sozinha. Abra o site no navegador do app e tente de novo.</string>
+    <string name="web_check_blocked">%s pediu uma verificação que não passou. Toque em Tentar de novo com o app aberto e confirme a verificação que aparecer.</string>
+    <string name="web_check_title">Confirme que você é humano</string>
+    <string name="web_check_message">%s pediu uma verificação que o app não conseguiu passar sozinho. Toque na caixa abaixo: o download continua assim que ela liberar.</string>
     <string name="romsfun_link_failed">O RomsFun não gerou o link de download: %s</string>
     <string name="romsfun_link_invalid">O servidor de download recusou o link (o RomsFun limita downloads por conexão). Espere alguns minutos e tente de novo.</string>
     <string name="download_server_busy">O servidor de download está ocupado agora. Tente de novo em alguns minutos.</string>

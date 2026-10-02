@@ -92,7 +92,9 @@
     <string name="explore_open_game">Open game page</string>
 
     <string name="catalog_romsfun_description">Huge collection, including consoles CDRomance lacks (3DS, Wii, arcade, 3DO, Amiga, MSX…). Pages load through a hidden browser because of the site\'s protection.</string>
-    <string name="web_check_blocked">%s asked for a verification that couldn\'t be passed automatically. Open the site in the in-app browser and try again.</string>
+    <string name="web_check_blocked">%s asked for a verification that didn\'t pass. Tap Try again with the app open and complete the check that appears.</string>
+    <string name="web_check_title">Confirm you\'re human</string>
+    <string name="web_check_message">%s asked for a verification the app couldn\'t pass on its own. Tap the box below: the download continues as soon as it clears.</string>
     <string name="romsfun_link_failed">RomsFun didn\'t generate the download link: %s</string>
     <string name="romsfun_link_invalid">The download server refused the link (RomsFun limits downloads per connection). Wait a few minutes and try again.</string>
     <string name="download_server_busy">The download server is busy right now. Try again in a few minutes.</string>

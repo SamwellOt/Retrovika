@@ -23,6 +23,7 @@ import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.settings.Languages
 import com.retrovika.app.core.gameinfo.BackloggdClient
 import com.retrovika.app.core.gameinfo.GameInfoRepository
+import com.retrovika.app.core.net.ChallengePrompt
 import com.retrovika.app.core.net.WebFetcher
 import com.retrovika.app.core.settings.SettingsRepository
 import com.retrovika.app.core.storage.StoragePaths
@@ -69,8 +70,10 @@ class AppContainer(app: Application) {
     /** OCR para jogos japoneses, baixado sob demanda em Ajustes. */
     val ocrPack = OcrPack(app, scope, cores.abi)
     val bios = BiosManager(paths, app.contentResolver)
+    /** Verificações de sites que o WebView invisível não passou, à espera do usuário (ChallengeHost). */
+    val challenges = ChallengePrompt()
     // O RomsFun tem o próprio WebView: dividir o do Backloggd faria os dois reabrirem o site a cada troca.
-    val catalog = CatalogRepository(RomsFunSource(WebFetcher(app, minGapMs = 400)))
+    val catalog = CatalogRepository(RomsFunSource(WebFetcher(app, minGapMs = 400, prompt = challenges)))
     /** A última lista de cada filtro do Explorar, para ele abrir na hora. */
     val catalogSnapshots = CatalogSnapshots(File(app.cacheDir, "explore"))
     private val web = WebFetcher(app)

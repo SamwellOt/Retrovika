@@ -1,5 +1,6 @@
 package com.retrovika.app.core.catalog
 
+import android.util.Log
 import com.retrovika.app.R
 import com.retrovika.app.core.gameinfo.HtmlText
 import com.retrovika.app.core.gameinfo.SiteRating
@@ -232,15 +233,29 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
             Probe.OK -> {}
             Probe.CHALLENGE -> {
                 // Servidor de arquivos com verificação própria: o WebView a resolve e o cookie vai no pedido.
-                // O cookie recém-emitido às vezes leva um instante para valer, daí as novas tentativas.
-                web.solve("https://$host/")
-                var passed = false
-                for (wait in longArrayOf(0, 1_500, 3_000, 5_000)) {
-                    delay(wait)
-                    link = linkFor(fileUrl, fileName, ipv6)
-                    if (probe(link) != Probe.CHALLENGE) { passed = true; break }
+                // Quando ela não passa sozinha (o Cloudflare às vezes pede o toque na caixa), a página vai para
+                // o usuário. O cookie recém-emitido às vezes leva um instante para valer, daí as novas tentativas.
+                suspend fun cleared(): Boolean {
+                    for (wait in longArrayOf(0, 1_500, 3_000, 5_000)) {
+                        delay(wait)
+                        link = linkFor(fileUrl, fileName, ipv6)
+                        if (probe(link) != Probe.CHALLENGE) return true
+                    }
+                    return false
                 }
-                if (!passed) throw LocalizedException(R.string.web_check_blocked, host)
+                val checkUrl = "https://$host/"
+                val solved = web.solve(checkUrl)
+                if (!(solved && cleared())) {
+                    Log.w(TAG, "Verificação de $host: ${if (solved) "passou no WebView, mas o OkHttp segue barrado" else "não passou sozinha"} (ipv6=$ipv6)")
+                    // Outro download pode ter feito a verificação enquanto este esperava.
+                    val passed = probe(linkFor(fileUrl, fileName, ipv6)) != Probe.CHALLENGE ||
+                        (web.askUser(checkUrl) && cleared())
+                    if (!passed) {
+                        Log.w(TAG, "Verificação de $host: não passou nem com o usuário")
+                        throw LocalizedException(R.string.web_check_blocked, host)
+                    }
+                    link = linkFor(fileUrl, fileName, ipv6)
+                }
             }
             // Link preso a outro IP: tenta pelo outro protocolo antes de desistir.
             Probe.INVALID -> {
@@ -347,6 +362,7 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
     private data class Console(val systemId: String, val termId: Int, val slugs: List<String>)
 
     companion object {
+        private const val TAG = "RomsFun"
 
         private const val BASE = "https://romsfun.com"
         private const val PAGE_TTL_MS = 10 * 60 * 1000L
