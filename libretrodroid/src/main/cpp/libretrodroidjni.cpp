@@ -40,6 +40,7 @@
 #include "utils/javautils.h"
 #include "errorcodes.h"
 #include "environment.h"
+#include "vulkan/vulkancontext.h"
 #include "renderers/es3/framebufferrenderer.h"
 #include "renderers/es2/imagerendereres2.h"
 #include "renderers/es3/imagerendereres3.h"
@@ -94,32 +95,47 @@ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_ge
     JNIEnv* env,
     jclass obj
 ) {
+    // IDs buscados uma vez e referências locais soltas a cada item: com centenas de opções (LRPS2) a tabela de
+    // referências locais da JNI (512) estourava e abortava o processo.
     jclass variableClass = env->FindClass("com/swordfish/libretrodroid/Variable");
+    if (variableClass == nullptr) return nullptr;
     jmethodID variableMethodID = env->GetMethodID(variableClass, "<init>", "()V");
+    jfieldID jKeyField = env->GetFieldID(variableClass, "key", "Ljava/lang/String;");
+    jfieldID jValueField = env->GetFieldID(variableClass, "value", "Ljava/lang/String;");
+    jfieldID jDescriptionField = env->GetFieldID(variableClass, "description", "Ljava/lang/String;");
+    if (variableMethodID == nullptr || jKeyField == nullptr || jValueField == nullptr || jDescriptionField == nullptr) {
+        env->DeleteLocalRef(variableClass);
+        return nullptr;
+    }
 
     auto variables = Environment::getInstance().getVariables();
-    jobjectArray result = env->NewObjectArray(variables.size(), variableClass, nullptr);
-
-    for (int i = 0; i < variables.size(); i++) {
-        jobject jVariable = env->NewObject(variableClass, variableMethodID);
-
-        jfieldID jKeyField = env->GetFieldID(variableClass, "key", "Ljava/lang/String;");
-        jfieldID jValueField = env->GetFieldID(variableClass, "value", "Ljava/lang/String;");
-        jfieldID jDescriptionField = env->GetFieldID(
-            variableClass,
-            "description",
-            "Ljava/lang/String;"
-        );
-
-        env->SetObjectField(jVariable, jKeyField, env->NewStringUTF(variables[i].key.data()));
-        env->SetObjectField(jVariable, jValueField, env->NewStringUTF(variables[i].value.data()));
-        env->SetObjectField(
-            jVariable,
-            jDescriptionField,
-            env->NewStringUTF(variables[i].description.data()));
-
-        env->SetObjectArrayElement(result, i, jVariable);
+    jobjectArray result = env->NewObjectArray((jsize) variables.size(), variableClass, nullptr);
+    if (result == nullptr) {
+        env->DeleteLocalRef(variableClass);
+        return nullptr;
     }
+
+    auto setString = [&](jobject target, jfieldID field, const std::string& value) {
+        jstring text = env->NewStringUTF(value.c_str());
+        if (text == nullptr) return false;
+        env->SetObjectField(target, field, text);
+        env->DeleteLocalRef(text);
+        return true;
+    };
+
+    for (size_t i = 0; i < variables.size(); i++) {
+        jobject jVariable = env->NewObject(variableClass, variableMethodID);
+        if (jVariable == nullptr) break;
+
+        bool ok = setString(jVariable, jKeyField, variables[i].key) &&
+            setString(jVariable, jValueField, variables[i].value) &&
+            setString(jVariable, jDescriptionField, variables[i].description);
+
+        if (ok) env->SetObjectArrayElement(result, (jsize) i, jVariable);
+        env->DeleteLocalRef(jVariable);
+        if (!ok) break;
+    }
+    env->DeleteLocalRef(variableClass);
     return result;
 }
 
@@ -127,42 +143,70 @@ JNIEXPORT jobjectArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_ge
     JNIEnv* env,
     jclass obj
 ) {
-    jclass variableClass = env->FindClass("[Lcom/swordfish/libretrodroid/Controller;");
+    jclass arrayClass = env->FindClass("[Lcom/swordfish/libretrodroid/Controller;");
+    jclass controllerClass = env->FindClass("com/swordfish/libretrodroid/Controller");
+    jmethodID controllerConstructor = controllerClass != nullptr ? env->GetMethodID(controllerClass, "<init>", "()V") : nullptr;
+    jfieldID jIdField = controllerClass != nullptr ? env->GetFieldID(controllerClass, "id", "I") : nullptr;
+    jfieldID jDescriptionField = controllerClass != nullptr
+        ? env->GetFieldID(controllerClass, "description", "Ljava/lang/String;") : nullptr;
+    auto release = [&]() {
+        if (arrayClass != nullptr) env->DeleteLocalRef(arrayClass);
+        if (controllerClass != nullptr) env->DeleteLocalRef(controllerClass);
+    };
+    if (arrayClass == nullptr || controllerClass == nullptr || controllerConstructor == nullptr ||
+        jIdField == nullptr || jDescriptionField == nullptr) {
+        release();
+        return nullptr;
+    }
 
+    // Cópia: a referência do Environment muda se o núcleo mandar outra lista enquanto isto roda.
     auto controllers = Environment::getInstance().getControllers();
-    jobjectArray result = env->NewObjectArray(controllers.size(), variableClass, nullptr);
+    jobjectArray result = env->NewObjectArray((jsize) controllers.size(), arrayClass, nullptr);
+    if (result == nullptr) {
+        release();
+        return nullptr;
+    }
 
-    for (int i = 0; i < controllers.size(); i++) {
-        jclass variableClass2 = env->FindClass("com/swordfish/libretrodroid/Controller");
-        jobjectArray controllerArray = env->NewObjectArray(
-            controllers[i].size(),
-            variableClass2,
-            nullptr
-        );
-        jmethodID variableMethodID = env->GetMethodID(variableClass2, "<init>", "()V");
+    bool failed = false;
+    for (size_t i = 0; i < controllers.size() && !failed; i++) {
+        jobjectArray controllerArray = env->NewObjectArray((jsize) controllers[i].size(), controllerClass, nullptr);
+        if (controllerArray == nullptr) break;
 
-        for (int j = 0; j < controllers[i].size(); j++) {
-            jobject jController = env->NewObject(variableClass2, variableMethodID);
-
-            jfieldID jIdField = env->GetFieldID(variableClass2, "id", "I");
-            jfieldID jDescriptionField = env->GetFieldID(
-                variableClass2,
-                "description",
-                "Ljava/lang/String;"
-            );
-
-            env->SetIntField(jController, jIdField, (int) controllers[i][j].id);
-            env->SetObjectField(
-                jController,
-                jDescriptionField,
-                env->NewStringUTF(controllers[i][j].description.data()));
-
-            env->SetObjectArrayElement(controllerArray, j, jController);
+        for (size_t j = 0; j < controllers[i].size(); j++) {
+            jobject jController = env->NewObject(controllerClass, controllerConstructor);
+            jstring description = jController != nullptr ? env->NewStringUTF(controllers[i][j].description.c_str()) : nullptr;
+            if (jController == nullptr || description == nullptr) {
+                if (jController != nullptr) env->DeleteLocalRef(jController);
+                failed = true;
+                break;
+            }
+            env->SetIntField(jController, jIdField, (jint) controllers[i][j].id);
+            env->SetObjectField(jController, jDescriptionField, description);
+            env->SetObjectArrayElement(controllerArray, (jsize) j, jController);
+            env->DeleteLocalRef(description);
+            env->DeleteLocalRef(jController);
         }
 
-        env->SetObjectArrayElement(result, i, controllerArray);
+        env->SetObjectArrayElement(result, (jsize) i, controllerArray);
+        env->DeleteLocalRef(controllerArray);
     }
+    release();
     return result;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_probeVulkan(
+    JNIEnv* env,
+    jclass obj
+) {
+    return VulkanContext::probeWithOwnContext();
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAllowVulkan(
+    JNIEnv* env,
+    jclass obj,
+    jboolean allow
+) {
+    Environment::setAllowVulkan(allow);
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRelaxedGlesVersion(
@@ -365,7 +409,15 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onSurfaceC
     JNIEnv* env,
     jclass obj
 ) {
-    LibretroDroid::getInstance().onSurfaceCreated();
+    try {
+        LibretroDroid::getInstance().onSurfaceCreated();
+    } catch (::libretrodroid::LibretroDroidError& exception) {
+        LOGE("Error in onSurfaceCreated: %s (code %d)", exception.what(), exception.getErrorCode());
+        JavaUtils::throwRetroException(env, exception.getErrorCode());
+    } catch (std::exception &exception) {
+        LOGE("Error in onSurfaceCreated: %s", exception.what());
+        JavaUtils::throwRetroException(env, ERROR_GENERIC);
+    }
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onMotionEvent(
@@ -503,15 +555,11 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_loadGameFr
     jbyteArray gameFileBytes
 ) {
     try {
-        size_t size = env->GetArrayLength(gameFileBytes);
-        auto* data = new int8_t[size];
-        env->GetByteArrayRegion(
-            gameFileBytes,
-            0,
-            size,
-            reinterpret_cast<int8_t*>(data)
-        );
-        LibretroDroid::getInstance().loadGameFromBytes(data, size);
+        // Antes um new[] que nunca era liberado: agora o buffer fica com o LibretroDroid até o destroy().
+        jsize size = env->GetArrayLength(gameFileBytes);
+        std::vector<int8_t> data((size_t) size);
+        env->GetByteArrayRegion(gameFileBytes, 0, size, reinterpret_cast<jbyte*>(data.data()));
+        LibretroDroid::getInstance().loadGameFromBytes(std::move(data));
     } catch (::libretrodroid::LibretroDroidError& exception) {
         LOGE("Error in loadGameFromBytes: %s (code %d)", exception.what(), exception.getErrorCode());
         JavaUtils::throwRetroException(env, exception.getErrorCode());
@@ -604,6 +652,14 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(
 ) {
     LibretroDroid::getInstance().step();
 
+    // A ponte Vulkan > GL quebrou (GPU travada, envio falhou): sem isso o jogo seguia com a tela preta para
+    // sempre. A exceção chega ao GLRetroView como ERROR_GL_NOT_COMPATIBLE e para a emulação.
+    if (LibretroDroid::getInstance().isVideoBackendLost()) {
+        LOGE("The Vulkan frame bridge was lost. Leaving.");
+        JavaUtils::throwRetroException(env, ERROR_GL_NOT_COMPATIBLE);
+        return;
+    }
+
     if (LibretroDroid::getInstance().requiresVideoRefresh()) {
         LibretroDroid::getInstance().clearRequiresVideoRefresh();
         jclass cls = env->GetObjectClass(glRetroView);
@@ -612,11 +668,17 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(
     }
 
     if (LibretroDroid::getInstance().isRumbleEnabled()) {
+        // Classe e método uma vez por quadro, e a referência local liberada: este laço roda a cada quadro.
+        jclass cls = nullptr;
+        jmethodID sendRumbleStrengthMethodID = nullptr;
         LibretroDroid::getInstance().handleRumbleUpdates([&](int port, float weak, float strong) {
-            jclass cls = env->GetObjectClass(glRetroView);
-            jmethodID sendRumbleStrengthMethodID = env->GetMethodID(cls, "sendRumbleEvent", "(IFF)V");
-            env->CallVoidMethod(glRetroView, sendRumbleStrengthMethodID, port, weak, strong);
+            if (!cls) {
+                cls = env->GetObjectClass(glRetroView);
+                sendRumbleStrengthMethodID = env->GetMethodID(cls, "sendRumbleEvent", "(IFF)V");
+            }
+            if (sendRumbleStrengthMethodID) env->CallVoidMethod(glRetroView, sendRumbleStrengthMethodID, port, weak, strong);
         });
+        if (cls) env->DeleteLocalRef(cls);
     }
 }
 

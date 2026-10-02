@@ -40,4 +40,12 @@ class AppUpdaterTest {
         assertNull(AppUpdater.parseRelease("""{"tag_name":"v1.0","assets":[]}"""))
         assertNull(AppUpdater.parseRelease("""{"tag_name":"v1.0","prerelease":true,"assets":[{"name":"a.apk","browser_download_url":"u"}]}"""))
     }
+
+    @Test
+    fun `tag vira nome de arquivo seguro`() {
+        assertEquals("0.5.6", AppUpdater.safeVersion("0.5.6"))
+        assertFalse(AppUpdater.safeVersion("../../x").contains('/'))
+        assertFalse(AppUpdater.safeVersion("../../x").contains(".."))
+        assertEquals("1.0_beta", AppUpdater.safeVersion("1.0 beta"))
+    }
 }

@@ -33,6 +33,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
+import com.retrovika.app.ui.components.ReadableWidth
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,11 +99,14 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
         value = withContext(Dispatchers.Default) { Versions.groups(list, language) }
     }
     val check: VersionsCheck = viewModel { VersionsCheck() }
-    var confirm by remember { mutableStateOf<List<Game>?>(null) }
+    // Só os ids, guardados: girar a tela com a confirmação aberta não a fecha. Os jogos vêm da lista atual.
+    var confirmIds by rememberSaveable { mutableStateOf<LongArray?>(null) }
+    val confirm = confirmIds?.let { ids -> games?.let { list -> ids.toList().mapNotNull { id -> list.firstOrNull { it.id == id } } } }
 
+    ReadableWidth { side ->
     LazyColumn(
         Modifier.fillMaxSize().ambientGlow(primary = system.accentColor(), secondary = Palette.Cyan, height = 420.dp),
-        contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current),
+        contentPadding = PaddingValues(start = side, end = side, bottom = 32.dp + LocalBottomInset.current),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -192,11 +199,11 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                     }
                     Spacer(Modifier.height(8.dp))
                     group.all.forEach { rated ->
-                        VersionRow(rated, recommended = rated === group.best, onOpen = { onOpenGame(rated.game.id) }, onRemove = { confirm = listOf(rated.game) })
+                        VersionRow(rated, recommended = rated === group.best, onOpen = { onOpenGame(rated.game.id) }, onRemove = { confirmIds = longArrayOf(rated.game.id) })
                     }
                     Spacer(Modifier.height(6.dp))
                     GhostButton(
-                        stringResource(R.string.versions_keep_best), { confirm = group.others.map { it.game } },
+                        stringResource(R.string.versions_keep_best), { confirmIds = group.others.map { it.game.id }.toLongArray() },
                         icon = Icons.Rounded.CleaningServices, tint = Palette.Neon,
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
@@ -204,10 +211,12 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
             }
         }
     }
+    }
 
-    confirm?.let { toRemove ->
+    // Lista vazia: os jogos já saíram da biblioteca (outra tela, varredura) e não há o que confirmar.
+    confirm?.takeIf { it.isNotEmpty() }?.let { toRemove ->
         AlertDialog(
-            onDismissRequest = { confirm = null },
+            onDismissRequest = { confirmIds = null },
             title = { Text(countString(R.plurals.versions_remove_title, toRemove.size)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -218,29 +227,32 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
             },
             confirmButton = {
                 TextButton(onClick = {
-                    confirm = null
+                    confirmIds = null
                     // No escopo do app, como a verificação: sair da tela no meio não pode interromper a remoção
                     // entre apagar o arquivo e apagar o registro no banco.
                     val res = context.localized()
                     app.scope.launch(Dispatchers.Main) {
-                        var failure: Throwable? = null
+                        var failure: String? = null
                         toRemove.forEach { game ->
                             try {
-                                app.library.delete(game, deleteFile = !game.isContentUri)
+                                // Falso: o arquivo não pôde ser apagado e o jogo continua na biblioteca.
+                                if (!app.library.delete(game, deleteFile = !game.isContentUri)) {
+                                    failure = res.getString(R.string.details_remove_failed, game.fileName)
+                                }
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
-                                failure = t
+                                failure = t.userMessage(res)
                             }
                         }
                         failure?.let {
                             check.error = true
-                            check.message = it.userMessage(res)
+                            check.message = it
                         }
                     }
                 }) { Text(stringResource(R.string.common_remove), color = Palette.Coral) }
             },
-            dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(R.string.common_cancel)) } },
+            dismissButton = { TextButton(onClick = { confirmIds = null }) { Text(stringResource(R.string.common_cancel)) } },
             containerColor = Palette.SurfaceHigh,
         )
     }
@@ -262,9 +274,11 @@ private fun VersionRow(rated: Versions.Rated, recommended: Boolean, onOpen: () -
                 color = if (recommended) Palette.TextPrimary else Palette.TextSecondary, modifier = Modifier.weight(1f),
             )
             if (!recommended && onRemove != null) {
+                // Alvo de 48dp: o texto sozinho tinha uns 28dp de altura, dentro de uma linha que também é tocável.
                 Text(
                     stringResource(R.string.common_remove), style = MaterialTheme.typography.labelMedium, color = Palette.Coral,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onRemove).padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.minimumInteractiveComponentSize().clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button, onClick = onRemove).padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
         }

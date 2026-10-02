@@ -98,27 +98,28 @@ class VideoEncoder(
 
     private fun drain() {
         val info = MediaCodec.BufferInfo()
-        while (running) {
-            val index = try {
-                codec.dequeueOutputBuffer(info, 20_000)
-            } catch (e: IllegalStateException) {
-                // Parado por release() é normal; com running ainda ligado, o codec morreu sozinho.
-                if (running) {
-                    val detail = (e as? MediaCodec.CodecException)?.diagnosticInfo.orEmpty()
-                    Log.e(TAG, "Encoder $name (mode $mode) died $detail", e)
-                    onError(e)
+        try {
+            while (running) {
+                val index = codec.dequeueOutputBuffer(info, 20_000)
+                if (index < 0) continue
+                try {
+                    val buffer = codec.getOutputBuffer(index) ?: continue
+                    val data = ByteArray(info.size)
+                    buffer.position(info.offset)
+                    buffer.get(data, 0, info.size)
+                    handle(data, info)
+                } finally {
+                    runCatching { codec.releaseOutputBuffer(index, false) }
                 }
-                break
             }
-            if (index < 0) continue
-            try {
-                val buffer = codec.getOutputBuffer(index) ?: continue
-                val data = ByteArray(info.size)
-                buffer.position(info.offset)
-                buffer.get(data, 0, info.size)
-                handle(data, info)
-            } finally {
-                runCatching { codec.releaseOutputBuffer(index, false) }
+        } catch (e: Exception) {
+            // Parado por release() é normal; com running ainda ligado, o codec morreu sozinho (ou um buffer
+            // estranho quebrou a leitura, ou quem recebe os quadros falhou). Exceção solta nesta thread
+            // derrubaria o app com o jogo junto e pularia a troca de modo: vira erro para quem usa.
+            if (running) {
+                val detail = (e as? MediaCodec.CodecException)?.diagnosticInfo.orEmpty()
+                Log.e(TAG, "Encoder $name (mode $mode) died $detail", e)
+                runCatching { onError(e) }.onFailure { Log.e(TAG, "onError failed", it) }
             }
         }
     }

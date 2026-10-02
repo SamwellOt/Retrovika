@@ -93,4 +93,16 @@
     <string name="bios_ui_invalid">não é um arquivo de BIOS válido para este console</string>
     <string name="bios_ui_one_of_group">uma do grupo</string>
     <string name="bios_ui_required">obrigatória</string>
+    <!-- Falhas ao baixar o OCR para jogos japoneses (OcrPack). -->
+    <string name="ocr_pack_unsupported_abi">O runtime do OCR não existe para o processador deste aparelho (%1$s).</string>
+    <string name="ocr_pack_corrupted">%1$s chegou corrompido. Tente baixar de novo.</string>
+    <string name="ocr_pack_runtime_corrupted">O runtime do ONNX chegou corrompido. Tente baixar de novo.</string>
+    <string name="cores_invalid_library">O %1$s baixado não é uma biblioteca válida para o processador deste aparelho (%2$s). Tente de novo mais tarde.</string>
+    <string name="settings_remove_folder_title">Desvincular esta pasta?</string>
+    <string name="settings_remove_folder_message">Os jogos de %1$s saem da biblioteca. Os arquivos continuam no aparelho, e dá para vincular a pasta de novo depois.</string>
+    <string name="cores_uninstall_title">Remover %1$s?</string>
+    <string name="cores_uninstall_message">O núcleo é apagado deste aparelho. Ele é baixado de novo na próxima vez que um jogo precisar dele.</string>
+    <string name="bios_ui_status_ok">Encontrado</string>
+    <string name="bios_ui_status_wrong">Arquivo errado</string>
+    <string name="bios_ui_status_missing">Ausente</string>
 </resources>

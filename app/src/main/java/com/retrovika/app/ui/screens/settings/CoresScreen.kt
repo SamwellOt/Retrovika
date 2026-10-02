@@ -38,6 +38,11 @@ import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.ui.components.Badge
+import com.retrovika.app.ui.components.ConfirmDialog
+import com.retrovika.app.ui.components.ReadableWidth
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import com.retrovika.app.ui.components.LocalBottomInset
 import com.retrovika.app.ui.components.IconTile
 import com.retrovika.app.ui.components.ScreenHeader
@@ -66,7 +71,13 @@ fun CoresScreen(onBack: () -> Unit) {
     }
 
     val installed = all.count { states[it.first] is CoreState.Installed }
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan, secondary = Palette.Violet), contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current)) {
+    // Núcleo a remover, aguardando confirmação (id, para sobreviver à rotação).
+    var confirmUninstall by rememberSaveable { mutableStateOf<String?>(null) }
+    ReadableWidth { side ->
+    LazyColumn(
+        Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan, secondary = Palette.Violet),
+        contentPadding = PaddingValues(start = side, end = side, bottom = 32.dp + LocalBottomInset.current),
+    ) {
         item {
             ScreenHeader(stringResource(R.string.cores_title), subtitle = stringResource(R.string.cores_subtitle, installed, all.size, cores.abi), onBack = onBack)
             Spacer(Modifier.height(10.dp))
@@ -110,7 +121,7 @@ fun CoresScreen(onBack: () -> Unit) {
                 }
                 when (state) {
                     is CoreState.Downloading -> CircularProgressIndicator(progress = { state.progress }, modifier = Modifier.padding(12.dp).size(24.dp), strokeWidth = 3.dp, color = Palette.Cyan, trackColor = Palette.SurfaceHighest)
-                    is CoreState.Installed -> if (!state.bundled) IconButton(onClick = { cores.uninstall(id) }) { Icon(Icons.Rounded.Delete, stringResource(R.string.common_remove), tint = Palette.TextMuted) }
+                    is CoreState.Installed -> if (!state.bundled) IconButton(onClick = { confirmUninstall = id }) { Icon(Icons.Rounded.Delete, stringResource(R.string.common_remove), tint = Palette.TextMuted) }
                     else -> IconButton(
                         // No escopo do app: a instalação continua se o usuário sair da tela.
                         onClick = { app.scope.launch { runCatching { cores.install(core) } } },
@@ -119,5 +130,18 @@ fun CoresScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+    }
+
+    confirmUninstall?.let { id ->
+        val core = all.firstOrNull { it.first == id }?.second ?: return@let
+        ConfirmDialog(
+            title = stringResource(R.string.cores_uninstall_title, core.displayName),
+            message = stringResource(R.string.cores_uninstall_message),
+            confirmLabel = stringResource(R.string.common_remove),
+            onConfirm = { cores.uninstall(id) },
+            onDismiss = { confirmUninstall = null },
+            icon = Icons.Rounded.Delete,
+        )
     }
 }

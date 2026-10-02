@@ -21,6 +21,7 @@ import com.retrovika.app.ui.components.ScrollToTopOnReselect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material.icons.rounded.VideogameAsset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.retrovika.app.container
+import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCard
@@ -55,13 +57,19 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val app = context.container
     val library = app.library
     val counts by library.counts.collectAsStateWithLifecycle()
+    val countsLoaded by library.countsLoaded.collectAsStateWithLifecycle()
     // Só o "em andamento": o progresso da varredura muda várias vezes por segundo e recompunha a tela toda.
     val scanning by remember { library.scan.map { it.running }.distinctUntilChanged() }.collectAsStateWithLifecycle(false)
     var query by rememberSaveable { mutableStateOf("") }
     var onlyWithGames by rememberSaveable { mutableStateOf(false) }
-    // null = consulta ainda em andamento: "sem resultados" só aparece com a resposta do banco na mão.
-    val results by remember(query) { if (query.isBlank()) flowOf(emptyList()) else library.search(query) }
-        .collectAsStateWithLifecycle(null)
+    // Cada resposta vem junto do termo que a pediu. O collectAsState mantém o último valor quando a busca
+    // muda, e "sem resultados" piscava com a resposta do termo anterior; agora só aparece com a resposta
+    // do termo atual. Enquanto ela não chega, a lista anterior continua na tela (sem piscar vazia).
+    val answer by remember(query) {
+        (if (query.isBlank()) flowOf(emptyList<Game>()) else library.search(query)).map { query to it }
+    }.collectAsStateWithLifecycle(null)
+    val results = answer?.second
+    val currentResults = answer?.takeIf { it.first == query }?.second
 
     val settings by app.settings.cached.collectAsStateWithLifecycle()
     val countMap = remember(counts) { counts.associate { it.systemId to it.count } }
@@ -112,11 +120,19 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
         }
 
         if (query.isNotBlank()) {
-            if (results?.isEmpty() == true) item(span = { GridItemSpan(maxLineSpan) }) {
+            if (currentResults?.isEmpty() == true) item(span = { GridItemSpan(maxLineSpan) }) {
                 EmptyState(stringResource(R.string.library_no_results_title), stringResource(R.string.library_no_results_message, query), icon = Icons.Rounded.SearchOff)
             }
             items(results.orEmpty(), key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
         } else {
+            // "Com jogos" sem nenhum jogo na biblioteca: explica em vez de deixar a grade vazia.
+            if (onlyWithGames && countsLoaded && systems.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyState(
+                    stringResource(R.string.library_with_games_empty_title),
+                    stringResource(R.string.library_with_games_empty_message),
+                    icon = Icons.Rounded.VideogameAsset,
+                )
+            }
             items(systems, key = { it.id }, contentType = { "system" }) { system ->
                 SystemTile(system, countMap[system.id] ?: 0, onClick = { onOpenSystem(system.id) })
             }

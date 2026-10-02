@@ -96,4 +96,16 @@
     <!-- Nomes de idioma ficam no próprio idioma (não se traduzem). -->
     <string name="settings_language_pt" translatable="false">Português (Brasil)</string>
     <string name="settings_language_en" translatable="false">English</string>
+    <!-- Falhas ao baixar o OCR para jogos japoneses (OcrPack). -->
+    <string name="ocr_pack_unsupported_abi">The OCR runtime isn\'t available for this device\'s processor (%1$s).</string>
+    <string name="ocr_pack_corrupted">%1$s arrived corrupted. Try the download again.</string>
+    <string name="ocr_pack_runtime_corrupted">The ONNX runtime arrived corrupted. Try the download again.</string>
+    <string name="cores_invalid_library">The downloaded %1$s isn\'t a valid library for this device\'s processor (%2$s). Try again later.</string>
+    <string name="settings_remove_folder_title">Unlink this folder?</string>
+    <string name="settings_remove_folder_message">The games in %1$s leave the library. The files stay on the device, and you can link the folder again later.</string>
+    <string name="cores_uninstall_title">Remove %1$s?</string>
+    <string name="cores_uninstall_message">The core is deleted from this device. It is downloaded again the next time a game needs it.</string>
+    <string name="bios_ui_status_ok">Found</string>
+    <string name="bios_ui_status_wrong">Wrong file</string>
+    <string name="bios_ui_status_missing">Missing</string>
 </resources>

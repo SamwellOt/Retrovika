@@ -145,6 +145,15 @@ public class LibretroDroid {
 
     public static native void setRelaxedGlesVersion(boolean relaxed);
 
+    /** Deixa o núcleo pedir um contexto Vulkan (ponte por AHardwareBuffer). Chamar antes de create(). */
+    public static native void setAllowVulkan(boolean allow);
+
+    /**
+     * Testa, com um contexto EGL descartável, se a ponte Vulkan funciona neste aparelho (cria instância, dispositivo e um
+     * buffer compartilhado). Pode ser chamado de qualquer thread, antes de abrir um jogo.
+     */
+    public static native boolean probeVulkan();
+
     // Retrovika: partida em rede local (netplay.h) e teste de desempenho dos núcleos.
     public static native void startNetplay(int fd, int localPort, int delayFrames, int epoch);
     public static native void stopNetplay();

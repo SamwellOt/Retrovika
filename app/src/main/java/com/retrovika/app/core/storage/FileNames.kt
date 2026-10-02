@@ -11,10 +11,46 @@ object FileNames {
      * sem isso, "../../x" ou um nome vazio gravariam fora da pasta (ou sobre a própria pasta).
      */
     fun safe(name: String): String =
-        name.substringAfterLast('/').substringAfterLast('\\')
-            .replace(unsafeChars, "_")
-            .trim().trimStart('.')
-            .ifBlank { "jogo" }
+        capBytes(
+            name.substringAfterLast('/').substringAfterLast('\\')
+                .replace(unsafeChars, "_")
+                .trim().trimStart('.')
+                .ifBlank { "jogo" },
+        ).ifBlank { "jogo" }
+
+    /**
+     * Limite do nome em bytes UTF-8. O sistema de arquivos aceita 255 por nome, e o nome ainda ganha " (2)",
+     * ".part" e afins: um título longo em japonês (3 bytes por caractere) passaria disso e a gravação falharia.
+     */
+    private const val MAX_NAME_BYTES = 200
+
+    /** Corta [name] em [max] bytes UTF-8 sem partir um caractere, mantendo a extensão (se curta). */
+    internal fun capBytes(name: String, max: Int = MAX_NAME_BYTES): String {
+        if (utf8Length(name) <= max) return name
+        val dot = name.lastIndexOf('.')
+        val ext = if (dot > 0 && name.length - dot <= 16) name.substring(dot) else ""
+        val base = if (ext.isEmpty()) name else name.substring(0, dot)
+        val budget = (max - utf8Length(ext)).coerceAtLeast(1)
+        val out = StringBuilder()
+        var used = 0
+        var i = 0
+        while (i < base.length) {
+            val cp = base.codePointAt(i)
+            val len = when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            if (used + len > budget) break
+            out.appendCodePoint(cp)
+            used += len
+            i += Character.charCount(cp)
+        }
+        return out.toString().trimEnd() + ext
+    }
+
+    private fun utf8Length(s: String): Int = s.toByteArray(Charsets.UTF_8).size
 
     /** Arquivo ou pasta oculta, ou o __MACOSX (e seus "._x") que o Mac põe dentro dos compactados. */
     fun isJunk(name: String): Boolean = name.startsWith(".") || name.equals("__MACOSX", ignoreCase = true)

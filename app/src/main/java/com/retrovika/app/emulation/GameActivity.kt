@@ -39,6 +39,7 @@ import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.cores.CoreState
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
+import com.retrovika.app.core.settings.SettingsRepository
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.share.LanTransfer
@@ -60,7 +61,14 @@ import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
+import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.systems.Systems
+import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.core.tuning.EffectivePreset
+import com.retrovika.app.core.tuning.SpeedWatch
+import com.retrovika.app.core.tuning.TuneSource
+import com.retrovika.app.core.tuning.TuneResult
+import com.retrovika.app.core.tuning.Tuning
 import com.retrovika.app.emulation.input.MotionSources
 import com.retrovika.app.emulation.input.PadProfile
 import com.retrovika.app.emulation.input.PadListener
@@ -72,6 +80,8 @@ import com.swordfish.libretrodroid.LibretroDroid
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -88,9 +98,17 @@ sealed interface EmulationUi {
     data class Preparing(val message: String, val progress: Float?) : EmulationUi
     data class Running(val view: GLRetroView) : EmulationUi
     data class Failed(val title: String, val message: String, val action: FailAction? = null) : EmulationUi
-    /** Teste dos núcleos na primeira vez do console: [view] é o núcleo sendo medido (nulo entre um e outro). */
-    data class Benchmarking(val view: GLRetroView?, val cores: List<CoreInfo>, val current: Int, val results: List<CoreSpeed>) : EmulationUi
+    /**
+     * Teste na primeira vez do console (ou do jogo): [view] é o que está sendo medido (nulo entre um e outro);
+     * [items] são os núcleos ou os níveis de qualidade, conforme [kind].
+     */
+    data class Benchmarking(val view: GLRetroView?, val kind: BenchKind, val items: List<BenchItem>, val current: Int, val results: List<CoreSpeed>) : EmulationUi
 }
+
+enum class BenchKind { CORES, QUALITY, GAME }
+
+/** Uma linha do teste: [id] é o que [CoreSpeed.coreId] guarda (o núcleo ou o nível de qualidade). */
+data class BenchItem(val id: String, val label: String)
 
 /** Botão extra da tela de falha, para o que o usuário pode resolver na hora (ex.: conceder uma permissão). */
 data class FailAction(val label: String, val run: () -> Unit)
@@ -146,6 +164,10 @@ class GameActivity : ComponentActivity() {
     private var menuFrame by mutableStateOf<Bitmap?>(null)
     private var menuSnapshot: Bitmap? = null
     private var menuOpening = false
+    /** O estado demora a sair (PS2, GameCube): um indicador na tela mostra que o toque no menu chegou. */
+    private var busy by mutableStateOf(false)
+    /** Quantas vezes a emulação parou: compara antes e depois de uma operação para saber se ela pausou no meio. */
+    private var emulationPauses = 0
 
     /**
      * Estado do jogo capturado na thread de emulação quando ela parou (menu aberto ou app em segundo plano).
@@ -200,6 +222,10 @@ class GameActivity : ComponentActivity() {
      * é a do boot, ou nem existe: gravá-la por cima do .srm apagaria o save do cartucho.
      */
     private var gameLoaded = false
+    /** Esta abertura conta como tentativa de Vulkan, ainda sem o primeiro quadro (ver VulkanHealth). */
+    private var vulkanAttempt = false
+    /** Esta abertura usa Vulkan: uma perda do contexto no meio do jogo também desliga o Vulkan do núcleo. */
+    private var vulkanLaunch = false
     private val sramLock = Any()
     /** A última SRAM gravada: sem mudança, o arquivo não é escrito de novo. */
     private var lastSram: ByteArray? = null
@@ -243,6 +269,7 @@ class GameActivity : ComponentActivity() {
                     padEditing = padEditing,
                     editorBackdrop = menuFrame,
                     toast = toast,
+                    busy = busy,
                     padListener = padListener,
                     menu = menuActions,
                     onDismissToast = { toast = null },
@@ -273,7 +300,7 @@ class GameActivity : ComponentActivity() {
         // existe, e um toque duplo em "Jogar" reiniciava a instalação do núcleo.
         // Mesmo jogo, sem estado recebido: é só um toque duplo em "Jogar".
         if (newId == this.intent.getLongExtra(EXTRA_GAME_ID, -1) && intent.getStringExtra(EXTRA_STATE_FILE) == null &&
-            intent.getStringExtra(EXTRA_NET_HOST) == null) return
+            intent.getStringExtra(EXTRA_NET_HOST) == null && !intent.getBooleanExtra(EXTRA_RETUNE, false)) return
         netplay.end()
         persist(auto = settings.autoSave)
         setIntent(intent)
@@ -339,6 +366,12 @@ class GameActivity : ComponentActivity() {
             }
         }
 
+        // 2b. Nível de qualidade: mede neste aparelho o maior que roda com folga (ou refaz só para este jogo).
+        val retune = intent.getBooleanExtra(EXTRA_RETUNE, false)
+        if (!guestSession && core.presets.size >= 2 && (retune || shouldTune(core))) {
+            runTuning(core, perGame = retune) ?: return
+        }
+
         // 3. Núcleo e arquivos de sistema dele: baixados automaticamente na primeira execução.
         val corePath = app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
             ui = EmulationUi.Preparing(getString(R.string.game_installing_core, core.displayName), 0f)
@@ -367,6 +400,16 @@ class GameActivity : ComponentActivity() {
 
         // 4. Opções: padrões otimizados + preset escolhido + ajustes manuais do usuário.
         val options = optionsFor(core)
+        // Vulkan só para o núcleo que o pede e quando o aparelho e o histórico dele deixam; cada abertura com
+        // Vulkan é uma tentativa que o primeiro quadro confirma (um driver ruim derruba o app, e isso se aprende).
+        val vulkan = vulkanAllowed(core)
+        vulkanLaunch = vulkan
+        if (vulkan) {
+            vulkanAttempt = true
+            app.vulkanHealth.attemptStarted(core.id)
+        } else if (core.vulkan && intent.getBooleanExtra(EXTRA_NO_VULKAN, false)) {
+            toast = getString(R.string.vulkan_fallback)
+        }
 
         ui = EmulationUi.Preparing(getString(R.string.game_starting, game.title), null)
         val sram = withContext(Dispatchers.IO) { states.sramFile().takeIf { it.exists() }?.readBytes() }
@@ -391,7 +434,7 @@ class GameActivity : ComponentActivity() {
                 GameSource.Inaccessible -> return fail(getString(R.string.game_file_inaccessible), getString(R.string.game_file_inaccessible_message, game.fileName))
                 GameSource.NotFound -> return fail(getString(R.string.game_file_not_found), game.uri)
             }
-            configure(this, core, options)
+            configure(this, core, options, vulkan)
             saveRAMState = sram
         }
 
@@ -410,6 +453,46 @@ class GameActivity : ComponentActivity() {
         app.remote.attach(view, RemoteGame(game.title, system.name, system.accent, system.layout), ::physicalControllerPorts)
         updateEmulationState()
         view.requestFocus()
+        watchSpeed(view)
+    }
+
+    /**
+     * Vigia a velocidade durante o jogo: se ela fica abaixo do nativo por vários segundos (a medição da
+     * abertura não pegou uma cena pesada), baixa um nível de qualidade só deste jogo, para a próxima vez.
+     * Não conta com o menu aberto, avanço rápido, tela transmitida (o encoder divide o aparelho) ou rede.
+     */
+    private fun watchSpeed(view: GLRetroView) {
+        if (guestSession || core.presets.size < 2) return
+        lifecycleScope.launch {
+            val watch = SpeedWatch()
+            // O estado do próprio emulador, não só o menu: a tradução da tela e o segundo plano também o pausam.
+            fun active() = retroView === view && ui is EmulationUi.Running && emulationOwner.registry.currentState == Lifecycle.State.RESUMED &&
+                !fastForward && !netplay.playing && app.remote.state.value.screenCount == 0
+            while (retroView === view) {
+                val frames = view.runCount()
+                // Antes do primeiro quadro o núcleo ainda carrega o jogo: não é lentidão.
+                if (frames == 0L || !active()) { delay(WATCH_INTERVAL_MS); continue }
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                delay(WATCH_INTERVAL_MS)
+                if (!active()) continue
+                if (watch.sample(view.runCount() - frames, android.os.SystemClock.elapsedRealtime() - t0, view.contentFps())) lowerQualityForGame()
+            }
+        }
+    }
+
+    private suspend fun lowerQualityForGame() {
+        val current = effectivePreset(core) ?: return
+        val lower = Tuning.lower(core, current.preset) ?: return
+        // Nível escolhido pelo usuário para o console: a escolha é dele, só avisa que um nível menor pode ajudar.
+        if (current.source == TuneSource.USER) {
+            toast = getString(R.string.tune_slowdown_user, getString(current.preset.label))
+            return
+        }
+        // Os ajustes manuais das opções cobrem tudo o que o nível muda: baixar não mudaria nada no jogo.
+        if (optionsFor(core, lower) == optionsFor(core, current.preset)) return
+        val profile = app.deviceProfile.await()
+        app.settings.setGameTuning(game.id, TuneResult(core.id, lower.name, null, profile.signature, System.currentTimeMillis(), slowdown = true))
+        toast = getString(R.string.tune_slowdown, getString(lower.label))
     }
 
     private enum class GameSource { Ok, NeedsFileAccess, Inaccessible, NotFound }
@@ -442,12 +525,45 @@ class GameActivity : ComponentActivity() {
         data.gameVirtualFiles = emptyList()
     }
 
-    private suspend fun optionsFor(core: CoreInfo): Map<String, String> {
-        val preset = app.settings.presetFor(system.id).first()
-        return core.defaults + core.presets[preset].orEmpty() + app.settings.coreOptions(core.id) + core.fixed
+    /** A predefinição que vale agora para [core] neste jogo e aparelho, e por quê; nulo se o núcleo não tem predefinições. */
+    private suspend fun effectivePreset(core: CoreInfo): EffectivePreset? = Tuning.effective(
+        core, app.deviceProfile.await(), app.settings.presetChoice(system.id).first(),
+        app.settings.gameTuning(game.id).first(), app.settings.tuning(system.id, core.id).first(),
+    )
+
+    /** [preset] força um nível (o teste de qualidade); sem ele vale o [effectivePreset]. */
+    private suspend fun optionsFor(core: CoreInfo, preset: Preset? = null): Map<String, String> {
+        val level = preset ?: effectivePreset(core)?.preset
+        // Sem Vulkan para este núcleo (o aparelho não tem, ou ele falhou), o perfil diz isso e o núcleo escolhe outro renderizador.
+        val allowed = vulkanAllowed(core)
+        val profile = app.deviceProfile.await().let { if (it.vulkan && !allowed) it.copy(vulkan = false) else it }
+        val device = core.deviceOptions?.invoke(profile).orEmpty()
+        val user = app.settings.coreOptions(core.id).let { if (core.vulkan && !allowed) withoutVulkan(core, profile, it) else it }
+        return core.defaults + level?.let { core.presets[it] }.orEmpty() + device + user + core.fixed
     }
 
-    private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>) = data.apply {
+    /**
+     * Sem Vulkan nesta abertura, um ajuste manual que pede Vulkan (ppsspp_backend=vulkan, pcsx2_renderer=Vulkan,
+     * escolhido quando ainda funcionava) faria o núcleo abortar a cada abertura. As chaves do renderizador são as
+     * que as [CoreInfo.deviceOptions] mudam conforme o aparelho tem Vulkan; nelas, o valor do usuário que fala
+     * em Vulkan sai e fica o do aparelho sem ele.
+     */
+    private fun withoutVulkan(core: CoreInfo, profile: DeviceProfile, user: Map<String, String>): Map<String, String> {
+        val options = core.deviceOptions ?: return user
+        val off = options(profile.copy(vulkan = false))
+        val on = options(profile.copy(vulkan = true))
+        return user.filter { (key, value) -> !(on[key] != off[key] && value.contains("vulkan", ignoreCase = true)) }
+    }
+
+    /** Vulkan vale para [core] agora: ele o pede, o aparelho declara Vulkan 1.1+ e ele não falhou aqui. */
+    private suspend fun vulkanAllowed(core: CoreInfo): Boolean {
+        if (!core.vulkan || intent.getBooleanExtra(EXTRA_NO_VULKAN, false) || app.settings.vulkanDisabled(core.id).first()) return false
+        val device = app.deviceProfile.await()
+        return device.vulkan && app.vulkanHealth.shouldTry(core.id, device.signature)
+    }
+
+    private fun configure(data: GLRetroViewData, core: CoreInfo, options: Map<String, String>, vulkan: Boolean) = data.apply {
+        allowVulkan = vulkan
         systemDirectory = app.paths.system.absolutePath
         savesDirectory = app.paths.savesFor(system.id).absolutePath
         variables = options.map { Variable(it.key, it.value) }.toTypedArray()
@@ -462,7 +578,12 @@ class GameActivity : ComponentActivity() {
     // region Teste dos núcleos
 
     @kotlinx.serialization.Serializable
-    private data class BenchProgress(val results: List<CoreSpeed>, val running: String?)
+    private data class BenchProgress(
+        val results: List<CoreSpeed>,
+        val running: String?,
+        /** Itens que derrubaram o app em tentativas anteriores. */
+        val crashed: List<String> = emptyList(),
+    )
 
     /** Núcleos que entram no teste: os estáveis que conseguem abrir este arquivo. */
     private suspend fun benchmarkCandidates(): List<CoreInfo> {
@@ -476,25 +597,49 @@ class GameActivity : ComponentActivity() {
      * núcleo: se um deles derrubar o app, na próxima abertura ele conta como falho e o teste continua.
      * Nulo quando a Activity está fechando.
      */
+    /**
+     * Marcador de teste em andamento, em filesDir/benchmark/ (fora do backup: num aparelho restaurado ele apontaria
+     * uma queda que não aconteceu). Um marcador antigo, da raiz de filesDir, é apagado.
+     */
+    private fun benchMarker(name: String): File {
+        File(filesDir, name).delete()
+        return File(File(filesDir, BENCH_DIR).apply { mkdirs() }, name)
+    }
+
     private suspend fun runBenchmark(candidates: List<CoreInfo>): String? {
-        val marker = File(filesDir, "benchmark_${system.id}.json")
+        val marker = benchMarker("benchmark_${system.id}.json")
         val previous = runCatching { Http.json.decodeFromString(BenchProgress.serializer(), marker.readText()) }.getOrNull()
         val results = previous?.results.orEmpty().toMutableList()
         previous?.running?.let { crashed -> if (results.none { it.coreId == crashed }) results += CoreSpeed(crashed, null) }
+        // Os que derrubaram o app (agora ou antes): continuam pulados mesmo quando o teste não chega a valer.
+        val crashed = (previous?.crashed.orEmpty() + listOfNotNull(previous?.running)).distinct()
         benchSkip = false
-        for ((i, c) in candidates.withIndex()) {
-            if (benchSkip) break
-            if (results.any { it.coreId == c.id }) continue
-            withContext(Dispatchers.IO) { runCatching { marker.writeText(Http.json.encodeToString(BenchProgress.serializer(), BenchProgress(results, c.id))) } }
-            val speed = measure(c, candidates, i, results)
-            if (isFinishing) return null
-            if (!benchSkip) results += CoreSpeed(c.id, speed)
+        val items = candidates.map { BenchItem(it.id, it.displayName) }
+        var finished = false
+        try {
+            for ((i, c) in candidates.withIndex()) {
+                if (benchSkip) break
+                if (results.any { it.coreId == c.id }) continue
+                writeBenchProgress(marker, BenchProgress(results, c.id, crashed))
+                val speed = measure(c, optionsFor(c), BenchKind.CORES, items, i, results)
+                if (isFinishing) return null
+                if (!benchSkip) results += CoreSpeed(c.id, speed)
+            }
+            finished = true
+        } finally {
+            // Sair no meio do teste não é falha do núcleo: só um crash (que pula este bloco) deixa "running" no arquivo.
+            withContext(kotlinx.coroutines.NonCancellable) { finishBenchProgress(marker, finished, ran = benchSkip || results.any { it.speed != null }, results, crashed) }
         }
-        withContext(Dispatchers.IO) { marker.delete() }
+        // Nenhum núcleo rodou (arquivo ilegível, sem internet para instalar, jogo que não abre): não há o que
+        // guardar, e gravar "o padrão" travaria essa escolha para sempre. Fica o padrão só nesta abertura.
+        if (!benchSkip && results.none { it.speed != null }) {
+            ui = EmulationUi.Preparing(getString(R.string.game_loading), null)
+            return system.defaultCore.id
+        }
         val chosen = if (benchSkip) system.defaultCore.id else CoreBenchmark.choose(candidates.map { it.id }, results)
         app.settings.setBenchmark(
             system.id,
-            SystemBenchmark(results, chosen, "${Build.MANUFACTURER} ${Build.MODEL}", System.currentTimeMillis(), skipped = benchSkip),
+            SystemBenchmark(results, chosen, SettingsRepository.BENCH_DEVICE, System.currentTimeMillis(), skipped = benchSkip),
         )
         if (!benchSkip) {
             val speed = results.firstOrNull { it.coreId == chosen }?.speed
@@ -504,9 +649,81 @@ class GameActivity : ComponentActivity() {
         return chosen
     }
 
-    /** Velocidade de [core] com este jogo, ou nulo se ele não instalou, não abriu o jogo ou deu erro. */
-    private suspend fun measure(core: CoreInfo, cores: List<CoreInfo>, index: Int, results: List<CoreSpeed>): Float? {
-        ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+    private suspend fun writeBenchProgress(marker: File, progress: BenchProgress) = withContext(Dispatchers.IO) {
+        runCatching { marker.writeText(Http.json.encodeToString(BenchProgress.serializer(), progress)) }
+    }
+
+    /**
+     * Fim do teste: terminado e com algo medido ([ran]), o arquivo some; interrompido, guarda o que já foi medido.
+     * Terminado sem nada medido, o resultado não é gravado e o teste volta na próxima abertura: o arquivo fica
+     * só com os itens que derrubaram o app ([crashed]), para eles não derrubarem de novo.
+     */
+    private suspend fun finishBenchProgress(marker: File, finished: Boolean, ran: Boolean, results: List<CoreSpeed>, crashed: List<String>) {
+        when {
+            finished && ran -> withContext(Dispatchers.IO) { marker.delete() }
+            finished -> writeBenchProgress(marker, BenchProgress(results.filter { it.coreId in crashed }, null, crashed))
+            else -> writeBenchProgress(marker, BenchProgress(results, null, crashed))
+        }
+    }
+
+    /** O teste de qualidade só roda sozinho na primeira vez do núcleo neste aparelho, e sem o usuário ter escolhido um nível. */
+    private suspend fun shouldTune(core: CoreInfo): Boolean {
+        if (!settings.autoBenchmark || app.settings.presetChoice(system.id).first() != null) return false
+        return app.settings.tuning(system.id, core.id).first()?.appliesTo(app.deviceProfile.await(), core) != true
+    }
+
+    /**
+     * Mede os níveis de qualidade de [core] com este jogo e guarda o maior que roda com folga, para o console
+     * ou, com [perGame], só para este jogo. Devolve nulo se a Activity foi fechada no meio.
+     */
+    private suspend fun runTuning(core: CoreInfo, perGame: Boolean): Preset? {
+        val profile = app.deviceProfile.await()
+        val ladder = Tuning.ladder(core)
+        val items = ladder.map { BenchItem(it.name, getString(it.label)) }
+        val kind = if (perGame) BenchKind.GAME else BenchKind.QUALITY
+        val marker = benchMarker(if (perGame) "benchmark_game_${game.id}.json" else "benchmark_${system.id}_${core.id}_quality.json")
+        val previous = runCatching { Http.json.decodeFromString(BenchProgress.serializer(), marker.readText()) }.getOrNull()
+        val results = previous?.results.orEmpty().toMutableList()
+        previous?.running?.let { crashed -> if (results.none { it.coreId == crashed }) results += CoreSpeed(crashed, null) }
+        val crashed = (previous?.crashed.orEmpty() + listOfNotNull(previous?.running)).distinct()
+        // Sem zerar benchSkip: quem pulou o teste dos núcleos também pulou este (vale o chute pela classe do aparelho).
+        val start = Tuning.estimate(profile.tier, core)!!
+        var finished = false
+        val (preset, speed) = try {
+            Tuning.search(ladder, start) { level ->
+                if (benchSkip || isFinishing) return@search null
+                // Nível já medido numa tentativa anterior (que travou o app no seguinte): não repete.
+                results.firstOrNull { it.coreId == level.name }?.let { return@search it.speed }
+                writeBenchProgress(marker, BenchProgress(results, level.name, crashed))
+                val measured = measure(core, optionsFor(core, level), kind, items, ladder.indexOf(level), results)
+                if (!benchSkip && !isFinishing) results += CoreSpeed(level.name, measured)
+                measured
+            }.also { finished = !isFinishing }
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable) { finishBenchProgress(marker, finished, ran = benchSkip || results.any { it.speed != null }, results, crashed) }
+        }
+        if (isFinishing) return null
+        // Pulou: fica o chute pela classe do aparelho, sem repetir o teste a cada abertura.
+        val skipped = benchSkip || speed == null
+        val result = TuneResult(core.id, (if (skipped) start else preset).name, speed.takeUnless { skipped }, profile.signature, System.currentTimeMillis(), skipped = skipped)
+        // Nenhum nível rodou (núcleo sem instalar, arquivo ilegível, jogo que não abre): não grava nada, senão o
+        // chute viraria "medido" para sempre; o teste volta na próxima abertura. O jogo que o usuário mandou
+        // otimizar e pulou continua seguindo o console: um "pulado" por jogo não é ajuste.
+        val nothingRan = !benchSkip && speed == null
+        if (!nothingRan && !(perGame && skipped)) {
+            if (perGame) app.settings.setGameTuning(game.id, result) else app.settings.setTuning(system.id, core.id, result)
+        }
+        intent.removeExtra(EXTRA_RETUNE)
+        // "Otimizar este jogo" sem nenhum nível rodando: o usuário pediu e precisa saber que não deu.
+        if (nothingRan && perGame) toast = getString(R.string.tune_failed)
+        if (!skipped) toast = getString(R.string.tune_chosen, getString(preset.label), ((speed ?: 0f) * 100).toInt())
+        ui = EmulationUi.Preparing(getString(R.string.game_loading), null)
+        return result.presetOrNull
+    }
+
+    /** Velocidade de [core] com este jogo e estas [options], ou nulo se ele não instalou, não abriu o jogo ou deu erro. */
+    private suspend fun measure(core: CoreInfo, options: Map<String, String>, kind: BenchKind, items: List<BenchItem>, index: Int, results: List<CoreSpeed>): Float? {
+        ui = EmulationUi.Benchmarking(null, kind, items, index, results.toList())
         val path = try {
             app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: app.cores.install(core)
         } catch (c: kotlinx.coroutines.CancellationException) {
@@ -516,8 +733,9 @@ class GameActivity : ComponentActivity() {
         }
         val data = GLRetroViewData(this).apply { coreFilePath = path }
         if (setGameSource(data, core) != GameSource.Ok) return null
+        val vulkan = vulkanAllowed(core)
         try {
-            configure(data, core, optionsFor(core))
+            configure(data, core, options, vulkan)
         } catch (t: Throwable) {
             // Inclui o cancelamento (Activity fechando): os descritores do SAF já abertos não podem vazar.
             closeVirtualFiles(data)
@@ -527,6 +745,12 @@ class GameActivity : ComponentActivity() {
         runCatching { android.system.Os.setenv("EXTERNAL_STORAGE", app.paths.savesFor(system.id).absolutePath, true) }
         if (isFinishing || benchSkip) { closeVirtualFiles(data); return null }
 
+        // O teste também abre o núcleo com Vulkan: conta como tentativa (um driver ruim derruba o app aqui também).
+        if (vulkan) app.vulkanHealth.attemptStarted(core.id)
+        // A tentativa precisa terminar com um resultado: cancelada (Voltar, recreate) ela contaria como falha.
+        var vulkanSettled = !vulkan
+        // A primeira abertura de um núcleo Vulkan compila shaders e pipelines: leva bem mais que um núcleo comum.
+        val loadTimeout = if (core.vulkan) BENCH_LOAD_TIMEOUT_VULKAN_MS else BENCH_LOAD_TIMEOUT_MS
         val owner = EmulationOwner()
         val view = GLRetroView(this, data)
         owner.registry.currentState = Lifecycle.State.CREATED
@@ -534,16 +758,35 @@ class GameActivity : ComponentActivity() {
         // O create do LibretroDroid liga o som: desliga logo depois, antes do primeiro quadro.
         view.audioEnabled = false
         benchOwner = owner
-        ui = EmulationUi.Benchmarking(view, cores, index, results.toList())
+        ui = EmulationUi.Benchmarking(view, kind, items, index, results.toList())
         updateEmulationState()
         try {
-            val started = withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) {
-                merge(
-                    view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().map { true },
-                    view.getGLRetroErrors().map { false },
-                ).first()
+            // (primeiro quadro?, código do erro); nulo = estourou o tempo. Só conta o tempo com o app na frente:
+            // em segundo plano o núcleo nem desenha, e esperar lá não é falha do núcleo nem do nível.
+            val outcome = coroutineScope {
+                val first = async {
+                    merge(
+                        view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().map { true to 0 },
+                        view.getGLRetroErrors().map { false to it },
+                    ).first()
+                }
+                var waited = 0L
+                while (!first.isCompleted && waited < loadTimeout && !benchSkip) {
+                    delay(BENCH_SAMPLE_MS)
+                    if (activityResumed) waited += BENCH_SAMPLE_MS
+                }
+                if (first.isCompleted) first.await() else { first.cancel(); null }
             }
-            if (started != true) return null
+            if (vulkan) {
+                vulkanSettled = true
+                when {
+                    outcome?.first == true -> app.vulkanHealth.attemptSucceeded(core.id)
+                    outcome?.second == GLRetroView.ERROR_GL_NOT_COMPATIBLE -> app.vulkanHealth.attemptFailed(core.id, app.deviceProfile.await().signature)
+                    // Outro erro, ou demorou: não prova nada sobre o Vulkan.
+                    else -> app.vulkanHealth.attemptAborted(core.id)
+                }
+            }
+            if (outcome?.first != true) return null
             view.audioEnabled = false
             view.frameSpeed = CoreBenchmark.FRAME_SPEED
             delay(BENCH_WARMUP_MS)
@@ -562,16 +805,18 @@ class GameActivity : ComponentActivity() {
             if (benchSkip) return null
             return CoreBenchmark.speed(frames, millis, view.contentFps())
         } finally {
+            // Cancelado antes do primeiro quadro (ou do erro): não prova nada sobre o Vulkan.
+            if (!vulkanSettled) app.vulkanHealth.attemptAborted(core.id)
             // Destruir com o retro_load_game ainda rodando (demorou demais, ou o usuário saiu) faria o
             // onDestroy esperar o carregamento na thread principal: a espera fica aqui, suspensa e com teto.
             // NonCancellable: com a Activity fechando o escopo já está cancelado e o delay sairia na hora.
             withContext(kotlinx.coroutines.NonCancellable) {
-                withTimeoutOrNull(BENCH_LOAD_TIMEOUT_MS) { while (view.isLoading) delay(BENCH_SAMPLE_MS) }
+                withTimeoutOrNull(loadTimeout) { while (view.isLoading) delay(BENCH_SAMPLE_MS) }
             }
             owner.registry.currentState = Lifecycle.State.DESTROYED
             benchOwner = null
             // Tira a view da tela (a thread GL termina) antes de o próximo núcleo criar o dele.
-            ui = EmulationUi.Benchmarking(null, cores, index, results.toList())
+            ui = EmulationUi.Benchmarking(null, kind, items, index, results.toList())
             delay(BENCH_TEARDOWN_MS)
         }
     }
@@ -588,7 +833,21 @@ class GameActivity : ComponentActivity() {
                             "\n\n" + getString(R.string.game_error_load_game_bios) + "\n" +
                                 missing.joinToString("\n") { "• ${it.fileName} — ${getString(it.description)}" }
                         }.orEmpty()
-                    GLRetroView.ERROR_GL_NOT_COMPATIBLE -> getString(R.string.game_error_gl)
+                    GLRetroView.ERROR_GL_NOT_COMPATIBLE -> {
+                        // O contexto Vulkan não saiu (ou se perdeu no meio do jogo): o núcleo volta ao renderizador sem
+                        // Vulkan, sem o usuário ver a falha.
+                        if ((vulkanAttempt || vulkanLaunch) && retroView === view) {
+                            vulkanAttempt = false
+                            vulkanLaunch = false
+                            app.vulkanHealth.attemptFailed(core.id, app.deviceProfile.await().signature)
+                            // O que foi medido (com Vulkan) não vale mais: o próximo jogo mede de novo, sem ele.
+                            app.settings.clearTuning(system.id, listOf(game.id))
+                            setIntent(intent.putExtra(EXTRA_NO_VULKAN, true))
+                            recreate()
+                            return@collect
+                        }
+                        getString(R.string.game_error_gl)
+                    }
                     GLRetroView.ERROR_SERIALIZATION -> getString(R.string.game_error_serialization)
                     else -> getString(R.string.game_error_unexpected, code)
                 }
@@ -599,6 +858,7 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (retroView === view) gameLoaded = true
+            if (vulkanAttempt) { vulkanAttempt = false; app.vulkanHealth.attemptSucceeded(core.id) }
             val received = pendingStateFile
             val guestOf = netGuest
             if (guestOf != null) {
@@ -613,23 +873,41 @@ class GameActivity : ComponentActivity() {
                 toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
             } else if (settings.autoLoad) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
-                // Menu aberto ou app em segundo plano durante a leitura: a thread de emulação está parada (sem
-                // contexto GL) e o estado só é aplicado quando o jogo voltar a rodar.
-                while (saved != null && retroView === view && !emulationRunning()) delay(100)
-                // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
-                if (retroView !== view) return@launch
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
-                    if (withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }) {
-                        // Se a emulação parou no meio (app para o fundo), a cópia de pausa ainda é a da tela
-                        // de início: gravá-la no próximo salvamento automático apagaria o progresso restaurado.
-                        if (retroView === view && !emulationRunning()) frozenState = data
-                        toast = getString(R.string.game_progress_restored)
-                    } else {
+                    // Pausou no meio (menu, segundo plano) ou a thread não respondeu: não prova que o estado é
+                    // incompatível, e a tentativa se repete quando o jogo voltar a rodar.
+                    var applied: Boolean? = null
+                    var attempts = 0
+                    while (applied == null && attempts < AUTOLOAD_ATTEMPTS) {
+                        // Menu aberto ou app em segundo plano: a thread de emulação está parada (sem contexto GL)
+                        // e o estado só é aplicado quando o jogo voltar a rodar.
+                        while (retroView === view && !emulationRunning()) delay(100)
+                        // Sair pelo menu durante a leitura já destruiu o núcleo: carregar agora derrubaria o app.
+                        if (retroView !== view) return@launch
+                        attempts++
+                        applied = applyState(view, data)
+                    }
+                    if (retroView !== view) return@launch
+                    when (applied) {
+                        true -> {
+                            // Se a emulação parou no meio (app para o fundo), a cópia de pausa ainda é a da tela
+                            // de início: gravá-la no próximo salvamento automático apagaria o progresso restaurado.
+                            if (!emulationRunning()) frozenState = data
+                            toast = getString(R.string.game_progress_restored)
+                        }
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
                         // senão o próximo salvamento automático gravaria a tela de início por cima dele.
-                        withContext(Dispatchers.IO) { runCatching { states.backup(SaveStates.AUTO_SLOT) } }
-                        toast = getString(R.string.game_autosave_incompatible)
+                        false -> {
+                            withContext(Dispatchers.IO) { runCatching { states.backup(SaveStates.AUTO_SLOT) } }
+                            toast = getString(R.string.game_autosave_incompatible)
+                        }
+                        // Não deu para aplicar nas tentativas: guardado à parte do mesmo jeito (o salvamento
+                        // automático não pode apagá-lo), mas sem dizer que é incompatível.
+                        null -> {
+                            withContext(Dispatchers.IO) { runCatching { states.backup(SaveStates.AUTO_SLOT) } }
+                            toast = getString(R.string.game_state_load_failed)
+                        }
                     }
                 }
             }
@@ -717,6 +995,9 @@ class GameActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // Saiu (ou a Activity foi recriada para outro jogo) antes do primeiro quadro: não é prova de que o Vulkan
+        // falha. Um driver que derruba o app não chega aqui, e é isso que a tentativa conta.
+        if (vulkanAttempt) { vulkanAttempt = false; app.vulkanHealth.attemptAborted(core.id) }
         sharing?.server?.close()
         netplay.end()
         translateJob?.cancel()
@@ -748,6 +1029,7 @@ class GameActivity : ComponentActivity() {
             flushPlayTime()
             rumbleVibrator?.cancel()
         }
+        if (!running && emulationOwner.registry.currentState == Lifecycle.State.RESUMED) emulationPauses++
         emulationOwner.registry.currentState = target
         if (ui is EmulationUi.Running) app.remote.setPaused(!running)
     }
@@ -790,16 +1072,18 @@ class GameActivity : ComponentActivity() {
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
     private fun persist(auto: Boolean) {
         val view = retroView ?: return
-        if (ui !is EmulationUi.Running) return
         // Partida de outra pessoa: gravar aqui trocaria o progresso de quem joga pelo dela.
         if (guestSession) return
         // Jogo ainda carregando: nem a SRAM nem o estado são reais.
         if (!gameLoaded) return
         runCatching {
             val running = emulationRunning()
-            // A SRAM é só uma cópia da memória do jogo: pode ser lida de qualquer thread.
-            writeSram(view.serializeSRAM(running))
-            if (auto && autoSaveReady) {
+            // A SRAM é só uma cópia da memória do jogo (protegida pelo lock do núcleo): lida daqui mesmo, sem
+            // esperar a thread de emulação. Vale também na tela de erro: o núcleo carregou o jogo, e o que ele
+            // salvou na sessão não pode se perder porque ele falhou depois.
+            writeSram(view.serializeSRAM(false))
+            // O estado inteiro só com o jogo de pé: depois de um erro o núcleo pode estar num estado inválido.
+            if (auto && autoSaveReady && ui is EmulationUi.Running) {
                 // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
                 // parado, vale o que foi capturado quando a emulação parou.
                 if (running) frozenState = view.serializeState().takeIf { it.isNotEmpty() }
@@ -875,10 +1159,10 @@ class GameActivity : ComponentActivity() {
                     toast = getString(R.string.game_state_load_failed)
                     return@launch
                 }
-                // O núcleo só pode ler o estado na thread de emulação, que precisa estar rodando:
-                // o menu fecha antes. A espera pela thread fica fora da thread principal.
+                // O núcleo só pode ler o estado na thread de emulação, que precisa estar rodando (e com um
+                // quadro desenhado, para ter o contexto GL): o menu fecha antes. A espera fica fora da thread principal.
                 close()
-                val ok = withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
+                val ok = awaitEmulationFrame(view) && applyState(view, data) == true
                 if (retroView === view) toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
             }
         }
@@ -922,7 +1206,10 @@ class GameActivity : ComponentActivity() {
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
             close()
-            lifecycleScope.launch(Dispatchers.Default) { runCatching { view.reset() } }
+            lifecycleScope.launch {
+                if (!awaitEmulationFrame(view)) return@launch
+                withContext(Dispatchers.Default) { runCatching { view.reset() } }
+            }
         }
 
         override fun coreName() = if (::core.isInitialized) core.displayName else ""
@@ -1087,9 +1374,17 @@ class GameActivity : ComponentActivity() {
         LibretroDroid.requestFrameSnapshot()
         captureFrame(view) { _, full ->
             lifecycleScope.launch {
-                val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
+                // Como no menu: com o app em segundo plano a thread de emulação parou, e serializar nela sem
+                // contexto GL derruba os núcleos de GPU.
+                if (!emulationRunning()) { menuOpening = false; return@launch }
+                if (full == null) {
+                    menuOpening = false
+                    if (retroView === view) toast = getString(R.string.translate_capture_failed)
+                    return@launch
+                }
+                val state = withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
                 menuOpening = false
-                if (retroView !== view || full == null) return@launch
+                if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }
                 menuSnapshot = null
                 translation = TranslationUi.Working(full, LiveTranslator.Stage.READING)
@@ -1170,7 +1465,7 @@ class GameActivity : ComponentActivity() {
                 if (!emulationRunning()) { menuOpening = false; return@launch }
                 // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
                 // é ele que o menu grava nos slots e no salvamento automático.
-                val state = withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() }
+                val state = withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
                 menuOpening = false
                 if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }
@@ -1180,6 +1475,49 @@ class GameActivity : ComponentActivity() {
                 updateEmulationState()
             }
         }
+    }
+
+    /** Mostra o indicador de espera se [block] passar de um instante (abaixo disso ele só piscaria). */
+    private suspend fun <T> withBusyHint(block: suspend () -> T): T {
+        val hint = lifecycleScope.launch { delay(BUSY_HINT_DELAY_MS); busy = true }
+        try {
+            return block()
+        } finally {
+            hint.cancel()
+            busy = false
+        }
+    }
+
+    /**
+     * Espera a emulação de [view] voltar a rodar (o menu acabou de fechar) e desenhar um quadro: só então a
+     * thread de emulação tem o contexto GL para carregar um estado ou reiniciar. Falso se ela não voltou a
+     * tempo (app para o fundo, menu reaberto) ou a view mudou.
+     */
+    private suspend fun awaitEmulationFrame(view: GLRetroView): Boolean {
+        var waited = 0L
+        while (retroView === view && !emulationRunning()) {
+            if (waited >= RESUME_WAIT_MS) return false
+            delay(50); waited += 50
+        }
+        if (retroView !== view) return false
+        val frames = view.runCount()
+        waited = 0L
+        while (retroView === view && emulationRunning() && view.runCount() == frames && waited < RESUME_WAIT_MS) { delay(16); waited += 16 }
+        return retroView === view && emulationRunning() && view.runCount() != frames
+    }
+
+    /**
+     * Aplica um estado em [view] na thread de emulação. Verdadeiro aplicado, falso recusado pelo núcleo (de
+     * outro núcleo ou versão) e nulo quando não dá para saber: a emulação parou no meio ou a thread não
+     * respondeu a tempo, o que não diz nada sobre o estado.
+     */
+    private suspend fun applyState(view: GLRetroView, data: ByteArray): Boolean? {
+        val pauses = emulationPauses
+        val result = withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) } }
+        if (result.getOrNull() == true) return true
+        val timedOut = (result.exceptionOrNull() as? com.swordfish.libretrodroid.RetroException)?.errorCode == GLRetroView.ERROR_GENERIC
+        if (timedOut || pauses != emulationPauses || !emulationRunning() || retroView !== view) return null
+        return false
     }
 
     /** [done] recebe a miniatura dos save states e a captura em tamanho real (fundo do editor de layout). */
@@ -1295,10 +1633,17 @@ class GameActivity : ComponentActivity() {
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
         private const val BENCH_LOAD_TIMEOUT_MS = 25_000L
+        private const val BENCH_LOAD_TIMEOUT_VULKAN_MS = 60_000L
         private const val BENCH_WARMUP_MS = 1_500L
         private const val BENCH_MEASURE_MS = 4_000L
         private const val BENCH_SAMPLE_MS = 250L
         private const val BENCH_TEARDOWN_MS = 350L
+        private const val WATCH_INTERVAL_MS = 1_000L
+        private const val BUSY_HINT_DELAY_MS = 300L
+        /** Quanto esperar a emulação voltar depois de fechar o menu, antes de desistir de carregar ou reiniciar. */
+        private const val RESUME_WAIT_MS = 5_000L
+        /** Tentativas do carregamento automático quando a emulação para no meio dele. */
+        private const val AUTOLOAD_ATTEMPTS = 3
         /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */
         private const val MAX_PORTS = 4
         private val RETROPAD_KEYS = listOf(
@@ -1313,6 +1658,10 @@ class GameActivity : ComponentActivity() {
         private const val EXTRA_NET_PORT = "net_port"
         private const val EXTRA_NET_TOKEN = "net_token"
         private const val EXTRA_CORE_ID = "core_id"
+        private const val EXTRA_RETUNE = "retune"
+        private const val EXTRA_NO_VULKAN = "no_vulkan"
+        /** Pasta dos marcadores de teste; também usada por LibraryRepository e pelas regras de backup. */
+        const val BENCH_DIR = "benchmark"
 
         /** Entra na partida em rede do anfitrião em [host]:[port], com o mesmo núcleo dele. */
         fun launchNetplay(context: Context, gameId: Long, host: String, port: Int, token: String, coreId: String) {
@@ -1328,10 +1677,11 @@ class GameActivity : ComponentActivity() {
         }
 
         /** [stateFile]: estado recebido para abrir no lugar do salvamento automático, no núcleo [coreId]. */
-        fun launch(context: Context, gameId: Long, stateFile: File? = null, coreId: String? = null) {
+        fun launch(context: Context, gameId: Long, stateFile: File? = null, coreId: String? = null, retune: Boolean = false) {
             context.startActivity(
                 Intent(context, GameActivity::class.java)
                     .putExtra(EXTRA_GAME_ID, gameId)
+                    .apply { if (retune) putExtra(EXTRA_RETUNE, true) }
                     .apply { stateFile?.let { putExtra(EXTRA_STATE_FILE, it.absolutePath) } }
                     .apply { coreId?.let { putExtra(EXTRA_CORE_ID, it) } }
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

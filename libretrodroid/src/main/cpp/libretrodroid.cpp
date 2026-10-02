@@ -46,6 +46,7 @@
 #include "utils/rect.h"
 #include "errorcodes.h"
 #include "vfs/vfs.h"
+#include "vulkan/vulkancontext.h"
 
 namespace libretrodroid {
 
@@ -95,10 +96,25 @@ void LibretroDroid::resetGlobalVariables() {
     core = nullptr;
     gameLoaded = false;
     audio = nullptr;
-    video = nullptr;
+    replaceVideo(nullptr);
     fpsSync = nullptr;
-    input = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(inputLock);
+        input = nullptr;
+    }
     rumble = nullptr;
+}
+
+void LibretroDroid::replaceVideo(std::unique_ptr<Video> newVideo) {
+    std::unique_ptr<Video> oldVideo;
+    {
+        // O toque (thread principal) lê a Video com este lock; a antiga é destruída fora dele, porque soltar
+        // os quadros do Vulkan pode esperar a GPU.
+        std::lock_guard<std::mutex> lock(inputLock);
+        oldVideo = std::move(video);
+        video = std::move(newVideo);
+    }
+    oldVideo = nullptr;
 }
 
 int LibretroDroid::availableDisks() {
@@ -151,6 +167,8 @@ void LibretroDroid::setControllerType(unsigned int port, unsigned int type) {
 bool LibretroDroid::unserializeState(int8_t *data, size_t size) {
     std::lock_guard<std::mutex> lock(coreLock);
 
+    if (!core) return false;
+
     return core->retro_unserialize(data, size);
 }
 
@@ -194,18 +212,24 @@ std::vector<int8_t> LibretroDroid::serializeSRAM() {
 
 void LibretroDroid::onSurfaceChanged(unsigned int width, unsigned int height) {
     LOGD("Performing libretrodroid onSurfaceChanged");
+    // Thread GL, enquanto o destroy() (thread principal) pode estar soltando a Video.
+    std::lock_guard<std::mutex> lock(coreLock);
+    if (!video) return;
     video->updateScreenSize(width, height);
 }
 
 void LibretroDroid::onSurfaceCreated() {
     LOGD("Performing libretrodroid onSurfaceCreated");
 
+    // Com o coreLock, como o carregamento: o destroy() pode rodar entre o fim do retro_load_game e esta
+    // chamada, e descarregar o núcleo (e o Vulkan) no meio do context_reset. Nada chamado daqui pega esse lock.
+    std::lock_guard<std::mutex> lock(coreLock);
     if (!core) return;
 
     struct retro_system_av_info system_av_info {};
     core->retro_get_system_av_info(&system_av_info);
 
-    video = nullptr;
+    replaceVideo(nullptr);
 
     // Hardware cores may render anywhere up to max_width x max_height (the actual size of every
     // frame comes with the video callback), so their framebuffer has to be that big.
@@ -216,10 +240,16 @@ void LibretroDroid::onSurfaceCreated() {
         Environment::getInstance().isUseDepth(),
         Environment::getInstance().isUseStencil(),
         openglESVersion,
-        Environment::getInstance().getPixelFormat()
+        Environment::getInstance().getPixelFormat(),
+        Environment::getInstance().isUseVulkan()
     };
 
-    auto newVideo = new Video(
+    // O núcleo Vulkan precisa do dispositivo antes do context_reset (é quando ele pede a interface).
+    if (Environment::getInstance().isUseVulkan() && !VulkanContext::getInstance().create()) {
+        throw LibretroDroidError("Cannot create the Vulkan context for this core", ERROR_GL_NOT_COMPATIBLE);
+    }
+
+    replaceVideo(std::make_unique<Video>(
         renderingOptions,
         fragmentShaderConfig,
         Environment::getInstance().isBottomLeftOrigin(),
@@ -228,9 +258,7 @@ void LibretroDroid::onSurfaceCreated() {
         immersiveModeEnabled,
         viewportRect,
         immersiveModeConfig
-    );
-
-    video = std::unique_ptr<Video>(newVideo);
+    ));
 
     if (Environment::getInstance().getHwContextReset() != nullptr) {
         Environment::getInstance().getHwContextReset()();
@@ -320,7 +348,7 @@ void LibretroDroid::create(
     preferLowLatencyAudio = lowLatencyAudio;
 
     // HW accelerated cores are only supported on opengles 3.
-    if (Environment::getInstance().isUseHwAcceleration() && openglESVersion < 3) {
+    if ((Environment::getInstance().isUseHwAcceleration() || Environment::getInstance().isUseVulkan()) && openglESVersion < 3) {
         throw LibretroDroidError("OpenGL ES 3 is required for this Core", ERROR_GL_NOT_COMPATIBLE);
     }
 
@@ -350,7 +378,7 @@ void LibretroDroid::throwIfCoreMissing() {
 void LibretroDroid::throwIfHwContextMissing() {
     // Alguns núcleos (o Play!) ignoram a recusa do SET_HW_RENDER e dizem que carregaram: sem contexto,
     // caíam segundos depois ao usar o vídeo que nunca foi criado.
-    if (Environment::getInstance().isHwContextRejected() && !Environment::getInstance().isUseHwAcceleration()) {
+    if (Environment::getInstance().isHwContextRejected() && !Environment::getInstance().isHwContextAccepted()) {
         LOGE("Game loaded without the hardware context it asked for. Leaving.");
         throw LibretroDroidError("The GPU does not support the context this core requires", ERROR_GL_NOT_COMPATIBLE);
     }
@@ -366,16 +394,17 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     core->retro_get_system_info(&system_info);
 
     struct retro_game_info game_info {};
-    game_info.path = Utils::cloneToCString(gamePath);
+    gamePathStorage = gamePath;
+    game_info.path = gamePathStorage.c_str();
     game_info.meta = nullptr;
 
     if (system_info.need_fullpath) {
         game_info.data = nullptr;
         game_info.size = 0;
     } else {
-        struct Utils::ReadResult file = Utils::readFileAsBytes(gamePath);
-        game_info.data = file.data;
-        game_info.size = file.size;
+        gameData = Utils::readFileAsBytes(gamePath);
+        game_info.data = gameData.data();
+        game_info.size = gameData.size();
     }
 
     bool result = core->retro_load_game(&game_info);
@@ -388,7 +417,7 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
     afterGameLoad();
 }
 
-void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
+void LibretroDroid::loadGameFromBytes(std::vector<int8_t> data) {
     LOGD("Performing libretrodroid loadGameFromBytes");
     // Com o coreLock: um destroy() (sair durante o carregamento) espera o retro_load_game terminar em
     // vez de descarregar o núcleo no meio dele. Os callbacks chamados pelo núcleo não pegam esse lock.
@@ -406,8 +435,10 @@ void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
         game_info.data = nullptr;
         game_info.size = 0;
     } else {
-        game_info.data = data;
-        game_info.size = size;
+        // Fica com o LibretroDroid até o destroy(): alguns núcleos usam o buffer depois do retro_load_game.
+        gameData = std::move(data);
+        game_info.data = gameData.data();
+        game_info.size = gameData.size();
     }
 
     bool result = core->retro_load_game(&game_info);
@@ -440,7 +471,8 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) 
     bool loadUsingVFS = system_info.need_fullpath || virtualFiles.size() > 1;
 
     struct retro_game_info game_info {};
-    game_info.path = Utils::cloneToCString(firstFilePath);
+    gamePathStorage = firstFilePath;
+    game_info.path = gamePathStorage.c_str();
     game_info.meta = nullptr;
 
     if (loadUsingVFS) {
@@ -451,9 +483,9 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) 
         game_info.data = nullptr;
         game_info.size = 0;
     } else {
-        struct Utils::ReadResult file = Utils::readFileAsBytes(firstFileFD);
-        game_info.data = file.data;
-        game_info.size = file.size;
+        gameData = Utils::readFileAsBytes(firstFileFD);
+        game_info.data = gameData.data();
+        game_info.size = gameData.size();
     }
 
     bool result = core->retro_load_game(&game_info);
@@ -479,6 +511,9 @@ void LibretroDroid::destroy() {
     // Sem jogo carregado (destruído antes ou durante um carregamento que falhou) não há contexto nem
     // jogo a descarregar: só o retro_deinit, como o RetroArch faz.
     if (gameLoaded) {
+        // Sempre, mesmo que o context_reset não tenha rodado (a criação do contexto Vulkan pode falhar antes
+        // dele): é o context_destroy que encerra as threads de vídeo do núcleo, e o PPSSPP aborta no dlclose
+        // com uma std::thread ainda ativa se ele não vier.
         if (Environment::getInstance().getHwContextDestroy() != nullptr) {
             Environment::getInstance().getHwContextDestroy()();
         }
@@ -487,10 +522,17 @@ void LibretroDroid::destroy() {
     gameLoaded = false;
     core->retro_deinit();
 
+    // Só depois do retro_unload_game/retro_deinit: o núcleo pode usar os dados e o caminho do jogo até ali.
+    std::vector<int8_t>().swap(gameData);
+    gamePathStorage.clear();
+    cheatCodes.clear();
+
     capture.release();
     capture.setAudioEnabled(false);
 
-    video = nullptr;
+    replaceVideo(nullptr);
+    // Depois do retro_deinit e antes de soltar o núcleo: o destroy_device dele roda aqui.
+    VulkanContext::getInstance().destroy();
     core = nullptr;
     rumble = nullptr;
     netplay = nullptr;
@@ -512,14 +554,14 @@ void LibretroDroid::resume() {
         input = std::make_unique<Input>();
     }
 
-    fpsSync->reset();
-    audio->start();
+    if (fpsSync) fpsSync->reset();
+    if (audio) audio->start();
     refreshAspectRatio();
 }
 
 void LibretroDroid::pause() {
     LOGD("Performing libretrodroid pause");
-    audio->stop();
+    if (audio) audio->stop();
 
     std::lock_guard<std::mutex> lock(inputLock);
     input = nullptr;
@@ -527,6 +569,9 @@ void LibretroDroid::pause() {
 
 void LibretroDroid::step() {
     std::lock_guard<std::mutex> lock(coreLock);
+
+    // Um desenho atrasado depois do destroy() não tem núcleo para rodar.
+    if (!core) return;
 
     LOGD("Stepping into retro_run()");
 
@@ -541,8 +586,16 @@ void LibretroDroid::step() {
     auto& frameTime = Environment::getInstance().getFrameTimeCallback();
     for (size_t i = 0; i < frames * frameSpeed; i++) {
         // Em rede, o quadro só roda com a entrada dos dois lados; sem a do outro, fica para o próximo desenho.
-        if (netplay && !netplay->prepareFrame(input.get())) {
-            break;
+        if (netplay) {
+            Netplay::Pad localPad;
+            {
+                // O pause() troca o Input na thread principal.
+                std::lock_guard<std::mutex> inputGuard(inputLock);
+                localPad = netplay->capture(input.get());
+            }
+            if (!netplay->prepareFrame(localPad)) {
+                break;
+            }
         }
         // Each retro_run is one frame of emulated time, so the reference duration is the right delta
         // (fast-forward runs more frames, not longer ones).
@@ -602,6 +655,9 @@ float LibretroDroid::getAspectRatio() {
 }
 
 void LibretroDroid::refreshAspectRatio() {
+    // Chamado da thread principal (resume) e da GL, enquanto o destroy() pode soltar a Video.
+    std::lock_guard<std::mutex> lock(coreLock);
+    if (!video) return;
     video->updateAspectRatio(getAspectRatio());
 }
 
@@ -624,6 +680,8 @@ void LibretroDroid::setAudioEnabled(bool enabled) {
 
 void LibretroDroid::setShaderConfig(ShaderManager::Config shaderConfig) {
     fragmentShaderConfig = std::move(shaderConfig);
+    // Thread principal: o lock segura a Video viva enquanto a thread GL pode trocá-la.
+    std::lock_guard<std::mutex> lock(inputLock);
     if (video) {
         video->updateShaderType(fragmentShaderConfig);
     }
@@ -726,6 +784,9 @@ int16_t LibretroDroid::handleSetInputState(
     if (netplay) {
         return netplay->getInputState(port, device, index, id);
     }
+    // Núcleos com thread própria (Dolphin, PPSSPP) leem a entrada fora do retro_run, enquanto o pause() solta o
+    // Input e os eventos de tecla o alteram.
+    std::lock_guard<std::mutex> lock(inputLock);
     if (input) {
         return input->getInputState(port, device, index, id);
     }
@@ -763,6 +824,8 @@ uintptr_t LibretroDroid::handleGetCurrentFrameBuffer() {
 void LibretroDroid::reset() {
     std::lock_guard<std::mutex> lock(coreLock);
 
+    if (!core) return;
+
     core->retro_reset();
 }
 
@@ -789,13 +852,25 @@ std::vector<int8_t> LibretroDroid::serializeState() {
 void LibretroDroid::resetCheat() {
     std::lock_guard<std::mutex> lock(coreLock);
 
+    if (!core) return;
+
     core->retro_cheat_reset();
+    cheatCodes.clear();
 }
 
 void LibretroDroid::setCheat(unsigned index, bool enabled, const std::string& code) {
     std::lock_guard<std::mutex> lock(coreLock);
 
-    core->retro_cheat_set(index, enabled, Utils::cloneToCString(code));
+    if (!core) return;
+
+    // Alguns núcleos guardam o ponteiro em vez de copiar o texto: ele vive até o próximo resetCheat (antes
+    // cada chamada vazava uma cópia).
+    cheatCodes.push_back(code);
+    core->retro_cheat_set(index, enabled, cheatCodes.back().c_str());
+}
+
+bool LibretroDroid::isVideoBackendLost() const {
+    return Environment::getInstance().isUseVulkan() && VulkanContext::getInstance().isLost();
 }
 
 bool LibretroDroid::requiresVideoRefresh() const {
@@ -846,6 +921,8 @@ void LibretroDroid::handleRumbleUpdates(const std::function<void(int, float, flo
 }
 
 void LibretroDroid::setViewport(Rect viewportRect) {
+    // Roda pela fila da thread GL, que atende eventos mesmo pausada, quando o destroy() pode estar rodando.
+    std::lock_guard<std::mutex> lock(coreLock);
     this->viewportRect = viewportRect;
 
     if (video != nullptr) {

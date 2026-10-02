@@ -83,11 +83,11 @@
     <string name="core_opera">Emulador de 3DO derivado do 4DO.</string>
     <string name="core_panda3ds">Emulador novo em desenvolvimento.</string>
     <string name="core_parallel_n64">Alternativa para jogos problemáticos.</string>
-    <string name="core_pcsx2">Alta compatibilidade; exige chip topo de linha.</string>
+    <string name="core_pcsx2">Alta compatibilidade. Desenha com Vulkan nos aparelhos que têm; nos outros, desenha pela CPU, o que exige chip topo de linha.</string>
     <string name="core_pcsx_rearmed">Rápido com dynarec ARM e BIOS HLE embutida.</string>
     <string name="core_picodrive_32x">Único núcleo com suporte ao 32X.</string>
     <string name="core_picodrive_genesis">Muito leve; também roda 32X.</string>
-    <string name="core_play">Emulador de PS2 com renderização OpenGL ES.</string>
+    <string name="core_play">Desenha com a GPU (OpenGL ES): o primeiro a tentar. A compatibilidade é menor que a do LRPS2.</string>
     <string name="core_pokemini">Emulador do Pokémon Mini.</string>
     <string name="core_potator">Emulador do Supervision.</string>
     <string name="core_ppsspp">Emulador de PSP completo.</string>

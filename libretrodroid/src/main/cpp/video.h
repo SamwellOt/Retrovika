@@ -18,6 +18,7 @@
 #ifndef LIBRETRODROID_VIDEO_H
 #define LIBRETRODROID_VIDEO_H
 
+#include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <optional>
 #include <array>
@@ -41,6 +42,8 @@ public:
         bool useStencil;
         int openglESVersion;
         int pixelFormat;
+        /** O núcleo desenha com Vulkan: os quadros chegam pelo VulkanContext. */
+        bool vulkan = false;
     };
 
     struct ShaderChainEntry {
@@ -63,6 +66,10 @@ public:
         Rect viewportRect,
         ImmersiveMode::Config immersiveModeConfig
     );
+    ~Video();
+
+    Video(const Video&) = delete;
+    Video& operator=(const Video&) = delete;
 
     VideoLayout& getLayout() { return videoLayout; }
 
@@ -110,6 +117,9 @@ private:
     float getTextureHeight();
 
     void initializeRenderer(RenderingOptions renderingOptions);
+    void deletePrograms();
+    /** O contexto em que os objetos GL desta Video foram criados é o atual (só nele dá para apagá-los). */
+    bool ownsCurrentContext() const;
 
 private:
     ShaderManager::Config requestedShaderConfig = ShaderManager::Config {
@@ -133,7 +143,9 @@ private:
     ImmersiveMode immersiveMode;
     VideoLayout videoLayout;
 
-    Renderer* renderer;
+    Renderer* renderer = nullptr;
+    // Contexto EGL da criação: os nomes GL só valem nele (um contexto novo pode reusar os mesmos números).
+    EGLContext glContext = EGL_NO_CONTEXT;
 };
 
 }

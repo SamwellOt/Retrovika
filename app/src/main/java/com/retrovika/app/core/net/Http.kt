@@ -2,6 +2,8 @@ package com.retrovika.app.core.net
 
 import com.retrovika.app.R
 import com.retrovika.app.core.storage.FileNames
+import com.retrovika.app.core.storage.RomExtractor
+import com.retrovika.app.core.storage.formatBytes
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -79,6 +81,13 @@ object Http {
     val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
     /**
+     * Prende o Cookie posto à mão em [url] ao host dela: num redirecionamento para outro host ele sai (e entram
+     * os de [cookiesFor], se houver). Todo pedido com Cookie nos cabeçalhos deve passar por aqui.
+     */
+    fun Request.Builder.scopeCookies(url: String, cookiesFor: ((String) -> String?)? = null): Request.Builder =
+        tag(CookieScope::class.java, CookieScope(url.toHttpUrl().host, cookiesFor))
+
+    /**
      * Cliente que só conecta por IPv4 ([ipv6] = false) ou só por IPv6 (true). Sites que assinam o link de
      * download com o IP de quem abriu a página (RomsFun) recusam o arquivo se o pedido sair pelo outro
      * protocolo: o WebView e o OkHttp nem sempre escolhem o mesmo num aparelho com IPv4 e IPv6.
@@ -120,6 +129,26 @@ object Http {
     }
 
     /**
+     * Onde um download que falhou parou, para "tentar de novo" continuar dali (Range) em vez de baixar
+     * gigabytes desde o zero. Quem chama guarda um por tarefa e o passa a cada tentativa; [discard] apaga o
+     * .part quando a tarefa é cancelada ou sai da lista. Vale só para o download por uma conexão: o .part
+     * em pedaços tem buracos e é descartado se falhar.
+     */
+    class ResumePoint {
+        @Volatile internal var part: File? = null
+        @Volatile internal var total: Long = -1
+        /** ETag forte ou Last-Modified da resposta, mandado no If-Range: arquivo mudado no servidor recomeça. */
+        @Volatile internal var validator: String? = null
+
+        fun discard() {
+            part?.delete()
+            part = null
+            total = -1
+            validator = null
+        }
+    }
+
+    /**
      * Baixa [url] para [target] reportando progresso de 0 a 1 (ou -1 quando o tamanho é desconhecido).
      * [onBytes] recebe os bytes lidos e o total (-1 se desconhecido), no mesmo ritmo do progresso.
      * Escreve primeiro em um arquivo .part para nunca deixar arquivos corrompidos.
@@ -133,6 +162,9 @@ object Http {
      * por até [BUSY_BUDGET_MS] no total; [onWait] recebe a hora (epoch ms) da próxima tentativa, e 0 quando
      * ela começa. Conexão que cai no meio continua de onde parou (Range), quando o servidor aceita.
      * Servidores de ROM vivem assim.
+     *
+     * Com [resume], uma falha (não o cancelamento) deixa o .part guardado nele, e a próxima chamada com o
+     * mesmo [resume] continua de onde parou.
      */
     suspend fun download(
         url: String,
@@ -148,6 +180,7 @@ object Http {
          * 1 para sites que bloqueiam o IP com muitos pedidos.
          */
         parallel: Int = 1,
+        resume: ResumePoint? = null,
         onBytes: (read: Long, total: Long) -> Unit = { _, _ -> },
         onSaved: (File) -> Unit = {},
         onWait: (until: Long) -> Unit = {},
@@ -155,15 +188,19 @@ object Http {
         onProgress: (Float) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
         // Temporário com nome único: dois downloads que caem no mesmo arquivo final não escrevem
-        // no mesmo .part ao mesmo tempo.
+        // no mesmo .part ao mesmo tempo. Uma tentativa anterior que falhou deixa o seu em [resume].
         target.parentFile?.mkdirs()
-        val part = File.createTempFile(PART_PREFIX + target.name.take(60) + ".", PART_SUFFIX, target.parentFile)
+        val kept = resume?.part?.takeIf { it.isFile && it.length() > 0 && it.parentFile == target.parentFile }
+        if (kept == null) resume?.discard()
+        val part = kept ?: File.createTempFile(PART_PREFIX + target.name.take(60) + ".", PART_SUFFIX, target.parentFile)
         val ctx = coroutineContext
         var remoteName: String? = null
-        // Falha ou cancelamento não deixam o .part ocupando espaço.
+        var read = kept?.length() ?: 0L
+        var total = if (kept != null) resume?.total ?: -1L else -1L
+        var validator = if (kept != null) resume?.validator else null
+        // O .part só serve para continuar se for contínuo do byte 0 até [read] (o das partes tem buracos).
+        var contiguous = true
         try {
-            var read = 0L
-            var total = -1L
             var busyTries = 0
             var busyWaited = 0L
             var busyWait = 0L
@@ -173,21 +210,28 @@ object Http {
             // Em partes quando dá; senão (servidor sem Range, arquivo pequeno, ocupado), o download comum abaixo.
             var inParts = false
             val cookies = headers.keys.any { it.equals("Cookie", ignoreCase = true) }
-            if (parallel > 1 && !cookies) {
+            if (parallel > 1 && !cookies && read == 0L) {
+                contiguous = false
                 downloadInParts(url, part, headers, http, parallel, onBytes, onProgress, onWait)?.let { done ->
                     read = done.total
                     total = done.total
                     if (serverName) remoteName = done.remoteName
                     inParts = true
                 }
+                // null: nada ficou gravado (ou foi zerado), e o download comum começa do byte 0.
+                contiguous = true
             }
             while (!inParts) {
                 val request = Request.Builder().url(url).apply {
                     headers.forEach { (k, v) -> header(k, v) }
-                    if (read > 0) header("Range", "bytes=$read-")
+                    if (read > 0) {
+                        header("Range", "bytes=$read-")
+                        // Arquivo trocado no servidor desde o começo: ele manda o novo inteiro (200), não o resto.
+                        validator?.let { header("If-Range", it) }
+                    }
                     // Cookie posto à mão vale só para o host de [url] (ver o interceptor de rede do client).
                     if (headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
-                        tag(CookieScope::class.java, CookieScope(url.toHttpUrl().host, cookiesFor))
+                        scopeCookies(url, cookiesFor)
                     }
                 }.build()
                 val readBefore = read
@@ -215,10 +259,29 @@ object Http {
                         if (!res.isSuccessful) throw LocalizedException(R.string.download_http_error, res.code, url)
                         // 206 continua de onde parou; 200 manda o arquivo inteiro de novo.
                         val resumed = read > 0 && res.code == 206
+                        if (resumed) {
+                            // A continuação tem de começar no byte que falta e ser do mesmo arquivo (mesmo
+                            // tamanho): sem validador, é o que dá para conferir. Senão, recomeça do zero.
+                            val range = parseContentRange(res.header("Content-Range"))
+                            if (range == null || range.first != read || (total > 0 && range.second > 0 && range.second != total)) {
+                                FileOutputStream(part).close()
+                                read = 0
+                                restart = true
+                                return@executeCancellable false
+                            }
+                            if (total <= 0 && range.second > 0) total = range.second
+                        }
                         if (!resumed) read = 0
                         val body = res.body!!
-                        if (!resumed) total = body.contentLength()
+                        if (!resumed) {
+                            total = body.contentLength()
+                            validator = validatorOf(res)
+                        }
                         if (serverName && !resumed) remoteName = remoteFileName(res)
+                        // Sem espaço para o que falta, nem começa: o disco encheria no meio de um arquivo grande.
+                        // Recomeçando do zero, o .part antigo é zerado antes, para o espaço dele contar como livre.
+                        if (!resumed && part.length() > 0) FileOutputStream(part).close()
+                        if (total > 0) requireSpace(part, total - read)
                         body.byteStream().use { input ->
                             FileOutputStream(part, resumed).use { output ->
                                 val buffer = ByteArray(64 * 1024)
@@ -244,6 +307,8 @@ object Http {
                         true
                     }
                 } catch (e: IOException) {
+                    // Disco cheio não é queda de rede: tentar de novo só encheria o disco outra vez.
+                    if (e !is LocalizedException && RomExtractor.isNoSpace(e)) throw LocalizedException(R.string.common_error_no_space)
                     // Queda no meio do arquivo: tenta continuar. Antes do primeiro byte (sem internet,
                     // endereço errado) o erro sobe como sempre.
                     // Conta só quedas seguidas sem progresso: um arquivo grande numa rede instável pode cair
@@ -267,9 +332,22 @@ object Http {
             }
             onBytes(read, if (total > 0) total else read)
         } catch (t: Throwable) {
-            part.delete()
+            // Falha com parte já baixada fica guardada em [resume] para "tentar de novo" continuar. Cancelamento
+            // (o usuário desistiu) e disco cheio apagam: o .part só ocuparia o espaço que falta.
+            val keep = resume != null && t !is kotlinx.coroutines.CancellationException && contiguous && read > 0 &&
+                !(t is LocalizedException && t.messageRes == R.string.common_error_no_space) && !RomExtractor.isNoSpace(t)
+            if (keep) {
+                resume!!.part = part
+                resume.total = total
+                resume.validator = validator
+            } else {
+                part.delete()
+                resume?.discard()
+            }
             throw t
         }
+        // Concluído: o .part vira o arquivo final abaixo e não serve mais para continuar.
+        resume?.let { it.part = null; it.total = -1; it.validator = null }
         onProgress(1f)
         val named = remoteName?.let { File(target.parentFile, FileNames.safe(it)) } ?: target
         // Escolher o nome e mover numa trava só: dois downloads terminando juntos não pegam o mesmo "(2)".
@@ -321,6 +399,17 @@ object Http {
             return@coroutineScope null
         }
         val remoteName = remoteFileName(probe)
+        // Cada pedaço manda o validador do teste no If-Range: se o arquivo mudar no servidor no meio, o pedaço
+        // volta 200 (o arquivo novo inteiro), o que cai em NoRangesException e o download comum recomeça do zero
+        // em vez de juntar pedaços de dois arquivos.
+        val validator = validatorOf(probe)
+        try {
+            requireSpace(part, total)
+        } catch (e: Throwable) {
+            probe.close()
+            watcher.cancel()
+            throw e
+        }
         val pieceSize = (total / (connections * 4)).coerceIn(MIN_PIECE_BYTES, MAX_PIECE_BYTES)
         val queue = ArrayDeque<Piece>()
         var start = 0L
@@ -356,7 +445,7 @@ object Http {
                                 val current = piece ?: synchronized(queue) { queue.removeFirstOrNull() }
                                 if (current == null) { active.decrementAndGet(); break }
                                 piece = null
-                                val rest = fetchPiece(h1, url, headers, current, channel, response, done, active, busyWaited, ::report, onWait)
+                                val rest = fetchPiece(h1, url, headers, validator, current, channel, response, done, active, busyWaited, ::report, onWait)
                                 response = null
                                 if (rest != null) {
                                     // Ocupado com outras conexões ainda trabalhando: esta sai e o que falta do pedaço volta à fila.
@@ -375,7 +464,7 @@ object Http {
                 while (true) {
                     val current = synchronized(queue) { queue.removeFirstOrNull() } ?: break
                     active.set(1)
-                    fetchPiece(h1, url, headers, current, channel, null, done, active, busyWaited, ::report, onWait)
+                    fetchPiece(h1, url, headers, validator, current, channel, null, done, active, busyWaited, ::report, onWait)
                         ?.let { rest -> synchronized(queue) { queue.addFirst(rest) } }
                 }
             } catch (e: NoRangesException) {
@@ -391,11 +480,39 @@ object Http {
         PartsResult(total, remoteName)
     }
 
-    private fun rangeRequest(url: String, headers: Map<String, String>, from: Long, to: Long?): Request =
+    private fun rangeRequest(url: String, headers: Map<String, String>, from: Long, to: Long?, validator: String? = null): Request =
         Request.Builder().url(url).apply {
             headers.forEach { (k, v) -> header(k, v) }
             header("Range", "bytes=$from-${to ?: ""}")
+            validator?.let { header("If-Range", it) }
         }.build()
+
+    /**
+     * Validador para o If-Range: o ETag forte ou, sem ele, o Last-Modified. ETag fraco (W/) não vale no
+     * If-Range (RFC 9110), e o servidor mandaria sempre o arquivo inteiro.
+     */
+    internal fun validatorOf(res: Response): String? =
+        res.header("ETag")?.trim()?.takeIf { it.startsWith('"') }
+            ?: res.header("Last-Modified")?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** "bytes 100-199/1000" → (100, 1000); o total é -1 quando vem "*". Null quando ilegível. */
+    internal fun parseContentRange(header: String?): Pair<Long, Long>? {
+        val m = header?.let { CONTENT_RANGE.find(it.trim()) } ?: return null
+        val start = m.groupValues[1].toLongOrNull() ?: return null
+        return start to (m.groupValues[2].toLongOrNull() ?: -1L)
+    }
+    private val CONTENT_RANGE = Regex("""bytes\s+(\d+)-\d+/(\d+|\*)""", RegexOption.IGNORE_CASE)
+
+    /** Falha logo, com o tamanho, quando o disco não tem [needed] bytes livres (e uma folga) ao lado de [file]. */
+    private fun requireSpace(file: File, needed: Long) {
+        val dir = file.parentFile ?: return
+        val free = dir.usableSpace
+        // usableSpace 0 é também o "não sei" de alguns sistemas de arquivos: só confia num valor positivo.
+        if (needed > 0 && free > 0 && free < needed + SPACE_MARGIN) {
+            throw LocalizedException(R.string.download_no_space_download, needed.formatBytes())
+        }
+    }
+    private const val SPACE_MARGIN = 16L * 1024 * 1024
 
     /**
      * Baixa [piece] e grava na posição dele. [initial] é uma resposta já aberta que começa no início do
@@ -404,7 +521,7 @@ object Http {
      * o Retry-After (dentro do limite de [BUSY_BUDGET_MS]), avisando [onWait] como o download comum.
      */
     private suspend fun fetchPiece(
-        http: OkHttpClient, url: String, headers: Map<String, String>, piece: Piece, channel: FileChannel,
+        http: OkHttpClient, url: String, headers: Map<String, String>, validator: String?, piece: Piece, channel: FileChannel,
         initial: Response?, done: AtomicLong, active: AtomicInteger, busyWaited: AtomicLong, report: () -> Unit,
         onWait: (Long) -> Unit,
     ): Piece? {
@@ -445,9 +562,11 @@ object Http {
             val wait = try {
                 val first = opened
                 opened = null
-                first?.use(read) ?: http.newCall(rangeRequest(url, headers, pos, piece.end)).executeCancellable(read)
+                first?.use(read) ?: http.newCall(rangeRequest(url, headers, pos, piece.end, validator)).executeCancellable(read)
             } catch (e: IOException) {
                 if (e is LocalizedException || e is NoRangesException) throw e
+                // Disco cheio não é queda de rede: tentar de novo só encheria o disco outra vez.
+                if (RomExtractor.isNoSpace(e)) throw LocalizedException(R.string.common_error_no_space)
                 if (pos > before) drops = 0
                 if (drops++ >= MAX_RESUMES) throw e
                 delay(RESUME_WAIT_MS)

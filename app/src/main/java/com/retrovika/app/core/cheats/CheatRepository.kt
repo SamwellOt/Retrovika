@@ -1,10 +1,12 @@
 package com.retrovika.app.core.cheats
 
+import android.content.Context
 import com.retrovika.app.R
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.library.RomNaming
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.net.LocalizedException
+import com.retrovika.app.core.settings.localized
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.Systems
 import kotlinx.coroutines.Dispatchers
@@ -34,9 +36,9 @@ data class GameCheats(val file: String? = null, val cheats: List<Cheat> = emptyL
  * mais). A lista fica guardada por uma semana; cada .cht baixado fica guardado de vez. Escolhas por jogo
  * ficam em `cheats/<console>/<id>.json`.
  */
-class CheatRepository(private val paths: StoragePaths) {
+class CheatRepository(private val context: Context, private val paths: StoragePaths) {
 
-    private val root: File get() = paths.root.resolve("cheats").apply { mkdirs() }
+    private val root: File get() = paths.cheats
     private val lock = Mutex()
 
     /** Pasta do console na libretro-database (o mesmo nome dos thumbnails), ou nulo sem trapaças conhecidas. */
@@ -107,7 +109,8 @@ class CheatRepository(private val paths: StoragePaths) {
             val url = "$RAW/${encode(folder)}/${encode(file)}"
             Http.getString(url).also { writeAtomically(local, it) }
         }
-        CheatFile.parse(text)
+        val res = context.localized()
+        CheatFile.parse(text) { n -> res.getString(R.string.cheats_unnamed, n) }
     }
 
     /** Temporário + renomear: um arquivo cortado no meio (processo morto, disco cheio) seria usado para sempre. */
@@ -117,7 +120,7 @@ class CheatRepository(private val paths: StoragePaths) {
         if (!tmp.renameTo(file)) tmp.delete()
     }
 
-    private fun stateFile(game: Game) = root.resolve(game.systemId).apply { mkdirs() }.resolve("${game.id}.json")
+    private fun stateFile(game: Game) = paths.cheatsFor(game.systemId, game.id).apply { parentFile?.mkdirs() }
 
     private fun encode(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 

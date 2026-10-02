@@ -27,6 +27,12 @@ object GeminiText {
 
     const val DEFAULT_MODEL = "gemini-flash-latest"
 
+    /**
+     * O id do modelo como a API espera no caminho: o usuário pode colar "models/gemini-…" (como a própria
+     * API lista) ou com espaços. Vazio volta ao padrão.
+     */
+    fun modelId(raw: String): String = raw.trim().removePrefix("models/").trim().ifEmpty { DEFAULT_MODEL }
+
     fun languageName(target: String) = if (target == "pt") "Brazilian Portuguese" else "English"
 
     fun prompt(lines: List<OcrLine>, width: Int, height: Int, target: String, game: GameContext, history: List<String>): String = buildString {

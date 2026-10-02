@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ajuste automático da qualidade pelo aparelho: teste, origem do nível e vigia de velocidade. -->
+<resources>
+    <string name="tune_kicker_game">Optimizing this game</string>
+    <string name="tune_title">Tuning quality for this device</string>
+    <string name="tune_message">This game runs at each quality level for a few seconds, sped up and muted. The highest level that runs with room to spare on your device is kept.</string>
+    <string name="tune_message_game">Each quality level runs this game for a few seconds, sped up and muted. The result applies to this game only.</string>
+    <string name="tune_chosen">%1$s quality chosen for this device (%2$d%% speed)</string>
+    <string name="tune_slowdown">This game is running below full speed. Next time it opens at \"%1$s\".</string>
+    <string name="tune_slowdown_user">This game is running below full speed at \"%1$s\". A lower quality on the console page may help.</string>
+    <string name="tune_failed">Couldn\'t measure this game: it didn\'t run at any quality level. The previous setting stays.</string>
+
+    <string name="tune_auto">Auto</string>
+    <string name="tune_source_measured">Auto: %1$s, measured on this device (%2$d%% speed).</string>
+    <string name="tune_source_estimated">Auto: %1$s, estimated for this device. It is measured the first time you play.</string>
+    <string name="tune_source_user">Fixed by you: %1$s.</string>
+    <string name="tune_source_game">Tuned for this game: %1$s.</string>
+    <string name="tune_source_game_measured">Tuned for this game: %1$s (%2$d%% speed).</string>
+    <string name="tune_source_game_slowdown">Lowered to %1$s after this game ran slow.</string>
+
+    <string name="tune_game_title">Quality on this device</string>
+    <string name="tune_game_subtitle">Measures this game at each quality level and keeps the best one for it alone.</string>
+    <string name="tune_game_optimize">Optimize this game</string>
+    <string name="tune_game_reset">Follow the console</string>
+
+    <string name="tune_device_title">This device</string>
+    <string name="tune_device_ram">%1$d GB RAM</string>
+    <string name="tune_device_class">Class: %1$s</string>
+    <string name="tune_tier_entry">Entry level</string>
+    <string name="tune_tier_mid">Mid-range</string>
+    <string name="tune_tier_high">High-end</string>
+    <string name="tune_tier_top">Top of the line</string>
+    <string name="tune_reset">Measure again</string>
+    <string name="tune_reset_subtitle">Clears what was measured here: each console and game is tested again the next time it runs</string>
+</resources>

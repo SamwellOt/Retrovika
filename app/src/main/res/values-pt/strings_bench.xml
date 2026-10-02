@@ -12,6 +12,6 @@
     <string name="bench_system_overridden">A sua escolha acima vale mais.</string>
     <string name="bench_system_skipped">Teste dos núcleos pulado: vale o padrão.</string>
     <string name="bench_again">Testar de novo</string>
-    <string name="settings_auto_benchmark">Testar os núcleos sozinho</string>
-    <string name="settings_auto_benchmark_subtitle">Na primeira vez de cada console, mede os núcleos dele neste aparelho e escolhe o mais fiel que roda liso</string>
+    <string name="settings_auto_benchmark">Ajustar sozinho para o aparelho</string>
+    <string name="settings_auto_benchmark_subtitle">Na primeira vez de cada console, mede este aparelho: escolhe o núcleo mais fiel e o maior nível de qualidade que rodam liso</string>
 </resources>

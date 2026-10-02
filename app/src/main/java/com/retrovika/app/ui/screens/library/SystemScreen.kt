@@ -51,8 +51,10 @@ import com.retrovika.app.container
 import com.retrovika.app.core.bios.BiosManager
 import com.retrovika.app.core.bios.BiosStatus
 import com.retrovika.app.core.systems.BiosFile
-import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.systems.Systems
+import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.core.tuning.Tuning
+import com.retrovika.app.ui.components.tuneSourceText
 import com.retrovika.app.ui.components.Badge
 import com.retrovika.app.ui.components.ChipStrip
 import com.retrovika.app.ui.components.SearchField
@@ -113,7 +115,10 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val games = remember(all, query, settings.gameSort) { all.filterByTitle(query).sortedFor(settings.gameSort) }
     // null = ainda carregando; "" = sem escolha (o núcleo padrão).
     val selectedCore by remember(systemId) { app.settings.coreFor(systemId).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
-    val preset by remember(systemId) { app.settings.presetFor(systemId) }.collectAsStateWithLifecycle(Preset.BALANCED)
+    // Embrulhado em Loaded: null é "Auto" (escolha válida), e sem o embrulho não dava para distinguir de
+    // "ainda carregando" (o chip "Auto" aparecia marcado até a preferência chegar).
+    val presetLoaded by remember(systemId) { app.settings.presetChoice(systemId).map { Loaded(it) } }.collectAsStateWithLifecycle(null)
+    val presetChoice = presetLoaded?.value
     // BIOS com hash errado também contam como ausentes; em grupos, basta uma alternativa válida.
     val biosMissing by produceState(emptyList<List<BiosFile>>(), systemId) {
         val ok = app.bios.checkAsync(system).filter { it.status == BiosStatus.OK }.map { it.bios }.toSet()
@@ -150,6 +155,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
     val bench by remember(systemId) { app.settings.benchmark(systemId) }.collectAsStateWithLifecycle(null)
     // Sem escolha do usuário, vale o núcleo do teste automático (quando houve teste).
     val core = system.core(selectedCore?.ifEmpty { bench?.takeIf { !it.skipped }?.chosen })
+    val device by produceState<DeviceProfile?>(null) { value = app.deviceProfile.await() }
+    val tuned by remember(systemId, core.id) { app.settings.tuning(systemId, core.id) }.collectAsStateWithLifecycle(null)
+    val effective = device?.takeIf { presetLoaded != null }?.let { Tuning.effective(core, it, presetChoice, null, tuned) }
     val language = remember { context.uiLanguage() }
     // Só a contagem: a tela de versões refaz os grupos com os detalhes.
     // Fora da thread principal: com milhares de ROMs o agrupamento travava a transição e a rolagem.
@@ -248,6 +256,16 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                         modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp),
                     )
+                    // Núcleo com Vulkan e aparelho que o sustenta: dá para voltar ao renderizador comum se o resultado não agradar.
+                    if (core.vulkan && device?.vulkan == true) {
+                        val vulkanOff by remember(core.id) { app.settings.vulkanDisabled(core.id) }.collectAsStateWithLifecycle(false)
+                        Spacer(Modifier.height(10.dp))
+                        ChipStrip(contentPadding = PaddingValues(horizontal = 14.dp)) {
+                            // O que foi medido vale para o renderizador de antes: o novo é medido de novo na próxima abertura.
+                            SelectChip(stringResource(R.string.system_vulkan_auto), !vulkanOff, onClick = { scope.launch { app.settings.setVulkanDisabled(core.id, false); app.settings.clearTuning(system.id, all.map { it.id }) } })
+                            SelectChip(stringResource(R.string.system_vulkan_off), vulkanOff, onClick = { scope.launch { app.settings.setVulkanDisabled(core.id, true); app.settings.clearTuning(system.id, all.map { it.id }) } })
+                        }
+                    }
                     bench?.let { b ->
                         Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -258,7 +276,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                                 ) + if (selectedCore?.isNotEmpty() == true) " " + stringResource(R.string.bench_system_overridden) else "",
                                 style = MaterialTheme.typography.labelSmall, color = Palette.Cyan, modifier = Modifier.weight(1f),
                             )
-                            androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.setBenchmark(system.id, null) } }) {
+                            androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.setBenchmark(system.id, null); app.settings.clearTuning(system.id, all.map { it.id }) } }) {
                                 Text(stringResource(R.string.bench_again), style = MaterialTheme.typography.labelMedium)
                             }
                         }
@@ -273,8 +291,20 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         }
                         Spacer(Modifier.height(10.dp))
                         ChipStrip(contentPadding = PaddingValues(horizontal = 14.dp)) {
-                            Preset.entries.forEach { p ->
-                                SelectChip(stringResource(p.label), p == preset, onClick = { scope.launch { app.settings.setPreset(system.id, p) } })
+                            SelectChip(stringResource(R.string.tune_auto), presetLoaded != null && presetChoice == null, onClick = { scope.launch { app.settings.setPresetChoice(system.id, null) } })
+                            // Só os níveis que este núcleo declara: os outros não mudariam nada nele.
+                            Tuning.ladder(core).forEach { p ->
+                                SelectChip(stringResource(p.label), p == presetChoice, onClick = { scope.launch { app.settings.setPresetChoice(system.id, p) } })
+                            }
+                        }
+                        effective?.let { e ->
+                            Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(tuneSourceText(e), style = MaterialTheme.typography.labelSmall, color = Palette.Cyan, modifier = Modifier.weight(1f))
+                                if (tuned != null) {
+                                    androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.clearTuning(system.id, all.map { it.id }) } }) {
+                                        Text(stringResource(R.string.tune_reset), style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
                             }
                         }
                     }
@@ -354,3 +384,6 @@ private fun List<Game>.sortedFor(sort: GameSort): List<Game> = when (sort) {
     GameSort.ADDED -> sortedByDescending { it.addedAt }
     GameSort.PLAYTIME -> sortedByDescending { it.playTimeSeconds }
 }
+
+/** Valor de preferência já lido (mesmo que nulo); o estado nulo fora dele é "ainda carregando". */
+private data class Loaded<T>(val value: T)

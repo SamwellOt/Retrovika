@@ -5,6 +5,7 @@ import com.retrovika.app.core.share.StateManifest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -15,6 +16,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
@@ -35,15 +37,46 @@ object NetplayProtocol {
 
     val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun DataInputStream.readLineAscii(max: Int = 64 * 1024): String {
-        val sb = StringBuilder()
-        while (sb.length < max) {
-            val b = read()
-            if (b < 0) { if (sb.isEmpty()) throw IOException("eof"); break }
-            if (b == '\n'.code) break
-            sb.append(b.toChar())
+    /** Prazo total para a primeira linha de quem conecta (token, INFO/JOIN/INPUT, MANIFEST). */
+    const val HANDSHAKE_MS = 10_000L
+    /** Conexões ainda no aperto de mão ao mesmo tempo; as demais são fechadas de cara. */
+    const val MAX_HANDSHAKES = 8
+
+    /**
+     * Lê uma linha até '\n' (no máximo [max] bytes) e decodifica em UTF-8: o MANIFEST leva o título do
+     * jogo, que pode ter acentos ou japonês. Lê byte a byte para não consumir o que vem depois da linha.
+     */
+    fun DataInputStream.readLineAscii(max: Int = 64 * 1024): String = readLineUtf8(max) { read() }
+
+    /**
+     * Como [readLineAscii], com prazo total de [timeoutMs]: o soTimeout vale por leitura, e um par que
+     * manda um byte a cada poucos segundos seguraria a thread por horas. Restaura o soTimeout anterior.
+     */
+    fun Socket.readLineWithin(timeoutMs: Long, max: Int = 64 * 1024): String {
+        val input = getInputStream()
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        val previous = soTimeout
+        try {
+            return readLineUtf8(max) {
+                val left = (deadline - System.nanoTime()) / 1_000_000
+                if (left <= 0) throw SocketTimeoutException("deadline")
+                soTimeout = left.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
+                input.read()
+            }
+        } finally {
+            runCatching { soTimeout = previous }
         }
-        return sb.toString().trim()
+    }
+
+    internal fun readLineUtf8(max: Int, next: () -> Int): String {
+        val buf = ByteArrayOutputStream()
+        while (buf.size() < max) {
+            val b = next()
+            if (b < 0) { if (buf.size() == 0) throw IOException("eof"); break }
+            if (b == '\n'.code) break
+            buf.write(b)
+        }
+        return buf.toByteArray().decodeToString().trim()
     }
 
     fun DataOutputStream.writeLineAscii(line: String) {
@@ -67,12 +100,21 @@ class NetplayHost(private val manifest: StateManifest, private val token: String
     private val joins = LinkedBlockingQueue<Socket>()
     private val inputs = LinkedBlockingQueue<Socket>()
     @Volatile private var closed = false
+    private val handshaking = AtomicInteger()
 
     init {
         thread(name = "retrovika-netplay-host", isDaemon = true) {
             while (!closed) {
                 val client = runCatching { server.accept() }.getOrNull() ?: break
-                thread(isDaemon = true) { route(client) }
+                // Limite de conexões no aperto de mão: alguém na rede abrindo muitas não esgota as threads.
+                if (handshaking.incrementAndGet() > NetplayProtocol.MAX_HANDSHAKES) {
+                    handshaking.decrementAndGet()
+                    runCatching { client.close() }
+                    continue
+                }
+                thread(isDaemon = true) {
+                    try { route(client) } finally { handshaking.decrementAndGet() }
+                }
             }
         }
     }
@@ -80,10 +122,9 @@ class NetplayHost(private val manifest: StateManifest, private val token: String
     private fun route(client: Socket) {
         try {
             client.soTimeout = 10_000
-            val input = DataInputStream(client.getInputStream())
             val out = DataOutputStream(client.getOutputStream())
             with(NetplayProtocol) {
-                val (cmd, arg) = input.readLineAscii().split(' ', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+                val (cmd, arg) = client.readLineWithin(HANDSHAKE_MS).split(' ', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
                 if (arg != token) { out.writeLineAscii("NO token"); client.close(); return }
                 when (cmd) {
                     "INFO" -> {
@@ -130,7 +171,7 @@ object NetplayGuest {
                     s.soTimeout = 8_000
                     with(NetplayProtocol) {
                         DataOutputStream(s.getOutputStream()).writeLineAscii("INFO $token")
-                        val line = DataInputStream(s.getInputStream()).readLineAscii()
+                        val line = s.readLineWithin(HANDSHAKE_MS)
                         if (!line.startsWith("MANIFEST ")) throw IOException(line)
                         return@withContext host to json.decodeFromString(StateManifest.serializer(), line.removePrefix("MANIFEST "))
                     }

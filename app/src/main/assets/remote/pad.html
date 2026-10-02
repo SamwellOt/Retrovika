@@ -242,6 +242,8 @@
   };
 
   function build(layout) {
+    // Um hello novo (troca de jogo) com o dedo na tela: solta tudo antes, senão o app fica com a tecla presa.
+    releaseAll(true);
     ['sl', 'sr', 'left', 'right', 'bottom'].forEach((id) => { $(id).innerHTML = ''; });
     const left = $('left').appendChild(el('div', 'fit'));
     const right = $('right').appendChild(el('div', 'fit'));
@@ -288,7 +290,6 @@
       s.innerHTML = '<div class="knob"></div>';
       right.appendChild(s);
     }
-    pointers.clear(); presses.clear(); cPressed.clear();
     requestAnimationFrame(fit);
   }
 

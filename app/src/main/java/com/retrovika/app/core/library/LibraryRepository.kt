@@ -16,6 +16,7 @@ import com.retrovika.app.core.storage.FileNames
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
+import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.emulation.GameFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Resultado da importação: arquivos sem console reconhecido e os que falharam, com o motivo. */
@@ -77,15 +79,44 @@ class LibraryRepository(
     suspend fun setCoreOverride(id: Long, coreId: String?) = dao.setCoreOverride(id, coreId)
     suspend fun setIdentified(id: Long, name: String, region: String?) = dao.setIdentified(id, name, region)
 
-    suspend fun delete(game: Game, deleteFile: Boolean) = withContext(Dispatchers.IO) {
+    /**
+     * URIs removidas durante uma varredura: ela pode ter visto o arquivo antes da remoção e o cadastraria de
+     * novo ao terminar. Cada varredura tira daqui só as que já estavam no começo dela.
+     */
+    private val deletedUris: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Tira o jogo da biblioteca e apaga o que era só dele (estados, trapaças escolhidas, controle e nível de
+     * qualidade próprios). Os saves (.srm) ficam: o nome é o do RetroArch e servem ao mesmo jogo importado de novo.
+     * Retorna falso, sem mexer em nada além das faixas, quando o arquivo interno não pôde ser apagado: a
+     * entrada fica, para o jogo não sumir da tela com a ROM ainda ocupando espaço.
+     */
+    suspend fun delete(game: Game, deleteFile: Boolean): Boolean = withContext(Dispatchers.IO) {
+        deletedUris += game.uri
         if (deleteFile && !game.isContentUri) {
             // Faixas .bin de um .cue (e os discos de um .m3u) também saem; senão reapareceriam
             // como jogos soltos no próximo rescan.
-            deleteWithTracks(File(game.uri))
+            val file = File(game.uri)
+            deleteWithTracks(file)
+            if (file.exists()) {
+                deletedUris -= game.uri
+                return@withContext false
+            }
         }
         // Arquivos de pastas vinculadas não são apagados: o jogo fica oculto para não voltar no rescan.
         if (game.isContentUri) settings.hideGame(game.uri)
         dao.delete(game)
+        forget(game)
+        true
+    }
+
+    /** O que fica guardado pelo id do jogo: um jogo reimportado ganha outro id, então nada disso voltaria a servir. */
+    private suspend fun forget(game: Game) {
+        runCatching { paths.statesDir(game.systemId, game.id).deleteRecursively() }
+        runCatching { paths.cheatsFor(game.systemId, game.id).delete() }
+        // Progresso do teste de qualidade por jogo (o GameActivity grava com este nome).
+        runCatching { File(File(context.filesDir, GameActivity.BENCH_DIR), "benchmark_game_${game.id}.json").delete() }
+        runCatching { settings.forgetGame(game.id) }
     }
 
     private fun deleteWithTracks(file: File) {
@@ -168,6 +199,7 @@ class LibraryRepository(
     private suspend fun scanOnce() {
         _scan.value = ScanState(running = true)
         lastProgress = 0L
+        val deletedBefore = deletedUris.toList()
         val found = mutableListOf<Game>()
         try {
             // Arquivos de `roms/` que a varredura viu e julgou auxiliares (o .bin de um .cue importado depois).
@@ -190,17 +222,21 @@ class LibraryRepository(
             val hidden = settings.current().hiddenGames
             val existing = dao.allUris().toSet()
             val foundUris = found.map { it.uri }.toSet()
-            dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden })
+            dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden && it.uri !in deletedUris })
             // Removido enquanto outra varredura já o reinseria: sai agora.
             existing.filter { it in hidden }.chunked(500).forEach { dao.deleteByUris(it) }
             // Remove entradas cujo arquivo realmente sumiu e as internas que viraram auxiliares
             // (o arquivo continua lá, como faixa de outro jogo; só a entrada sai).
+            // Sem o armazenamento externo (raiz caída no interno), `roms/` de verdade não foi varrida: os jogos
+            // dela parecem sumidos, mas só estão inacessíveis agora.
+            val internalReadable = paths.onExternal
             val missing = existing.filter { uri ->
                 uri !in foundUris && unreadable.none { uri.startsWith("$it/") } &&
-                    (uri.startsWith("content://") || !File(uri).exists() || (uri in auxiliary && uri in before))
+                    (uri.startsWith("content://") || (internalReadable && (!File(uri).exists() || (uri in auxiliary && uri in before))))
             }
             // Em lotes: o SQLite do Android 8–10 aceita no máximo 999 parâmetros por comando.
             missing.chunked(500).forEach { dao.deleteByUris(it) }
+            deletedUris.removeAll(deletedBefore.toSet())
         } finally {
             _scan.value = ScanState(running = false, found = found.size)
         }
@@ -347,7 +383,7 @@ class LibraryRepository(
             systemId = system.id,
             size = size,
             region = RomNaming.region(raw),
-            coverUrl = RomNaming.coverUrl(system, raw),
+            coverUrl = RomNaming.coverUrl(system, raw, fileName.substringAfterLast('.', "")),
             source = source,
         )
     }
@@ -428,6 +464,8 @@ class LibraryRepository(
     /** Jogos ocultos (removidos de pastas vinculadas) voltam a aparecer no próximo rescan. */
     suspend fun unhideAll() {
         settings.clearHiddenGames()
+        // Uma remoção recente ainda guardada para a varredura seguinte não pode segurar o jogo reexibido.
+        deletedUris.clear()
         rescan()
     }
 

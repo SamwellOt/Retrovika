@@ -20,6 +20,7 @@
     <string name="game_error_load_library">The core couldn\'t be loaded on this device.</string>
     <string name="game_error_load_game">The core couldn\'t open this file. It may be corrupted or from another region/format.</string>
     <string name="game_error_load_game_bios">Some cores for this console need a BIOS that is missing or invalid. Import it in Settings › BIOS:</string>
+    <string name="vulkan_fallback">Vulkan didn\'t start on this device: the core is drawing on the CPU instead.</string>
     <string name="game_error_gl">Your device doesn\'t support the OpenGL ES version this core requires.</string>
     <string name="game_error_serialization">Failed to read or write the save state.</string>
     <string name="game_error_unexpected">Unexpected emulator error (code %d).</string>
@@ -29,6 +30,7 @@
     <string name="game_state_saved">State saved to slot %d</string>
     <string name="game_state_loaded">State loaded</string>
     <string name="game_state_load_failed">Couldn\'t load this state</string>
+    <string name="translate_capture_failed">Couldn\'t capture the screen to translate. Try again.</string>
     <string name="game_state_not_ready">The game is still starting. Try again in a moment.</string>
     <string name="game_state_save_failed">Couldn\'t save the state: %1$s</string>
     <string name="game_autosave_incompatible">The autosave doesn\'t match this core and wasn\'t loaded. It was kept as a backup.</string>

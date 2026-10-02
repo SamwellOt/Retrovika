@@ -52,6 +52,8 @@
     <string name="system_bios_or">" ou "</string>
     <string name="system_core">Núcleo</string>
     <string name="system_core_beta">%1$s (beta)</string>
+    <string name="system_vulkan_auto">Vulkan quando funciona</string>
+    <string name="system_vulkan_off">Sem Vulkan</string>
     <string name="system_preset">Perfil de desempenho</string>
     <string name="system_formats">Formatos: %1$s</string>
     <string name="system_games">Jogos</string>
@@ -83,10 +85,16 @@
     <string name="details_see_versions">Ver versões</string>
     <string name="details_identify_version">Identificar versão</string>
     <string name="details_remove_title">Remover %1$s?</string>
-    <string name="details_remove_linked">O jogo sai da biblioteca, mas o arquivo continua na sua pasta. Para mostrá-lo de novo, use Ajustes › Jogos removidos.</string>
-    <string name="details_remove_file">O arquivo será apagado do armazenamento do Retrovika. Saves e estados são mantidos.</string>
+    <string name="details_remove_linked">O jogo sai da biblioteca, mas o arquivo continua na sua pasta. Para mostrá-lo de novo, use Ajustes › Jogos removidos. Os saves do jogo ficam; os estados salvos dele são apagados.</string>
+    <!-- LibraryRepository.delete devolveu falso: o arquivo não saiu e o jogo continua na biblioteca. -->
+    <string name="details_remove_failed">Não foi possível apagar %1$s. O jogo continua na biblioteca.</string>
+    <string name="details_remove_file">O arquivo será apagado do armazenamento do Retrovika. Os saves do jogo ficam; os estados salvos dele são apagados.</string>
 
     <!-- Pacotes .zip de núcleos e arquivos de sistema -->
     <string name="zip_invalid_entry">Entrada inválida no arquivo compactado: %s</string>
     <string name="zip_unsupported_compression">Compressão não suportada no arquivo compactado: %s</string>
+    <string name="library_with_games_empty_title">Nenhum console com jogos ainda</string>
+    <string name="library_with_games_empty_message">Vincule uma pasta ou importe jogos, e os consoles que tiverem jogos aparecem aqui.</string>
+    <string name="details_favorite_add">Adicionar aos favoritos</string>
+    <string name="details_favorite_remove">Remover dos favoritos</string>
 </resources>

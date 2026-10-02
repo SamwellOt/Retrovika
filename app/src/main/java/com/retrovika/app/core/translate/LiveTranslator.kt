@@ -23,6 +23,7 @@ import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -55,7 +56,8 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
     private var meiki: MeikiOcr? = null
     @Volatile private var meikiBroken = false
     private val translators = mutableMapOf<String, Translator>()
-    private val downloaded = mutableSetOf<String>()
+    /** Pares de idiomas com o modelo do ML Kit já baixado; os trechos são traduzidos em paralelo. */
+    private val downloaded: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var onDeviceBroken = false
     /** Últimos trechos traduzidos nesta sessão: a IA mantém os nomes e o tom entre uma tela e outra. */
     private val history = ArrayDeque<String>()
@@ -104,7 +106,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
             try {
                 val png = withContext(Dispatchers.Default) { png(prepared) }
                 val blocks = GeminiTranslator(ai.apiKey, ai.model)
-                    .translate(png, prepared.width, prepared.height, lines, target, game, history.toList())
+                    .translate(png, prepared.width, prepared.height, lines, target, game, synchronized(history) { history.toList() })
                 remember(blocks.map { "${it.original} → ${it.translated}" })
                 return Result(blocks.map { TranslatedBlock(toView(it.box), it.original, it.translated) })
             } catch (c: CancellationException) {
@@ -229,8 +231,11 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
         runCatching { recognizer.close() }
         runCatching { meiki?.close() }
         meiki = null
-        translators.values.forEach { runCatching { it.close() } }
-        translators.clear()
+        // A mesma trava de translatorFor.
+        synchronized(this) {
+            translators.values.forEach { runCatching { it.close() } }
+            translators.clear()
+        }
     }
 
     companion object {

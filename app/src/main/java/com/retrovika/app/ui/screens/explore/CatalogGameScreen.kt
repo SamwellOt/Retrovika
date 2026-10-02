@@ -139,6 +139,10 @@ import com.retrovika.app.ui.components.HeaderIconButton
 import com.retrovika.app.ui.components.IconTile
 import com.retrovika.app.ui.components.Kicker
 import com.retrovika.app.ui.components.LocalBottomInset
+import com.retrovika.app.ui.components.ReadableWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import com.retrovika.app.ui.components.Pill
 import com.retrovika.app.ui.components.SectionHeader
 import com.retrovika.app.ui.components.accentColor
@@ -191,7 +195,9 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Ink)) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp + LocalBottomInset.current)) {
+        // Em telas largas a página fica numa coluna central (ReadableWidth); a rolagem segue a tela toda.
+        ReadableWidth { side ->
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, bottom = 40.dp + LocalBottomInset.current)) {
             item(key = "hero", contentType = "hero") {
                 Hero(entry.title, source, backloggd, wiki, system, sourceName)
             }
@@ -222,6 +228,7 @@ fun CatalogGameScreen(entryKey: String, onBack: () -> Unit, onOpenDownloads: () 
                     modifier = Modifier.padding(horizontal = Gutter, vertical = 24.dp),
                 )
             }
+        }
         }
 
         // Botões fixos sobre a página: voltar, abrir a página da fonte e compartilhar.
@@ -389,7 +396,8 @@ private fun SiteRatingCard(rating: SiteRating, sourceName: String, locale: Local
 @Composable
 private fun ScoreSurface(modifier: Modifier, content: @Composable () -> Unit) {
     Column(
-        modifier.height(150.dp).clip(CardShape)
+        // Altura mínima, não fixa: com fonte grande (1,3× ou mais) o conteúdo era cortado embaixo.
+        modifier.heightIn(min = 150.dp).clip(CardShape)
             .background(Brush.verticalGradient(listOf(Palette.SurfaceHighest, Palette.SurfaceHigh)))
             .border(1.dp, Palette.Outline.copy(alpha = 0.8f), CardShape)
             .padding(14.dp),
@@ -478,7 +486,8 @@ private fun DownloadPanel(
                     Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     Text(
                         stringResource(R.string.cgame_see_downloads), style = MaterialTheme.typography.labelLarge, color = Palette.Cyan,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenDownloads).padding(6.dp),
+                        modifier = Modifier.minimumInteractiveComponentSize().clip(RoundedCornerShape(8.dp))
+                            .clickable(role = Role.Button, onClick = onOpenDownloads).padding(6.dp),
                     )
                 }
                 Spacer(Modifier.height(10.dp))
@@ -615,7 +624,8 @@ private fun ExpandableText(
             Text(
                 stringResource(if (expanded) R.string.cgame_read_less else R.string.cgame_read_more),
                 style = MaterialTheme.typography.labelLarge, color = Palette.Neon,
-                modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).clickable { expanded = !expanded }.padding(vertical = 6.dp),
+                modifier = Modifier.minimumInteractiveComponentSize().clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button) { expanded = !expanded }.padding(vertical = 6.dp),
             )
         }
     }

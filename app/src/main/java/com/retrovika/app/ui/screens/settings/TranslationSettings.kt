@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,7 +43,9 @@ import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.core.translate.OcrPack
+import com.retrovika.app.ui.components.ConfirmDialog
 import com.retrovika.app.ui.components.IconTile
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.retrovika.app.ui.theme.Palette
 import kotlinx.coroutines.launch
 
@@ -54,6 +55,7 @@ internal fun OcrPackRow() {
     val context = LocalContext.current
     val pack = context.container.ocrPack
     val state by pack.state.collectAsStateWithLifecycle()
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -80,9 +82,20 @@ internal fun OcrPackRow() {
         Spacer(Modifier.width(8.dp))
         when (state) {
             is OcrPack.State.Downloading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Cyan)
-            OcrPack.State.Ready -> TextButton(onClick = { pack.delete() }) { Text(stringResource(R.string.settings_ocr_pack_delete), color = Palette.Coral) }
+            // Baixar de novo são ~58 MB: confirma antes de apagar.
+            OcrPack.State.Ready -> TextButton(onClick = { confirmDelete = true }) { Text(stringResource(R.string.settings_ocr_pack_delete), color = Palette.Coral) }
             else -> TextButton(onClick = { pack.download() }) { Text(stringResource(R.string.settings_ocr_pack_download)) }
         }
+    }
+    if (confirmDelete && state == OcrPack.State.Ready) {
+        ConfirmDialog(
+            title = stringResource(R.string.settings_ocr_pack_delete_title),
+            message = stringResource(R.string.settings_ocr_pack_delete_message, OcrPack.DOWNLOAD_MB),
+            confirmLabel = stringResource(R.string.settings_ocr_pack_delete),
+            onConfirm = { pack.delete() },
+            onDismiss = { confirmDelete = false },
+            icon = Icons.Rounded.DocumentScanner,
+        )
     }
 }
 
@@ -112,8 +125,8 @@ internal fun AiTranslationRow(settings: AppSettings) {
 @Composable
 private fun AiKeyDialog(settings: AppSettings, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val repo = context.container.settings
-    val scope = rememberCoroutineScope()
+    val app = context.container
+    val repo = app.settings
     var key by remember { mutableStateOf(settings.geminiKey.orEmpty()) }
     var model by remember { mutableStateOf(settings.geminiModel) }
     AlertDialog(
@@ -144,13 +157,15 @@ private fun AiKeyDialog(settings: AppSettings, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                scope.launch { repo.setGeminiKey(key); repo.setGeminiModel(model) }
+                // No escopo do app: o onDismiss logo abaixo tira o diálogo da tela, e um escopo dele
+                // cancelaria as duas gravações no meio.
+                app.scope.launch { repo.setGeminiKey(key); repo.setGeminiModel(model) }
                 onDismiss()
             }) { Text(stringResource(R.string.settings_ai_save)) }
         },
         dismissButton = {
             if (settings.geminiKey != null) {
-                TextButton(onClick = { scope.launch { repo.setGeminiKey("") }; onDismiss() }) {
+                TextButton(onClick = { app.scope.launch { repo.setGeminiKey("") }; onDismiss() }) {
                     Text(stringResource(R.string.settings_ai_remove), color = Palette.Coral)
                 }
             } else {

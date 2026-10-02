@@ -30,6 +30,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.runtime.saveable.Saver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -124,19 +133,22 @@ fun BrowserScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var url by rememberSaveable { mutableStateOf<String?>(null) }
-    // Abrir Downloads tira o navegador da tela e destrói o WebView; o histórico e a página (já depois
-    // de um desafio do Cloudflare, por exemplo) voltam deste pacote em vez de recarregar do zero.
-    val webState = rememberSaveable { Bundle() }
+    // Abrir Downloads tira o navegador da tela e destrói o WebView; girar a tela recria a Activity. O
+    // histórico e a página (já depois de um desafio do Cloudflare, por exemplo) voltam daqui em vez de
+    // recarregar do zero.
+    val history = rememberSaveable(saver = WebHistory.saver) { WebHistory() }
     var pending by remember { mutableStateOf<PendingDownload?>(null) }
 
-    Box(Modifier.fillMaxSize()) {
+    // imePadding na raiz: o teclado encolhe a página (campos de busca dos sites ficam visíveis) e as
+    // barras de navegação abaixo dele não são contadas de novo pelos filhos.
+    Box(Modifier.fillMaxSize().imePadding()) {
         val current = url
         if (current == null) {
-            StartPage(onBack = onBack, onOpen = { webState.clear(); url = it })
+            StartPage(onBack = onBack, onOpen = { history.reset(); url = it })
         } else {
             BrowserView(
                 startUrl = current,
-                savedState = webState,
+                history = history,
                 activeDownloads = active,
                 onClose = { url = null },
                 onOpenDownloads = onOpenDownloads,
@@ -144,7 +156,7 @@ fun BrowserScreen(onBack: () -> Unit, onOpenDownloads: () -> Unit) {
                 onDownload = { pending = it },
             )
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp))
     }
 
     val resources = LocalContext.current.resources
@@ -220,6 +232,33 @@ private fun StartPage(onBack: () -> Unit, onOpen: (String) -> Unit) {
                 }
             }
         }
+        // Acima da barra de navegação (e do teclado, já descontado na raiz).
+        item { Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars)) }
+    }
+}
+
+/**
+ * Histórico do WebView que sobrevive à rotação e à saída da tela. O pacote é tirado na hora em que o
+ * estado da tela é salvo (o [Saver] pergunta ao WebView vivo), e não só quando o WebView é destruído:
+ * na rotação, o estado é salvo antes do onDispose, e o histórico ia vazio.
+ */
+private class WebHistory(private var bundle: Bundle = Bundle()) {
+    var view: WebView? = null
+
+    /** O histórico atual: o do WebView aberto, ou o último guardado. */
+    fun snapshot(): Bundle {
+        view?.let { v -> bundle = Bundle().also { v.saveState(it) } }
+        return bundle
+    }
+
+    /** Restaura no WebView novo; falso quando não havia o que restaurar. */
+    fun restoreInto(webView: WebView): Boolean = !bundle.isEmpty && webView.restoreState(bundle) != null
+
+    /** Site novo pela página inicial: começa sem histórico. */
+    fun reset() { bundle = Bundle() }
+
+    companion object {
+        val saver = Saver<WebHistory, Bundle>(save = { it.snapshot() }, restore = { WebHistory(it) })
     }
 }
 
@@ -227,7 +266,7 @@ private fun StartPage(onBack: () -> Unit, onOpen: (String) -> Unit) {
 @Composable
 private fun BrowserView(
     startUrl: String,
-    savedState: Bundle,
+    history: WebHistory,
     activeDownloads: Int,
     onClose: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -288,18 +327,33 @@ private fun BrowserView(
                 val guess = RomNaming.guessSystem(fileName, listOfNotNull(this@apply.url, this@apply.title, url))
                 onDownload(PendingDownload(url, fileName, contentLength, headers, guess))
             }
-            if (savedState.isEmpty || restoreState(savedState) == null) loadUrl(startUrl)
+            if (!history.restoreInto(this)) loadUrl(startUrl)
             canGoBack = this.canGoBack()
         }
     }
     DisposableEffect(webView) {
+        history.view = webView
         onDispose {
-            savedState.clear()
-            webView.saveState(savedState)
+            // Guarda o histórico antes de destruir; depois disso o pacote não depende mais do WebView.
+            history.snapshot()
+            history.view = null
             CookieManager.getInstance().flush()
             webView.stopLoading()
             webView.destroy()
         }
+    }
+    // Fora da tela (app em segundo plano, outra tela por cima) o WebView para timers, vídeos e scripts.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, webView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> webView.onPause()
+                Lifecycle.Event.ON_RESUME -> webView.onResume()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     BackHandler(enabled = canGoBack) { webView.goBack() }
 
@@ -332,7 +386,7 @@ private fun BrowserView(
             }
         }
         if (progress < 1f) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-        AndroidView(factory = { webView }, modifier = Modifier.fillMaxWidth().weight(1f))
+        AndroidView(factory = { webView }, modifier = Modifier.fillMaxWidth().weight(1f).navigationBarsPadding())
     }
 }
 

@@ -13,6 +13,11 @@
          deixa o Android 12+ atualizar sem confirmação quando a versão instalada veio do próprio app. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Downloads da fila num serviço em primeiro plano (DownloadService), para o Android não matar o app no meio.
+         Sem a permissão de notificação (Android 13+, não pedida) o serviço roda igual, só sem a notificação visível. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -82,7 +87,8 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- configChanges evita recriar a Activity (e reiniciar o emulador) ao girar a tela ou conectar um controle. -->
+        <!-- configChanges evita recriar a Activity (e reiniciar o emulador) ao girar a tela, conectar um controle ou
+             mudar idioma, fonte ou cor do sistema: a tela do jogo fica no idioma antigo até sair dele. -->
         <activity
             android:name=".emulation.GameActivity"
             android:exported="false"
@@ -90,10 +96,15 @@
             android:taskAffinity="com.retrovika.app.game"
             android:autoRemoveFromRecents="true"
             android:screenOrientation="fullSensor"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|locale|layoutDirection|fontScale|colorMode"
             android:resizeableActivity="true"
             android:theme="@style/Theme.Retrovika.Game" />
 
         <receiver android:name=".core.update.UpdateInstallReceiver" android:exported="false" />
+
+        <service
+            android:name=".core.catalog.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

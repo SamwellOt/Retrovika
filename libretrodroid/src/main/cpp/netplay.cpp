@@ -136,21 +136,24 @@ void Netplay::pump() {
         for (int i = 0; i < 4; i++) pad.analog[i] = (int16_t) get16(inBuffer, at + 8 + i * 2);
         for (int i = 0; i < 2; i++) pad.pointer[i] = (int16_t) get16(inBuffer, at + 16 + i * 2);
         pad.pointerPressed = (uint8_t) inBuffer[at + 20];
-        // Pacotes de uma sessão anterior (antes de ressincronizar) ficam de fora.
-        if (packetEpoch == epoch && packetFrame >= frame) remotePads[packetFrame] = pad;
+        // Pacotes de uma sessão anterior (antes de ressincronizar) ficam de fora. Também os de quadros longe
+        // demais: o outro só roda um quadro com a nossa entrada dele, que vai no máximo [delay] à frente, e
+        // manda a dele [delay] à frente disso (+1 do quadro que acabou de rodar). Um quadro absurdo (pacote
+        // corrompido) ficaria no mapa para sempre, já que só o quadro atual é apagado.
+        uint64_t maxFrame = (uint64_t) frame.load() + 2ull * delay + MAX_FRAMES_AHEAD_MARGIN;
+        if (packetEpoch == epoch && packetFrame >= frame && packetFrame <= maxFrame) remotePads[packetFrame] = pad;
         at += PACKET_SIZE;
     }
     inBuffer.erase(0, at);
 }
 
-bool Netplay::prepareFrame(Input* input) {
+bool Netplay::prepareFrame(const Pad& localPad) {
     if (broken) return false;
     uint32_t f = frame;
     int64_t target = (int64_t) f + delay;
     if (lastSentFrame < target) {
-        Pad pad = capture(input);
-        localPads[(uint32_t) target] = pad;
-        send((uint32_t) target, pad);
+        localPads[(uint32_t) target] = localPad;
+        send((uint32_t) target, localPad);
         lastSentFrame = target;
     }
     pump();

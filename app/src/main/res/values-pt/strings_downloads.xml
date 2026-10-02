@@ -30,4 +30,13 @@
     <string name="downloads_cancel_all">Cancelar todos</string>
     <string name="downloads_parallel">Downloads simultâneos</string>
     <string name="downloads_parallel_hint">Os demais esperam na fila e começam sozinhos.</string>
+    <!-- Notificação do serviço de downloads (DownloadService). -->
+    <string name="download_channel_name">Downloads</string>
+    <plurals name="download_notification_title">
+        <item quantity="one">Baixando %d jogo</item>
+        <item quantity="other">Baixando %d jogos</item>
+    </plurals>
+    <string name="downloads_cancel_all_title">Cancelar todos os downloads?</string>
+    <string name="downloads_cancel_all_message">Os %1$d downloads em andamento ou na fila vão parar.</string>
+    <string name="downloads_keep">Continuar baixando</string>
 </resources>

@@ -56,4 +56,11 @@ class GeminiTextTest {
         assertEquals("API key not valid.", GeminiText.errorMessage("""{"error":{"code":400,"message":"API key not valid."}}"""))
         assertNull(GeminiText.errorMessage("<html>"))
     }
+
+    @Test
+    fun `id do modelo sem o prefixo models e sem espacos`() {
+        assertEquals("gemini-2.5-flash", GeminiText.modelId("  models/gemini-2.5-flash "))
+        assertEquals("gemini-2.5-flash", GeminiText.modelId("gemini-2.5-flash"))
+        assertEquals(GeminiText.DEFAULT_MODEL, GeminiText.modelId("models/"))
+    }
 }

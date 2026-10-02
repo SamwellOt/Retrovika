@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Backup automático (Android 11 e anteriores). A cota é de 25 MB: núcleos, ROMs, save states e BIOS
-    passariam dela e o Android descartaria o backup inteiro. Ficam as preferências, o banco da biblioteca
-    e as memórias de cartucho (saves/). Núcleos também não servem em outro aparelho (ABI diferente).
+    Backup automático (Android 11 e anteriores). A cota é de 25 MB: núcleos, ROMs, save states, BIOS e o
+    OCR para jogos japoneses (~80 MB) passariam dela e o Android descartaria o backup inteiro. Ficam as
+    preferências, o banco da biblioteca e as memórias de cartucho (saves/). Núcleos e o runtime do OCR
+    também não servem em outro aparelho (ABI diferente).
+
+    Também ficam de fora:
+    - secrets.xml: a chave do Gemini do usuário (SettingsRepository), que não deve ir para a nuvem;
+    - device_profile.xml, vulkan_health.xml e remote_play.xml: medições deste aparelho (perfil, ponte
+      Vulkan, codificador de vídeo), erradas num celular restaurado;
+    - benchmark/: os marcadores de teste em andamento (GameActivity.BENCH_DIR); restaurados em outro
+      aparelho, apontariam uma queda que não aconteceu.
 -->
 <full-backup-content>
     <exclude domain="file" path="cores/" />
+    <exclude domain="file" path="ocr/" />
+    <exclude domain="file" path="benchmark/" />
+    <exclude domain="sharedpref" path="secrets.xml" />
+    <exclude domain="sharedpref" path="device_profile.xml" />
+    <exclude domain="sharedpref" path="vulkan_health.xml" />
+    <exclude domain="sharedpref" path="remote_play.xml" />
     <exclude domain="external" path="Retrovika/roms/" />
     <exclude domain="external" path="Retrovika/states/" />
     <exclude domain="external" path="Retrovika/system/" />

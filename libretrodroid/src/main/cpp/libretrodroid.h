@@ -22,6 +22,7 @@
 
 #include <EGL/egl.h>
 
+#include <list>
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -103,7 +104,7 @@ public:
     void reset();
 
     void loadGameFromPath(const std::string &gamePath);
-    void loadGameFromBytes(const int8_t *data, size_t size);
+    void loadGameFromBytes(std::vector<int8_t> data);
     void loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles);
 
     void onKeyEvent(unsigned int port, int action, int keyCode);
@@ -126,6 +127,9 @@ public:
 
     bool requiresVideoRefresh() const;
     void clearRequiresVideoRefresh();
+
+    /** O núcleo desenha com Vulkan e a ponte para o GL quebrou: dali em diante só sairia tela preta. */
+    bool isVideoBackendLost() const;
 
     std::vector<Variable> getVariables();
     void updateVariable(const Variable& variable);
@@ -172,6 +176,7 @@ public:
 
 private:
     void updateAudioSampleRateMultiplier();
+    void replaceVideo(std::unique_ptr<Video> newVideo);
     float findDefaultAspectRatio(const retro_system_av_info &system_av_info);
     void afterGameLoad();
 
@@ -212,11 +217,17 @@ private:
     std::unique_ptr<Core> core;
     // retro_load_game deu certo: só então o destroy chama retro_unload_game.
     bool gameLoaded = false;
+    // O que foi entregue no retro_game_info (conteúdo e caminho) e os códigos de trapaça: vivos até o destroy(),
+    // porque o núcleo pode guardar os ponteiros.
+    std::vector<int8_t> gameData;
+    std::string gamePathStorage;
+    std::list<std::string> cheatCodes;
     std::unique_ptr<Audio> audio;
     std::unique_ptr<Video> video;
     std::unique_ptr<FPSSync> fpsSync;
     std::unique_ptr<Input> input;
     // Protege [input]: pause/resume o trocam na thread principal enquanto eventos chegam pela thread GL.
+    // Também protege a troca de [video] para quem a lê fora da thread GL (toque, shader).
     std::mutex inputLock;
     std::unique_ptr<Rumble> rumble;
     std::unique_ptr<Netplay> netplay;

@@ -7,6 +7,7 @@ import com.retrovika.app.core.net.HttpStatusException
 import com.retrovika.app.core.net.LocalizedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -24,7 +25,11 @@ class GeminiTranslator(private val apiKey: String, private val model: String) {
         target: String, game: GeminiText.GameContext, history: List<String>,
     ): List<GeminiText.AiBlock> = withContext(Dispatchers.IO) {
         val body = GeminiText.request(Base64.encodeToString(png, Base64.NO_WRAP), width, height, lines, target, game, history)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/${model.trim()}:generateContent"
+        // O nome vem digitado pelo usuário: vai como um trecho do caminho, codificado (uma "/" ou "?" a mais não
+        // muda o endereço chamado).
+        val url = "https://generativelanguage.googleapis.com/v1beta/models".toHttpUrl().newBuilder()
+            .addPathSegment("${GeminiText.modelId(model)}:generateContent")
+            .build()
         val request = Request.Builder().url(url)
             .header("x-goog-api-key", apiKey.trim())
             .post(body.toRequestBody("application/json".toMediaType()))
@@ -39,7 +44,7 @@ class GeminiTranslator(private val apiKey: String, private val model: String) {
                     res.code == 401 || res.code == 403 -> LocalizedException(R.string.translate_ai_bad_key)
                     res.code == 404 -> LocalizedException(R.string.translate_ai_bad_model, model)
                     message != null -> LocalizedException(R.string.translate_ai_error, message)
-                    else -> HttpStatusException(res.code, url)
+                    else -> HttpStatusException(res.code, url.toString())
                 }
             }
             GeminiText.parse(text, lines, width, height)

@@ -9,6 +9,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.runtime.produceState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import java.util.Calendar
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -105,7 +114,10 @@ fun HomeScreen(
     val newest by library.newest.collectAsStateWithLifecycle()
     val counts by library.counts.collectAsStateWithLifecycle()
     val countsLoaded by library.countsLoaded.collectAsStateWithLifecycle()
-    val scan by library.scan.collectAsStateWithLifecycle()
+    // Só o "em andamento": o contador da varredura muda várias vezes por segundo e é lido só nos
+    // pedaços que o mostram (ScanBadge, ScanStatus), sem recompor a tela inteira.
+    val scanning by remember { library.scan.map { it.running }.distinctUntilChanged() }
+        .collectAsStateWithLifecycle(library.scan.value.running)
     // Só o contador: a lista de tarefas muda a cada aviso de progresso e recomporia a tela inteira.
     val activeDownloads by context.container.downloads.activeCount.collectAsStateWithLifecycle()
     val update by context.container.updater.state.collectAsStateWithLifecycle()
@@ -122,12 +134,7 @@ fun HomeScreen(
                     Spacer(Modifier.width(12.dp))
                     Wordmark(fontSize = 13.sp)
                     Spacer(Modifier.weight(1f))
-                    if (scan.running) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Palette.Cyan)
-                        Spacer(Modifier.width(6.dp))
-                        Text("${scan.found}", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
-                        Spacer(Modifier.width(10.dp))
-                    }
+                    if (scanning) ScanBadge()
                     // Estado compartilhado por um amigo ou partida em rede: QR code ou arquivo.
                     HeaderIconButton(Icons.Rounded.QrCodeScanner, stringResource(R.string.share_chooser_title), onReceive)
                 }
@@ -135,10 +142,7 @@ fun HomeScreen(
                 val (salute, question) = greeting(recent.isNotEmpty())
                 Text(salute, style = MaterialTheme.typography.titleMedium, color = Palette.TextSecondary)
                 Text(question, style = MaterialTheme.typography.headlineLarge)
-                if (scan.running) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(stringResource(R.string.home_scanning, scan.found), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
-                }
+                if (scanning) ScanStatus()
             }
         }
 
@@ -174,7 +178,7 @@ fun HomeScreen(
         }
 
         // Só depois da primeira resposta do banco: antes disso o cartão piscava para quem já tem jogos.
-        if (countsLoaded && counts.isEmpty() && !scan.running) {
+        if (countsLoaded && counts.isEmpty() && !scanning) {
             item(key = "welcome") { WelcomeCard(onAddFolder = onAddFolder, onExplore = onExplore) }
         }
 
@@ -219,6 +223,23 @@ fun HomeScreen(
         shelf("favorites", R.string.home_shelf_favorites, favorites, onOpenGame)
         shelf("newest", R.string.home_shelf_newest, newest, onOpenGame)
     }
+}
+
+/** Indicador da varredura no topo, com o número de jogos achados até agora. */
+@Composable
+private fun ScanBadge() {
+    val scan by LocalContext.current.container.library.scan.collectAsStateWithLifecycle()
+    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Palette.Cyan)
+    Spacer(Modifier.width(6.dp))
+    Text("${scan.found}", style = MaterialTheme.typography.labelMedium, color = Palette.Cyan)
+    Spacer(Modifier.width(10.dp))
+}
+
+@Composable
+private fun ScanStatus() {
+    val scan by LocalContext.current.container.library.scan.collectAsStateWithLifecycle()
+    Spacer(Modifier.height(4.dp))
+    Text(stringResource(R.string.home_scanning, scan.found), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.shelf(key: String, @StringRes title: Int, games: List<Game>, onOpenGame: (Long) -> Unit) {
@@ -308,7 +329,8 @@ private fun WelcomeCard(onAddFolder: () -> Unit, onExplore: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             StepRow(Icons.Rounded.Explore, Palette.Cyan, stringResource(R.string.home_step_explore_title), stringResource(R.string.home_step_explore_subtitle))
             Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // FlowRow: em telas de 360dp (ou com fonte grande) os dois botões não cabem lado a lado.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientButton(stringResource(R.string.common_link_folder), onAddFolder, icon = Icons.Rounded.CreateNewFolder)
                 GhostButton(stringResource(R.string.common_explore), onExplore, icon = Icons.Rounded.Explore)
             }
@@ -383,7 +405,19 @@ fun formatPlayTime(seconds: Long): String {
 
 @Composable
 private fun greeting(returning: Boolean): Pair<String, String> {
-    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    // A tela de início fica aberta por horas (o app volta do segundo plano nela): a hora é relida a cada
+    // retorno ao primeiro plano e na virada de cada hora, para o "bom dia" não continuar à noite.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val hour by produceState(currentHour(), lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                value = currentHour()
+                val now = Calendar.getInstance()
+                val msToNextHour = (60 - now.get(Calendar.MINUTE)) * 60_000L - now.get(Calendar.SECOND) * 1_000L
+                delay(msToNextHour.coerceAtLeast(1_000L) + 1_000L)
+            }
+        }
+    }
     val base = when (hour) {
         in 5..11 -> R.string.home_greeting_morning
         in 12..17 -> R.string.home_greeting_afternoon
@@ -391,3 +425,5 @@ private fun greeting(returning: Boolean): Pair<String, String> {
     }
     return stringResource(base) to stringResource(if (returning) R.string.home_question_returning else R.string.home_question_new)
 }
+
+private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)

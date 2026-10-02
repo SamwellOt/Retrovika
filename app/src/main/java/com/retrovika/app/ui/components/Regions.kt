@@ -20,6 +20,12 @@ private fun regionRes(stored: String): Int? = when (stored.trim().lowercase()) {
     "coreia", "korea" -> R.string.region_korea
     "china" -> R.string.region_china
     "austrália", "australia" -> R.string.region_australia
+    // Antes gravadas em inglês: as entradas antigas do banco continuam traduzidas.
+    "ásia", "asia" -> R.string.region_asia
+    "frança", "france" -> R.string.region_france
+    "alemanha", "germany" -> R.string.region_germany
+    "espanha", "spain" -> R.string.region_spain
+    "itália", "italy" -> R.string.region_italy
     else -> null
 }
 

@@ -3,11 +3,18 @@ package com.retrovika.app.ui.screens.details
 import com.retrovika.app.ui.components.regionLabel
 import androidx.compose.ui.res.stringResource
 import com.retrovika.app.R
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.Role
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retrovika.app.core.settings.localized
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +63,11 @@ import com.retrovika.app.container
 import com.retrovika.app.core.dat.DatRepository
 import com.retrovika.app.core.library.GameSource
 import com.retrovika.app.core.library.Game
+import com.retrovika.app.core.systems.GameSystem
+import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.core.tuning.Tuning
+import com.retrovika.app.ui.components.tuneSourceText
+import androidx.compose.material.icons.rounded.Speed
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
@@ -101,16 +113,25 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
+/**
+ * Identificação pelo DAT de um jogo: roda no escopo do app e o resultado fica num ViewModel. Num
+ * `remember` com o escopo da tela, girar a tela cancelava a busca (o hash de uma ROM grande demora) e
+ * esquecia o resultado.
+ */
+class DetailsIdentify : ViewModel() {
+    var running by mutableStateOf(false)
+    var result by mutableStateOf<DatRepository.Identification?>(null)
+    var error by mutableStateOf<String?>(null)
+}
+
 @Composable
 fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit, onOpenVersions: (String) -> Unit) {
     val context = LocalContext.current
     val app = context.container
     val scope = rememberCoroutineScope()
     val game by remember(gameId) { app.library.observe(gameId) }.collectAsStateWithLifecycle(null)
-    var confirmDelete by remember { mutableStateOf(false) }
-    var identifying by remember(gameId) { mutableStateOf(false) }
-    var identification by remember(gameId) { mutableStateOf<DatRepository.Identification?>(null) }
-    var identifyError by remember(gameId) { mutableStateOf<String?>(null) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    val identify: DetailsIdentify = viewModel(key = "identify-$gameId") { DetailsIdentify() }
     // O jogo sumiu com a tela aberta (pasta desvinculada, removido numa varredura): volta em vez de
     // deixar uma tela vazia sem botão de voltar.
     var loaded by remember(gameId) { mutableStateOf(false) }
@@ -134,7 +155,9 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 HeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onBack)
                 Spacer(Modifier.weight(1f))
                 HeaderIconButton(
-                    if (g.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, stringResource(R.string.common_favorite),
+                    if (g.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    // O leitor de tela diz o que o toque faz agora, não só "Favorito" nos dois estados.
+                    stringResource(if (g.favorite) R.string.details_favorite_remove else R.string.details_favorite_add),
                     onClick = { scope.launch { app.library.toggleFavorite(g.id) } },
                     tint = if (g.favorite) Palette.Neon else Palette.TextPrimary,
                 )
@@ -159,7 +182,7 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                         Text(
                             stringResource(R.string.details_open_system, it.shortName),
                             style = MaterialTheme.typography.labelLarge, color = it.readableAccent(),
-                            modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).clickable { onOpenSystem(it.id) }.padding(vertical = 4.dp),
+                            modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { onOpenSystem(it.id) }.padding(vertical = 4.dp),
                         )
                     }
                 }
@@ -181,7 +204,10 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
             Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 g.region?.let { Pill(regionLabel(it), icon = Icons.Rounded.Public) }
                 Pill(g.size.formatBytes(), icon = Icons.Rounded.Storage)
-                Pill(g.fileName.substringAfterLast('.').uppercase(), icon = Icons.AutoMirrored.Rounded.InsertDriveFile)
+                // Arquivo sem extensão: sem o filtro, a pílula mostrava o nome inteiro.
+                g.fileName.substringAfterLast('.', "").takeIf { it.isNotBlank() }?.let {
+                    Pill(it.uppercase(), icon = Icons.AutoMirrored.Rounded.InsertDriveFile)
+                }
                 if (g.playTimeSeconds >= 60) Pill(formatPlayTime(g.playTimeSeconds), icon = Icons.Rounded.Schedule, color = Palette.Sun)
                 Pill(
                     icon = Icons.Rounded.Folder,
@@ -221,6 +247,8 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 }
             }
 
+            if (system != null) GameTuning(g, system)
+
             LibraryVersions(g, onOpenGame = onOpenGame, onOpenAll = { onOpenVersions(g.systemId) })
 
             if (app.dat.supports(g.systemId)) {
@@ -234,12 +262,12 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 )
                 Spacer(Modifier.height(10.dp))
                 when {
-                    identifying -> Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    identify.running -> Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(stringResource(R.string.details_identifying), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
                     }
-                    else -> when (val id = identification) {
+                    else -> when (val id = identify.result) {
                         is DatRepository.Identification.Found -> {
                             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Palette.Success)
@@ -279,28 +307,35 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                                 icon = Icons.Rounded.Verified,
                                 tint = Palette.Cyan,
                                 onClick = {
-                                    scope.launch {
-                                        identifying = true
-                                        identifyError = null
+                                    identify.running = true
+                                    identify.error = null
+                                    // Contexto localizado da aplicação, pego fora da corrotina: capturar a Activity a
+                                    // manteria viva (rotação) até o hash terminar.
+                                    val res = context.localized()
+                                    val game = g
+                                    // No escopo do app: girar a tela ou sair da página não interrompe a identificação.
+                                    app.scope.launch(Dispatchers.Main) {
                                         // Sem internet na primeira vez (o DAT é baixado), o motivo aparece abaixo do botão.
                                         val result = try {
-                                            app.dat.identify(g)
+                                            app.dat.identify(game)
                                         } catch (c: CancellationException) {
                                             throw c
                                         } catch (t: Throwable) {
-                                            identifyError = t.userMessage(context)
+                                            identify.error = t.userMessage(res)
                                             null
+                                        } finally {
+                                            identify.running = false
                                         }
-                                        identifying = false
-                                        identification = result
+                                        identify.result = result
                                         if (result is DatRepository.Identification.Found) {
-                                            app.library.setIdentified(g.id, result.match.name, result.match.region)
+                                            // O escopo do app não tem tratador: uma falha do banco aqui derrubaria o processo.
+                                            runCatching { app.library.setIdentified(game.id, result.match.name, result.match.region) }
                                         }
                                     }
                                 },
                                 modifier = Modifier.padding(horizontal = 20.dp),
                             )
-                            identifyError?.let {
+                            identify.error?.let {
                                 Text(
                                     it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
@@ -326,7 +361,12 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    scope.launch { app.library.delete(g, deleteFile = !g.isContentUri); onBack() }
+                    val failedText = context.localized().getString(R.string.details_remove_failed, g.title)
+                    scope.launch {
+                        // Falso: o arquivo da ROM não pôde ser apagado e o jogo continua na biblioteca; a tela fica.
+                        if (app.library.delete(g, deleteFile = !g.isContentUri)) onBack()
+                        else Toast.makeText(context, failedText, Toast.LENGTH_LONG).show()
+                    }
                 }) { Text(stringResource(R.string.common_remove), color = Palette.Coral) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } },
@@ -422,5 +462,43 @@ private fun CoreNotice(core: CoreInfo) {
         } else {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Palette.Sun)
         }
+    }
+}
+
+/**
+ * Nível de qualidade que vale para o jogo neste aparelho e de onde ele veio. "Otimizar" mede só este jogo
+ * (uma cena pesada de um jogo não deve baixar a qualidade dos outros); "Seguir o console" apaga o ajuste dele.
+ */
+@Composable
+private fun GameTuning(game: Game, system: GameSystem) {
+    val context = LocalContext.current
+    val app = context.container
+    val scope = rememberCoroutineScope()
+    val coreId by remember(system.id) { app.settings.effectiveCoreFor(system.id) }.collectAsStateWithLifecycle(null)
+    val core = system.core(game.coreOverride ?: coreId)
+    if (core.presets.size < 2) return
+    val device by produceState<DeviceProfile?>(null) { value = app.deviceProfile.await() }
+    val choice by remember(system.id) { app.settings.presetChoice(system.id) }.collectAsStateWithLifecycle(null)
+    val own by remember(game.id) { app.settings.gameTuning(game.id) }.collectAsStateWithLifecycle(null)
+    val console by remember(system.id, core.id) { app.settings.tuning(system.id, core.id) }.collectAsStateWithLifecycle(null)
+    val effective = device?.let { Tuning.effective(core, it, choice, own, console) }
+
+    Spacer(Modifier.height(24.dp))
+    SectionHeader(stringResource(R.string.tune_game_title))
+    Spacer(Modifier.height(4.dp))
+    Text(
+        stringResource(R.string.tune_game_subtitle),
+        style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 20.dp),
+    )
+    effective?.let {
+        Text(
+            tuneSourceText(it), style = MaterialTheme.typography.labelMedium, color = Palette.Cyan,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+    }
+    // FlowRow: em telas de 360dp os dois botões não cabem lado a lado e o segundo era cortado.
+    FlowRow(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        GhostButton(stringResource(R.string.tune_game_optimize), { GameActivity.launch(context, game.id, retune = true) }, icon = Icons.Rounded.Speed)
+        if (own != null) GhostButton(stringResource(R.string.tune_game_reset), { scope.launch { app.settings.setGameTuning(game.id, null) } })
     }
 }

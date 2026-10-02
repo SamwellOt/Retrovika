@@ -67,6 +67,13 @@ import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
 import com.retrovika.app.ui.components.busyWaitText
+import com.retrovika.app.ui.components.ConfirmDialog
+import com.retrovika.app.ui.components.ReadableWidth
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import com.retrovika.app.ui.components.DownloadProgressBar
 import com.retrovika.app.ui.components.EmptyState
 import com.retrovika.app.ui.components.GameCover
@@ -96,6 +103,7 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
     val tasks by manager.tasks.collectAsStateWithLifecycle()
     val settings by app.settings.cached.collectAsStateWithLifecycle()
     var showLinkDialog by rememberSaveable { mutableStateOf(false) }
+    var confirmCancelAll by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("downloads", listState)
 
@@ -108,10 +116,11 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
     val problems = remember(tasks) { tasks.filter { it.status in DownloadManager.RETRYABLE } }
     val speed = active.sumOf { it.speed }
 
+    ReadableWidth { side ->
     LazyColumn(
         Modifier.fillMaxSize().ambientGlow(primary = Palette.Cyan),
         state = listState,
-        contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current),
+        contentPadding = PaddingValues(start = side, end = side, bottom = 32.dp + LocalBottomInset.current),
     ) {
         item(key = "header") {
             ScreenHeader(
@@ -142,7 +151,8 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
 
         section(
             "active", R.string.downloads_section_active, active,
-            action = if (active.size > 1) R.string.downloads_cancel_all else null, onAction = manager::cancelAll,
+            // Cancelar todos perde o que já foi baixado de cada um: pede confirmação.
+            action = if (active.size > 1) R.string.downloads_cancel_all else null, onAction = { confirmCancelAll = true },
         ) { task ->
             DownloadRow(task, onClick = null) {
                 IconButton(onClick = { manager.cancel(task.id) }) { Icon(Icons.Rounded.Close, stringResource(R.string.common_cancel), tint = Palette.TextSecondary) }
@@ -173,6 +183,18 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
                 IconButton(onClick = { manager.remove(task.id) }) { Icon(Icons.Rounded.Close, stringResource(R.string.common_remove), tint = Palette.TextMuted) }
             }
         }
+    }
+    }
+
+    if (confirmCancelAll) {
+        ConfirmDialog(
+            title = stringResource(R.string.downloads_cancel_all_title),
+            message = stringResource(R.string.downloads_cancel_all_message, active.size),
+            confirmLabel = stringResource(R.string.downloads_cancel_all),
+            dismissLabel = stringResource(R.string.downloads_keep),
+            onConfirm = manager::cancelAll,
+            onDismiss = { confirmCancelAll = false },
+        )
     }
 
     if (showLinkDialog) {
@@ -291,9 +313,12 @@ private fun formatDuration(seconds: Long): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LinkDialog(onDismiss: () -> Unit, onConfirm: (String, GameSystem) -> Unit) {
-    var url by remember { mutableStateOf("") }
-    var system by remember { mutableStateOf<GameSystem?>(null) }
+    // Guardados: girar a tela com o diálogo aberto não apaga o link colado nem o console escolhido.
+    var url by rememberSaveable { mutableStateOf("") }
+    var systemId by rememberSaveable { mutableStateOf<String?>(null) }
+    val system = systemId?.let { Systems.byId(it) }
     var expanded by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.downloads_from_link)) },
@@ -303,7 +328,12 @@ private fun LinkDialog(onDismiss: () -> Unit, onConfirm: (String, GameSystem) ->
                     stringResource(R.string.downloads_link_message),
                     style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                 )
-                OutlinedTextField(value = url, onValueChange = { url = it.trim() }, label = { Text(stringResource(R.string.downloads_link_url)) }, singleLine = true)
+                OutlinedTextField(
+                    value = url, onValueChange = { url = it.trim() }, label = { Text(stringResource(R.string.downloads_link_url)) }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
                     OutlinedTextField(
                         value = system?.name ?: "",
@@ -311,11 +341,11 @@ private fun LinkDialog(onDismiss: () -> Unit, onConfirm: (String, GameSystem) ->
                         readOnly = true,
                         label = { Text(stringResource(R.string.downloads_link_console)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                     )
                     ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                         Systems.all.forEach { s ->
-                            DropdownMenuItem(text = { Text(s.name) }, onClick = { system = s; expanded = false })
+                            DropdownMenuItem(text = { Text(s.name) }, onClick = { systemId = s.id; expanded = false })
                         }
                     }
                 }

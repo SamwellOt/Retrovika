@@ -23,7 +23,13 @@
 namespace libretrodroid {
 
 Core::Core(const std::string& soCorePath) {
-    open(soCorePath);
+    try {
+        open(soCorePath);
+    } catch (...) {
+        // Construtor que lança não roda o destrutor: sem isso a biblioteca ficava carregada para sempre.
+        close();
+        throw;
+    }
 }
 
 void* get_symbol(void* handle, const char* symbol) {

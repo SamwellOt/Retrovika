@@ -12,6 +12,6 @@
     <string name="bench_system_overridden">Your choice above wins.</string>
     <string name="bench_system_skipped">Core test skipped: the default is used.</string>
     <string name="bench_again">Test again</string>
-    <string name="settings_auto_benchmark">Test cores automatically</string>
-    <string name="settings_auto_benchmark_subtitle">The first time a console runs, measures its cores on this device and picks the most accurate one that runs smoothly</string>
+    <string name="settings_auto_benchmark">Tune automatically</string>
+    <string name="settings_auto_benchmark_subtitle">The first time a console runs, measures this device: picks the most accurate core and the highest quality level that run smoothly</string>
 </resources>

@@ -98,4 +98,5 @@
     <string name="download_server_busy">The download server is busy right now. Try again in a few minutes.</string>
     <string name="download_archive_password">%s is password-protected and the known password didn\'t work</string>
     <string name="romsfun_only_cia">This game is only available as .cia (a format for installing on a real 3DS), which the 3DS core can\'t run.</string>
+    <string name="download_no_space_download">Not enough free space to download the game (needs %s)</string>
 </resources>

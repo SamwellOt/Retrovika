@@ -22,7 +22,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
+import java.security.SecureRandom
 
 /**
  * Pedidos feitos de dentro de um WebView invisível, para sites cuja CDN pede uma verificação em
@@ -43,8 +43,10 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
     private var view: WebView? = null
     private var origin: String? = null
     private var idle: Job? = null
-    private val pending = ConcurrentHashMap<Int, CompletableDeferred<Pair<Int, String>>>()
-    private val ids = AtomicInteger()
+    private val pending = ConcurrentHashMap<String, CompletableDeferred<Pair<Int, String>>>()
+    private val random = SecureRandom()
+    /** Sobe a cada [release]: diz se o WebView em que um pedido saiu ainda é o atual. */
+    @Volatile private var generation = 0
     private val gap = Mutex()
     private var lastRequest = 0L
 
@@ -60,11 +62,15 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
     /** Cookies do WebView para [url] (inclusive os da verificação), no formato do cabeçalho Cookie. */
     fun cookies(url: String): String? = CookieManager.getInstance().getCookie(url)
 
-    /** Recebe as respostas do `fetch()` da página (chamado numa thread do WebView). */
+    /**
+     * Recebe as respostas do `fetch()` da página (chamado numa thread do WebView). O [token] é aleatório
+     * por pedido: um script da própria página que chame `RetrovikaBridge.done` não acerta um pedido em
+     * andamento (com ids sequenciais, bastava chutar o próximo número).
+     */
     private inner class Bridge {
         @JavascriptInterface
-        fun done(id: Int, status: Int, body: String) {
-            pending.remove(id)?.complete(status to body)
+        fun done(token: String, status: Int, body: String) {
+            pending.remove(token)?.complete(status to body)
         }
     }
 
@@ -108,10 +114,18 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
                 if (wait > 0) delay(wait)
                 lastRequest = System.currentTimeMillis()
             }
-            val res = runFetch(origin, url, method, body, contentType, referrer)
+            val (res, gen) = runFetch(origin, url, method, body, contentType, referrer)
+            if (res.status == RELEASED) {
+                // Outro pedido viu a verificação (ou trocou de site) e fechou a página com este no meio: não
+                // é falha deste, refaz uma vez na página nova.
+                if (attempt == 0) return@repeat
+                return Response(-1, "")
+            }
             if (!(res.status in CHALLENGE_STATUS && isChallengePage(res.body))) return res
-            // A verificação expirou ou voltou por excesso de pedidos: abre o site de novo.
-            withContext(Dispatchers.Main) { lock.withLock { if (view != null) release() } }
+            // A verificação expirou ou voltou por excesso de pedidos: abre o site de novo. Só se a página
+            // ainda é a deste pedido: vários pedidos paralelos veem o mesmo desafio, e o segundo derrubaria a
+            // página que o primeiro acabou de reabrir.
+            withContext(Dispatchers.Main) { lock.withLock { if (view != null && generation == gen) release() } }
             if (attempt == 0) delay(CHALLENGE_RETRY_MS)
         }
         throw HttpStatusException(403, url)
@@ -131,8 +145,11 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         }
     }
 
-    private suspend fun runFetch(origin: String, url: String, method: String, body: String?, contentType: String?, referrer: String?): Response {
-        val id = ids.incrementAndGet()
+    /** O fetch e a geração do WebView em que ele saiu. */
+    private suspend fun runFetch(origin: String, url: String, method: String, body: String?, contentType: String?, referrer: String?): Pair<Response, Int> {
+        val id = ByteArray(16).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        val quoted = JsonPrimitive(id).toString()
+        var gen = 0
         val answer = CompletableDeferred<Pair<Int, String>>()
         val options = buildList {
             add("credentials: 'include'")
@@ -142,14 +159,15 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             if (referrer != null) { add("referrer: ${JsonPrimitive(referrer)}"); add("referrerPolicy: 'unsafe-url'") }
         }.joinToString(", ")
         val script = "fetch(${JsonPrimitive(url)}, {$options})" +
-            ".then(r => r.text().then(t => RetrovikaBridge.done($id, r.status, t)))" +
-            ".catch(e => RetrovikaBridge.done($id, -1, String(e)))"
+            ".then(r => r.text().then(t => RetrovikaBridge.done($quoted, r.status, t)))" +
+            ".catch(e => RetrovikaBridge.done($quoted, -1, String(e)))"
         val result = try {
             // Registrado e disparado sem soltar a trava: um release() no meio destruiria a página antes do
             // fetch e o pedido só acabaria no prazo, sem resposta.
             lock.withLock {
                 withContext(Dispatchers.Main) {
                     val page = ready(origin)
+                    gen = generation
                     pending[id] = answer
                     page.evaluateJavascript(script, null)
                 }
@@ -163,7 +181,7 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
             main.launch { scheduleRelease() }
         }
         val (status, text) = result ?: throw java.net.SocketTimeoutException(url)
-        return Response(status, text)
+        return Response(status, text) to gen
     }
 
     /** O WebView na página de [origin], já depois da verificação. */
@@ -235,7 +253,9 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         view?.let { it.stopLoading(); it.destroy() }
         view = null
         origin = null
-        pending.values.forEach { it.complete(-1 to "") }
+        generation++
+        // Os pedidos em andamento acabam como RELEASED, e request() os refaz uma vez.
+        pending.values.forEach { it.complete(RELEASED to "") }
         pending.clear()
     }
 
@@ -245,6 +265,8 @@ class WebFetcher(private val context: Context, private val minGapMs: Long = 0) {
         private const val IDLE_MS = 3 * 60_000L
         private const val POLL_MS = 250L
         private const val CHALLENGE_RETRY_MS = 2_000L
+        /** Status interno de um pedido cuja página foi fechada por [release] antes da resposta. */
+        private const val RELEASED = -2
         /** Status com que a página de verificação volta no meio da sessão. */
         private val CHALLENGE_STATUS = setOf(403, 429, 503)
 

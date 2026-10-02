@@ -18,20 +18,20 @@
 #ifndef LIBRETRODROID_UTILS_H
 #define LIBRETRODROID_UTILS_H
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 namespace libretrodroid {
 
 class Utils {
 public:
-    struct ReadResult {
-        size_t size;
-        char* data;
-    };
+    /** Conteúdo inteiro do arquivo. Lança std::runtime_error se não der para abrir ou ler. */
+    static std::vector<int8_t> readFileAsBytes(const std::string &filePath);
+    /** Idem a partir de um descritor, que continua aberto e de quem chamou. */
+    static std::vector<int8_t> readFileAsBytes(int fileDescriptor);
 
-    static ReadResult readFileAsBytes(const std::string &filePath);
-    static ReadResult readFileAsBytes(const int fileDescriptor);
-
-    static const char* cloneToCString(const std::string &input);
-
+    /** Tamanho do arquivo aberto (volta ao início); 0 quando não dá para saber. */
     static size_t getFileSize(FILE* file);
 };
 

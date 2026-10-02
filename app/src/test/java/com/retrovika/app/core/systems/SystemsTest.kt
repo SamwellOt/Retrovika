@@ -35,11 +35,22 @@ class SystemsTest {
 
     @Test
     fun `extensoes genericas so identificam o console dentro da pasta`() {
-        listOf("bat", "com", "conf", "o", "app", "img", "hex", "png").forEach { ext ->
+        listOf(
+            "bat", "com", "conf", "o", "app", "img", "hex", "png",
+            "md", "wad", "rom", "crt", "prg", "int", "sv", "vb", "col", "abs", "cof",
+        ).forEach { ext ->
             assertNull(".$ext", Systems.byUniqueExtension(ext))
         }
         assertEquals("arduboy", RomNaming.resolveSystem("jogo.hex", listOf("Arduboy"))?.id)
         assertEquals("psx", RomNaming.resolveSystem("jogo.img", listOf("roms", "psx"))?.id)
+    }
+
+    @Test
+    fun `acervos de capas por extensao usam extensoes do proprio console`() {
+        Systems.all.forEach { s ->
+            assertTrue(s.id, s.extensions.containsAll(s.libretroDbByExtension.keys))
+            assertTrue(s.id, s.libretroDbByExtension.isEmpty() || s.libretroDbName != null)
+        }
     }
 
     @Test

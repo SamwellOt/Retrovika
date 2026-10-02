@@ -98,4 +98,5 @@
     <string name="download_server_busy">O servidor de download está ocupado agora. Tente de novo em alguns minutos.</string>
     <string name="download_archive_password">%s tem senha e a senha conhecida não funcionou</string>
     <string name="romsfun_only_cia">Este jogo só existe em .cia (formato para instalar num 3DS de verdade), que o núcleo de 3DS não roda.</string>
+    <string name="download_no_space_download">Espaço livre insuficiente para baixar o jogo (precisa de %s)</string>
 </resources>

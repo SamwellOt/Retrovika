@@ -21,13 +21,18 @@ object RomNaming {
     fun region(rawName: String): String? = regionRegex.find(rawName)?.groupValues?.get(1)?.let {
         when (it.lowercase()) {
             "usa" -> "EUA"; "europe" -> "Europa"; "japan" -> "Japão"; "world" -> "Mundo"
-            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; "australia" -> "Austrália"; else -> it
+            "brazil" -> "Brasil"; "korea" -> "Coreia"; "china" -> "China"; "australia" -> "Austrália"
+            "asia" -> "Ásia"; "france" -> "França"; "germany" -> "Alemanha"; "spain" -> "Espanha"; "italy" -> "Itália"
+            else -> it
         }
     }
 
-    /** Capa automática do repositório libretro-thumbnails (nomes No-Intro/Redump). */
-    fun coverUrl(system: GameSystem, rawName: String): String? {
-        val db = system.libretroDbName ?: return null
+    /**
+     * Capa automática do repositório libretro-thumbnails (nomes No-Intro/Redump). [ext] escolhe o acervo
+     * quando o console divide dois modelos ([GameSystem.libretroDbByExtension]).
+     */
+    fun coverUrl(system: GameSystem, rawName: String, ext: String? = null): String? {
+        val db = system.libretroDbFor(ext) ?: return null
         val sanitized = rawName.replace(unsafeFileChars, "_")
         return "https://thumbnails.libretro.com/${Uri.encode(db)}/Named_Boxarts/${Uri.encode(sanitized)}.png"
     }
@@ -39,16 +44,21 @@ object RomNaming {
             mapOf(
                 "famicom" to "nes", "fc" to "nes", "sfc" to "snes", "superfamicom" to "snes", "supernintendo" to "snes",
                 "nintendo64" to "n64", "gameboy" to "gb", "gameboycolor" to "gbc", "gameboyadvance" to "gba",
-                "ds" to "nds", "nintendods" to "nds", "3ds" to "3ds", "gamecube" to "gc", "ngc" to "gc",
+                "nintendoentertainmentsystem" to "nes", "supernintendoentertainmentsystem" to "snes",
+                "ds" to "nds", "nintendods" to "nds", "3ds" to "3ds", "n3ds" to "3ds", "nintendo3ds" to "3ds",
+                "gamecube" to "gc", "ngc" to "gc",
                 "ps1" to "psx", "playstation" to "psx", "playstation1" to "psx", "psone" to "psx",
                 "playstation2" to "ps2", "playstationportable" to "psp",
-                "megadrive" to "genesis", "md" to "genesis", "genesis" to "genesis",
+                "megadrive" to "genesis", "md" to "genesis", "genesis" to "genesis", "segagenesis" to "genesis",
+                "megadrivegenesis" to "genesis", "segamegadrive" to "genesis",
                 "segacd" to "segacd", "megacd" to "segacd", "sega32x" to "32x", "mastersystem" to "sms",
                 "gamegear" to "gg", "saturn" to "saturn", "segasaturn" to "saturn", "dc" to "dreamcast",
                 "mame" to "arcade", "fbneo" to "arcade", "fba" to "arcade", "neogeo" to "arcade", "cps1" to "arcade",
                 "cps2" to "arcade", "cps3" to "arcade", "pcengine" to "pce", "tg16" to "pce", "turbografx16" to "pce",
+                "pcenginecd" to "pce", "pcecd" to "pce", "tgcd" to "pce", "turbografxcd" to "pce",
                 "atari" to "atari2600", "a2600" to "atari2600", "a7800" to "atari7800", "atarilynx" to "lynx",
-                "neogeopocket" to "ngp", "ngpc" to "ngp", "wonderswan" to "wswan", "virtualboy" to "vb",
+                "neogeopocket" to "ngp", "neogeopocketcolor" to "ngp", "ngpc" to "ngp",
+                "wonderswan" to "wswan", "wonderswancolor" to "wswan", "wsc" to "wswan", "virtualboy" to "vb",
                 "colecovision" to "coleco", "pokemonmini" to "pokemini",
                 "sg1000" to "sg1000", "sc3000" to "sg1000", "segasg1000" to "sg1000",
                 "atari5200" to "a5200", "a5200" to "a5200", "5200" to "a5200",
@@ -81,6 +91,11 @@ object RomNaming {
     /**
      * Resolve o sistema de um arquivo: primeiro pela pasta (mais confiável), depois
      * pela extensão quando ela é exclusiva de um único console.
+     *
+     * Uma pasta de console com um arquivo que ele não abre ainda cai na extensão exclusiva de outro: quem
+     * guarda .gb e .gbc juntos numa pasta "gameboy" (ou tudo numa pasta só) continua vendo os dois. O que
+     * protege contra arquivos soltos (README.md, .wad do Doom, certificados .crt) é
+     * [GameSystem.folderOnlyExtensions], que só vale dentro da pasta do próprio console.
      */
     fun resolveSystem(fileName: String, parentFolders: List<String>): GameSystem? {
         val ext = fileName.substringAfterLast('.', "").lowercase()
@@ -105,13 +120,31 @@ object RomNaming {
         // .zip/.7z não dizem nada: quase todo site compacta as ROMs (e .zip só "pertence" ao Arcade no catálogo).
         if (ext !in ARCHIVE_EXTENSIONS) Systems.byUniqueExtension(ext)?.let { return it }
         hints.forEach { hint ->
-            val words = hint.lowercase().split(Regex("""[^a-z0-9]+""")).filter { it.isNotEmpty() }
-            for (size in 3 downTo 1) {
-                words.windowed(size).forEach { gram -> systemForFolder(gram.joinToString(""))?.let { return it } }
+            val lower = hint.lowercase()
+            val words = lower.split(wordSeparator).filter { it.isNotEmpty() }
+            // Até quatro palavras: "super nintendo entertainment system" tem de achar o SNES antes de as três
+            // últimas acharem o NES.
+            for (size in 4 downTo 1) {
+                words.windowed(size).forEach { gram ->
+                    val key = gram.joinToString("")
+                    val system = systemForFolder(key) ?: return@forEach
+                    // Apelidos curtos ("ds", "md", "fc", "gg", "pm", o "o" do O²) aparecem por acaso em qualquer
+                    // texto ("FC Barcelona", "10 pm", o artigo "o"): só valem sozinhos num trecho da URL ("/ds/")
+                    // ou entre parênteses/colchetes ("(DS)"). Os de uma letra nunca.
+                    if (key.length <= SHORT_ALIAS && (key.length < 2 || size != 1 || !standalone(lower, key))) return@forEach
+                    return system
+                }
             }
         }
         return null
     }
+
+    private val wordSeparator = Regex("""[^a-z0-9]+""")
+    private const val SHORT_ALIAS = 2
+
+    /** [key] ocupa sozinho um trecho de caminho ou um par de parênteses/colchetes em [text]. */
+    private fun standalone(text: String, key: String): Boolean =
+        Regex("""(^|[/(\[])\s*$key\s*($|[/)\]?#])""").containsMatchIn(text)
 
     /**
      * Arquivos que fazem parte de outro jogo (faixas de um .cue, discos listados em um .m3u).

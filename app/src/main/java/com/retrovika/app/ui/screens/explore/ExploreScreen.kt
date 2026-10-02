@@ -76,7 +76,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import com.retrovika.app.R
 import com.retrovika.app.container
 import com.retrovika.app.core.catalog.CatalogEntry
@@ -128,15 +131,24 @@ private val Gutter = 16.dp
 fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
-    val vm: ExploreViewModel = viewModel { ExploreViewModel(context.container) }
+    // SavedStateHandle: termo e filtros voltam depois que o sistema encerra o processo em segundo plano.
+    val vm: ExploreViewModel = viewModel { ExploreViewModel(context.container, createSavedStateHandle()) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val downloads by vm.downloads.collectAsStateWithLifecycle()
+    // O estado da lista de downloads é lido só dentro do derivedStateOf abaixo e de cada cartão: a lista muda a
+    // cada aviso de progresso, e lê-la aqui recompunha a grade inteira várias vezes por segundo.
+    val downloads = vm.downloads.collectAsStateWithLifecycle()
     val prompt by vm.prompt.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     ScrollToTopOnReselect("explore", gridState)
     // Um mapa por lista de downloads, não uma busca por card: títulos se repetem entre consoles e
-    // fontes, e a lista muda a cada aviso de progresso. A lista vem do mais novo para o mais antigo.
-    val downloadsByEntry = remember(downloads) { downloads.asReversed().filter { it.entryKey != null }.associateBy { it.entryKey } }
+    // fontes. A lista vem do mais novo para o mais antigo.
+    val downloadsByEntry = remember {
+        derivedStateOf { downloads.value.asReversed().filter { it.entryKey != null }.associateBy { it.entryKey } }
+    }
+    // O texto do campo fica na tela: vindo do StateFlow do ViewModel, ele chegava um quadro atrasado e
+    // a digitação rápida perdia letras ou pulava o cursor. O ViewModel recebe cada mudança.
+    var query by rememberSaveable { mutableStateOf(state.query) }
+    val clearFilters = { query = ""; vm.clearFilters() }
     val current = vm.sources.first { it.id == state.sourceId }
     val isHomebrew = state.sourceId == "homebrewhub"
     val filtersActive = state.query.isNotBlank() || state.genre != null ||
@@ -177,7 +189,7 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                     HeaderIconButton(Icons.Rounded.Language, stringResource(R.string.explore_open_site), onClick = onOpenBrowser)
                 }
                 Spacer(Modifier.height(16.dp))
-                SearchField(state.query, onChange = vm::setQuery, placeholder = stringResource(R.string.explore_search_hint), onSearch = { focus.clearFocus() })
+                SearchField(query, onChange = { query = it; vm.setQuery(it) }, placeholder = stringResource(R.string.explore_search_hint), onSearch = { focus.clearFocus() })
 
                 if (vm.sources.size > 1) {
                     FilterSection(stringResource(R.string.explore_filter_source)) {
@@ -216,16 +228,16 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                     val infoLabel = stringResource(R.string.explore_info_toggle)
                     Box(
                         Modifier
-                            .size(36.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .clickable(onClickLabel = infoLabel) { showInfo = !showInfo }
+                            .clickable(onClickLabel = infoLabel, role = Role.Button) { showInfo = !showInfo }
                             .semantics { contentDescription = infoLabel },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Icons.Rounded.Info, null, tint = if (showInfo) Palette.Cyan else Palette.TextMuted, modifier = Modifier.size(18.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    if (filtersActive) ClearFiltersButton(vm::clearFilters)
+                    if (filtersActive) ClearFiltersButton(clearFilters)
                 }
                 AnimatedVisibility(visible = showInfo, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)) {
@@ -264,18 +276,23 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
                 val message = if (state.query.isBlank()) stringResource(R.string.explore_empty_filtered)
                 else stringResource(R.string.explore_empty_message, state.query)
                 EmptyState(stringResource(R.string.explore_empty_title), message, icon = Icons.Rounded.SearchOff) {
-                    if (filtersActive) GhostButton(stringResource(R.string.explore_clear_filters), vm::clearFilters, icon = Icons.Rounded.FilterAltOff)
+                    if (filtersActive) GhostButton(stringResource(R.string.explore_clear_filters), clearFilters, icon = Icons.Rounded.FilterAltOff)
                 }
             }
         }
 
         // downloadKey: o mesmo cartão continua com a mesma chave quando uma fonte preferida chega depois e
         // vira a entrada principal (sourceId + id mudaria, e a grade trataria como outro cartão).
+        val allSources = state.sourceId == ALL_SOURCES
         items(state.entries, key = { it.downloadKey }, contentType = { "entry" }) { entry ->
-            val task = downloadsByEntry[entry.downloadKey]
+            // Só o cartão do jogo que está baixando recompõe a cada aviso de progresso: o derivedStateOf
+            // avisa quando a tarefa *deste* cartão muda, não a cada mudança da lista inteira.
+            val task by remember(entry.downloadKey) { derivedStateOf { downloadsByEntry.value[entry.downloadKey] } }
+            // A mesma lista entre recomposições: com uma lista nova a cada vez o cartão nunca era pulado.
+            val sources = remember(entry, allSources) { if (allSources) vm.sourceLabels(entry) else emptyList() }
             CatalogCard(
                 entry, task,
-                sourceLabels = if (state.sourceId == ALL_SOURCES) vm.sourceLabels(entry).map { it.label() } else emptyList(),
+                sourceLabels = sources,
                 onOpen = { onOpenGame(context.container.catalog.open(entry)) },
                 onDownload = { vm.requestDownload(entry) },
                 onPlay = { task?.gameId?.let { GameActivity.launch(context, it) } },
@@ -312,9 +329,10 @@ fun ExploreScreen(onOpenBrowser: () -> Unit, onOpenGame: (String) -> Unit) {
 /** Grupo de filtros: rótulo em caixa alta e uma faixa de chips que corre até a borda da tela. */
 @Composable
 private fun FilterSection(label: String, chips: @Composable () -> Unit) {
-    Spacer(Modifier.height(16.dp))
+    // Os chips reservam 48dp de alvo de toque (6dp acima e abaixo do desenho): os espaços aqui descontam isso.
+    Spacer(Modifier.height(10.dp))
     FilterLabel(label)
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(2.dp))
     ChipStrip(Modifier.bleed(Gutter), contentPadding = PaddingValues(horizontal = Gutter)) { chips() }
 }
 
@@ -322,8 +340,9 @@ private fun FilterSection(label: String, chips: @Composable () -> Unit) {
 private fun ClearFiltersButton(onClick: () -> Unit) {
     Row(
         Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(50))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -370,7 +389,7 @@ internal val Genre.accent: Color
 private val CardShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: List<String>, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
+private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: List<SourceInfo>, onOpen: () -> Unit, onDownload: () -> Unit, onPlay: () -> Unit) {
     val system = Systems.byId(entry.systemId)
     val genre = remember(entry.tags) { Genre.of(entry.tags).firstOrNull() }
     val source = remember { MutableInteractionSource() }
@@ -381,7 +400,7 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: 
             .clip(CardShape)
             .background(Palette.SurfaceHigh)
             .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), CardShape)
-            .clickable(source, null, onClickLabel = stringResource(R.string.explore_open_game), onClick = onOpen),
+            .clickable(source, null, onClickLabel = stringResource(R.string.explore_open_game), role = Role.Button, onClick = onOpen),
     ) {
         Box {
             GameCover(
@@ -391,7 +410,7 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: 
             // Um jogo mesclado de várias fontes mostra uma etiqueta por fonte, empilhadas.
             if (sourceLabels.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    sourceLabels.forEach { CoverTag(it, Palette.TextPrimary) }
+                    sourceLabels.forEach { CoverTag(it.label(), Palette.TextPrimary) }
                 }
             }
             genre?.let { g ->

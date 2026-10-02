@@ -177,7 +177,8 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
         }
     }
 
-    private fun apkFile(release: AppRelease) = File(dir, "Retrovika-${release.version}.apk")
+    /** O tag vem da API do GitHub: só [0-9A-Za-z._-] entra no nome, para um "../" nunca sair de [dir]. */
+    private fun apkFile(release: AppRelease) = File(dir, "Retrovika-${safeVersion(release.version)}.apk")
 
     /** O APK precisa ser deste app e ter a mesma assinatura, senão o Android recusa a instalação. */
     private fun verify(apk: File) {
@@ -237,6 +238,10 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
     companion object {
         const val RELEASES_URL = "https://github.com/SamwellOt/Retrovika/releases"
         private const val LATEST_URL = "https://api.github.com/repos/SamwellOt/Retrovika/releases/latest"
+
+        /** Versão própria para nome de arquivo: troca o que não for [0-9A-Za-z._-] por "_", sem ".." e com tamanho limitado. */
+        internal fun safeVersion(version: String): String =
+            version.replace(Regex("[^0-9A-Za-z._-]"), "_").replace("..", "_").take(40).ifBlank { "update" }
 
         /** Lê a resposta de `releases/latest`; nulo se não há APK anexado. */
         internal fun parseRelease(json: String): AppRelease? {

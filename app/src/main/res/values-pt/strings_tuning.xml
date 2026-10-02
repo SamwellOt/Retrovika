@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ajuste automático da qualidade pelo aparelho: teste, origem do nível e vigia de velocidade. -->
+<resources>
+    <string name="tune_kicker_game">Otimizando este jogo</string>
+    <string name="tune_title">Ajustando a qualidade para este aparelho</string>
+    <string name="tune_message">Este jogo roda em cada nível de qualidade por alguns segundos, acelerado e sem som. Fica o maior nível que roda com folga no seu aparelho.</string>
+    <string name="tune_message_game">Cada nível de qualidade roda este jogo por alguns segundos, acelerado e sem som. O resultado vale só para este jogo.</string>
+    <string name="tune_chosen">Qualidade %1$s escolhida para este aparelho (%2$d%% da velocidade)</string>
+    <string name="tune_slowdown">Este jogo está abaixo da velocidade total. Da próxima vez ele abre em \"%1$s\".</string>
+    <string name="tune_slowdown_user">Este jogo está abaixo da velocidade total em \"%1$s\". Uma qualidade menor na página do console pode ajudar.</string>
+    <string name="tune_failed">Não deu para medir este jogo: ele não rodou em nenhum nível de qualidade. Continua valendo o ajuste anterior.</string>
+
+    <string name="tune_auto">Automático</string>
+    <string name="tune_source_measured">Automático: %1$s, medido neste aparelho (%2$d%% da velocidade).</string>
+    <string name="tune_source_estimated">Automático: %1$s, estimado para este aparelho. É medido na primeira vez que você jogar.</string>
+    <string name="tune_source_user">Fixado por você: %1$s.</string>
+    <string name="tune_source_game">Ajustado para este jogo: %1$s.</string>
+    <string name="tune_source_game_measured">Ajustado para este jogo: %1$s (%2$d%% da velocidade).</string>
+    <string name="tune_source_game_slowdown">Baixado para %1$s depois que este jogo rodou devagar.</string>
+
+    <string name="tune_game_title">Qualidade neste aparelho</string>
+    <string name="tune_game_subtitle">Mede este jogo em cada nível de qualidade e guarda o melhor só para ele.</string>
+    <string name="tune_game_optimize">Otimizar este jogo</string>
+    <string name="tune_game_reset">Seguir o console</string>
+
+    <string name="tune_device_title">Este aparelho</string>
+    <string name="tune_device_ram">%1$d GB de RAM</string>
+    <string name="tune_device_class">Classe: %1$s</string>
+    <string name="tune_tier_entry">Básico</string>
+    <string name="tune_tier_mid">Intermediário</string>
+    <string name="tune_tier_high">Avançado</string>
+    <string name="tune_tier_top">Topo de linha</string>
+    <string name="tune_reset">Medir de novo</string>
+    <string name="tune_reset_subtitle">Apaga o que foi medido aqui: cada console e jogo é testado de novo na próxima vez que rodar</string>
+</resources>

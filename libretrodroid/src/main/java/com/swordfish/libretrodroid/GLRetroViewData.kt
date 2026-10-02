@@ -38,4 +38,6 @@ class GLRetroViewData(context: Context) {
     var controllerTypes: IntArray = intArrayOf()
     /** Aceita o contexto GLES mesmo abaixo da versão que o núcleo pede no SET_HW_RENDER. */
     var relaxedGlesVersion: Boolean = false
+    /** O núcleo pode pedir um contexto Vulkan; sem isso o pedido é recusado e ele cai para GLES ou software. */
+    var allowVulkan: Boolean = false
 }

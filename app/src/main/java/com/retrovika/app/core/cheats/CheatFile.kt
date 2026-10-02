@@ -19,7 +19,11 @@ data class Cheat(val description: String, val code: String, val enabled: Boolean
 object CheatFile {
     private val line = Regex("""^\s*cheat(\d+)_(desc|code|enable)\s*=\s*"?(.*?)"?\s*$""")
 
-    fun parse(text: String): List<Cheat> {
+    /**
+     * [unnamed] dá o nome de uma entrada sem descrição pelo número dela (1, 2…): o texto vem dos recursos
+     * do app, no idioma do usuário; o padrão serve aos testes.
+     */
+    fun parse(text: String, unnamed: (Int) -> String = { "Cheat $it" }): List<Cheat> {
         val desc = mutableMapOf<Int, String>()
         val code = mutableMapOf<Int, String>()
         val enabled = mutableMapOf<Int, Boolean>()
@@ -36,7 +40,7 @@ object CheatFile {
         // Entradas sem código (títulos de seção em alguns arquivos) não servem ao núcleo.
         return code.keys.sorted().mapNotNull { i ->
             val c = code[i]?.trim().orEmpty()
-            if (c.isEmpty()) null else Cheat(desc[i]?.takeIf { it.isNotBlank() } ?: "Cheat ${i + 1}", c, enabled[i] ?: false)
+            if (c.isEmpty()) null else Cheat(desc[i]?.takeIf { it.isNotBlank() } ?: unnamed(i + 1), c, enabled[i] ?: false)
         }
     }
 

@@ -62,6 +62,13 @@
     <string name="region_korea">Korea</string>
     <string name="region_china">China</string>
     <string name="region_australia">Australia</string>
+    <string name="region_asia">Asia</string>
+    <string name="region_france">France</string>
+    <string name="region_germany">Germany</string>
+    <string name="region_spain">Spain</string>
+    <string name="region_italy">Italy</string>
+    <!-- Trapaça sem descrição no arquivo .cht: o número dela. -->
+    <string name="cheats_unnamed">Cheat %1$d</string>
     <string name="common_error_no_internet">No internet connection (or the server is unreachable)</string>
     <string name="common_error_timeout">The server took too long to respond. Try again.</string>
     <string name="common_error_secure_connection">Couldn\'t establish a secure connection with the server</string>

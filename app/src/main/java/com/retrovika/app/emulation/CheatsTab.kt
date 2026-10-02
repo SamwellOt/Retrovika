@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -119,7 +120,8 @@ internal fun CheatsTab(session: CheatSession) {
                 style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary,
             )
         }
-        items(shown, key = { "${it.custom}:${it.code}:${it.description}" }) { cheat -> CheatRow(cheat, session) }
+        // A posição entra na chave: duas trapaças iguais (arquivo antigo, .cht repetido) não podem derrubar a lista.
+        itemsIndexed(shown, key = { i, c -> "$i:${c.custom}:${c.code}:${c.description}" }) { _, cheat -> CheatRow(cheat, session) }
         item {
             GhostButton(stringResource(R.string.cheats_add_code), { adding = true }, icon = Icons.Rounded.Add, tint = Palette.Cyan)
         }
@@ -159,9 +161,17 @@ private fun FilePicker(session: CheatSession, onDone: () -> Unit) {
         if (query.isBlank()) { results = null; return@LaunchedEffect }
         delay(250)
         failed = false
-        results = runCatching { session.search(query) }.onFailure { failed = true }.getOrDefault(emptyList())
+        results = try {
+            session.search(query)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Digitou de novo (ou a tela fechou): a busca nova toma o lugar, não é falha.
+            throw c
+        } catch (t: Throwable) {
+            failed = true
+            emptyList()
+        }
     }
-    val list = results ?: session.suggestions
+    val list = (results ?: session.suggestions).distinct()
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             Column {

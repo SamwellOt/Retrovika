@@ -124,6 +124,12 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
                     throw e
                 }
                 Zip.extractFirst(zip, tmp) { it.endsWith(".so") } ?: throw LocalizedException(R.string.cores_no_library)
+                // Uma página de erro ou um .so de outra arquitetura só falharia no dlopen, já com o jogo abrindo
+                // e sem dizer por quê: confere o cabeçalho ELF antes de instalar.
+                if (!elfMatches(readHeader(tmp), abi)) {
+                    tmp.delete()
+                    throw LocalizedException(R.string.cores_invalid_library, core.displayName, abi)
+                }
             } finally {
                 // Um .zip que falhou na extração não serve para nada e ocuparia o cache.
                 zip.delete()
@@ -180,5 +186,43 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
     companion object {
         /** As mesmas de `abiFilters` no build.gradle.kts. */
         val SUPPORTED_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+
+        /** Classe ELF (1 = 32 bits, 2 = 64 bits) e e_machine de cada ABI. */
+        private val ELF_TARGETS = mapOf(
+            "arm64-v8a" to (2 to 183),
+            "armeabi-v7a" to (1 to 40),
+            "x86_64" to (2 to 62),
+            "x86" to (1 to 3),
+        )
+
+        private fun readHeader(file: File): ByteArray = runCatching {
+            file.inputStream().use { input ->
+                val b = ByteArray(20)
+                b.copyOf(input.readNBytesCompat(b))
+            }
+        }.getOrDefault(ByteArray(0))
+
+        private fun java.io.InputStream.readNBytesCompat(buf: ByteArray): Int {
+            var total = 0
+            while (total < buf.size) {
+                val n = read(buf, total, buf.size - total)
+                if (n < 0) break
+                total += n
+            }
+            return total
+        }
+
+        /**
+         * [header] (os primeiros 20 bytes) é de uma biblioteca ELF little-endian para [abi]: assinatura
+         * 0x7F 'E' 'L' 'F', a classe (32/64 bits) e a máquina. ABI desconhecida confere só a assinatura.
+         */
+        internal fun elfMatches(header: ByteArray, abi: String): Boolean {
+            if (header.size < 20) return false
+            if (header[0] != 0x7F.toByte() || header[1] != 'E'.code.toByte() || header[2] != 'L'.code.toByte() || header[3] != 'F'.code.toByte()) return false
+            if (header[5] != 1.toByte()) return false
+            val (elfClass, machine) = ELF_TARGETS[abi] ?: return true
+            val eMachine = (header[18].toInt() and 0xFF) or ((header[19].toInt() and 0xFF) shl 8)
+            return header[4].toInt() == elfClass && eMachine == machine
+        }
     }
 }

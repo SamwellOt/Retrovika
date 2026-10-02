@@ -29,6 +29,7 @@
 #include "video.h"
 #include "renderers/es3/framebufferrenderer.h"
 #include "renderers/es3/imagerendereres3.h"
+#include "renderers/es3/vulkanrendereres3.h"
 #include "renderers/es2/imagerendereres2.h"
 
 namespace libretrodroid {
@@ -72,6 +73,7 @@ GLuint createProgram(const char* pVertexSource, const char* pFragmentSource) {
 
     GLuint pixelShader = loadShader(GL_FRAGMENT_SHADER, pFragmentSource);
     if (!pixelShader) {
+        glDeleteShader(vertexShader);
         return 0;
     }
 
@@ -80,6 +82,9 @@ GLuint createProgram(const char* pVertexSource, const char* pFragmentSource) {
         glAttachShader(program, vertexShader);
         glAttachShader(program, pixelShader);
         glLinkProgram(program);
+        // Presos ao programa, os shaders só são liberados junto com ele.
+        glDeleteShader(vertexShader);
+        glDeleteShader(pixelShader);
         GLint linkStatus = GL_FALSE;
         glGetProgramiv(program, GL_LINK_STATUS, &linkStatus);
         if (linkStatus != GL_TRUE) {
@@ -109,7 +114,8 @@ void Video::updateProgram() {
 
     auto shaders = ShaderManager::getShader(requestedShaderConfig);
 
-    shadersChain = {};
+    // Os programas da cadeia anterior vazavam a cada troca de shader.
+    deletePrograms();
 
     std::for_each(shaders.passes.begin(), shaders.passes.end(), [&](const auto& item){
         auto shader = ShaderChainEntry { };
@@ -444,7 +450,8 @@ Video::Video(
     skipDuplicateFrames(skipDuplicateFrames),
     immersiveModeEnabled(immersiveModeEnabled),
     immersiveMode(immersiveModeConfig),
-    videoLayout(bottomLeftOrigin, rotation, viewportRect) {
+    videoLayout(bottomLeftOrigin, rotation, viewportRect),
+    glContext(eglGetCurrentContext()) {
 
     printGLString("Version", GL_VERSION);
     printGLString("Vendor", GL_VENDOR);
@@ -458,7 +465,42 @@ Video::Video(
 
     glUseProgram(0);
 
-    initializeRenderer(renderingOptions);
+    try {
+        initializeRenderer(renderingOptions);
+    } catch (...) {
+        // O destrutor não roda quando o construtor lança.
+        deletePrograms();
+        delete renderer;
+        renderer = nullptr;
+        throw;
+    }
+}
+
+Video::~Video() {
+    // Sem o contexto da criação (destroy() na thread principal, ou um contexto EGL novo) os objetos GL já
+    // morreram com o contexto antigo ou morrem com ele: só a memória do lado da CPU é liberada.
+    if (ownsCurrentContext()) {
+        deletePrograms();
+        if (captureFramebuffer != 0) glDeleteFramebuffers(1, &captureFramebuffer);
+        if (captureTexture != 0) glDeleteTextures(1, &captureTexture);
+    }
+    shadersChain.clear();
+    captureFramebuffer = 0;
+    captureTexture = 0;
+
+    delete renderer;
+    renderer = nullptr;
+}
+
+bool Video::ownsCurrentContext() const {
+    return glContext != EGL_NO_CONTEXT && eglGetCurrentContext() == glContext;
+}
+
+void Video::deletePrograms() {
+    for (auto& shader : shadersChain) {
+        if (shader.gProgram != 0) glDeleteProgram(shader.gProgram);
+    }
+    shadersChain.clear();
 }
 
 void Video::updateShaderType(ShaderManager::Config shaderConfig) {
@@ -469,7 +511,9 @@ void Video::initializeRenderer(RenderingOptions renderingOptions) {
     auto shaders = ShaderManager::getShader(requestedShaderConfig);
     hardwareAccelerated = renderingOptions.hardwareAccelerated;
 
-    if (renderingOptions.hardwareAccelerated) {
+    if (renderingOptions.vulkan) {
+        renderer = new VulkanRendererES3();
+    } else if (renderingOptions.hardwareAccelerated) {
         renderer = new FramebufferRenderer(
             renderingOptions.width,
             renderingOptions.height,

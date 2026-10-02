@@ -19,6 +19,9 @@
 #define LIBRETRODROID_AUDIO_H
 
 #include <array>
+#include <atomic>
+#include <memory>
+#include <mutex>
 #include <unistd.h>
 #include <oboe/Oboe.h>
 #include <oboe/FifoBuffer.h>
@@ -58,7 +61,8 @@ public:
 
 private:
     static int32_t roundToEven(int32_t x);
-    double computeDynamicBufferConversionFactor(double dt);
+    struct Pipeline;
+    double computeDynamicBufferConversionFactor(Pipeline& pipeline, double dt);
     int32_t computeAudioBufferSize();
     bool initializeStream();
     std::unique_ptr<Audio::AudioLatencySettings> findBestLatencySettings(bool preferLowLatencyAudio);
@@ -71,17 +75,29 @@ private:
     const double maxi = 0.02;
 
     LinearResampler resampler;
-    std::unique_ptr<oboe::FifoBuffer> fifoBuffer = nullptr;
-    std::unique_ptr<int16_t[]> temporaryAudioBuffer = nullptr;
 
+    /**
+     * O que a thread de emulação (write) e a do Oboe (onAudioReady) usam juntas. Quando o dispositivo de saída
+     * muda, o onErrorAfterClose monta um conjunto novo e o troca de uma vez (std::atomic_store): quem estava no
+     * meio de um write ou de um callback termina com o antigo, sem lock no caminho do áudio.
+     */
+    struct Pipeline {
+        std::unique_ptr<oboe::FifoBuffer> fifoBuffer;
+        std::unique_ptr<int16_t[]> temporaryAudioBuffer;
+        // Em amostras (int16), não em quadros estéreo.
+        int32_t temporaryAudioBufferSize = 0;
+        std::unique_ptr<oboe::LatencyTuner> latencyTuner;
+        double baseConversionFactor = 1.0;
+    };
+    std::shared_ptr<Pipeline> pipeline;
+
+    // Protege [stream]: start/stop vêm da thread principal e a reabertura vem da thread de erro do Oboe.
+    std::mutex streamLock;
     oboe::ManagedStream stream = nullptr;
-    std::unique_ptr<oboe::LatencyTuner> latencyTuner = nullptr;
 
-    bool startRequested = false;
+    std::atomic<bool> startRequested {false};
     int32_t inputSampleRate;
     double contentRefreshRate = 60.0;
-
-    double baseConversionFactor = 1.0;
 
     double framesToSubmit = 0.0;
     double errorIntegral = 0.0;

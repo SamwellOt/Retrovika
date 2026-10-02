@@ -3,6 +3,7 @@ package com.retrovika.app.core.share
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -12,7 +13,9 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
@@ -42,14 +45,23 @@ object LanTransfer {
     class Server(private val payload: ByteArray, private val token: String) : Closeable {
         private val socket = ServerSocket(0)
         val port: Int get() = socket.localPort
-        @Volatile var served = 0
-            private set
+        private val servedCount = AtomicInteger()
+        val served: Int get() = servedCount.get()
+        private val active = AtomicInteger()
 
         init {
             thread(name = "retrovika-share", isDaemon = true) {
                 while (!socket.isClosed) {
                     val client = runCatching { socket.accept() }.getOrNull() ?: break
-                    thread(isDaemon = true) { serve(client) }
+                    // Poucas conexões ao mesmo tempo: alguém na rede abrindo muitas não esgota as threads.
+                    if (active.incrementAndGet() > MAX_CLIENTS) {
+                        active.decrementAndGet()
+                        runCatching { client.close() }
+                        continue
+                    }
+                    thread(isDaemon = true) {
+                        try { serve(client) } finally { active.decrementAndGet() }
+                    }
                 }
             }
         }
@@ -57,14 +69,14 @@ object LanTransfer {
         private fun serve(client: Socket) = runCatching {
             client.use { c ->
                 c.soTimeout = 10_000
-                val input = DataInputStream(c.getInputStream())
-                val line = input.readUtfLine()
+                // Prazo total para o token: o soTimeout vale por leitura, e um byte a cada 9 s seguraria a thread.
+                val line = c.readLineWithin(TOKEN_TIMEOUT_MS)
                 val out = DataOutputStream(c.getOutputStream().buffered())
                 if (line != token) { out.writeLong(-1); out.flush(); return@use }
                 out.writeLong(payload.size.toLong())
                 out.write(payload)
                 out.flush()
-                served++
+                servedCount.incrementAndGet()
             }
         }
 
@@ -105,15 +117,31 @@ object LanTransfer {
         }
 }
 
-/** Lê uma linha curta (o token) sem o BufferedReader, que leria além dela. */
-internal fun DataInputStream.readUtfLine(max: Int = 256): String {
-    val sb = StringBuilder()
-    while (sb.length < max) {
-        val b = read()
-        if (b < 0 || b == '\n'.code) break
-        sb.append(b.toChar())
+private const val MAX_CLIENTS = 4
+private const val TOKEN_TIMEOUT_MS = 10_000L
+
+/**
+ * Lê uma linha curta (o token) sem o BufferedReader, que leria além dela, com prazo total de [timeoutMs]
+ * (o soTimeout vale por leitura). Restaura o soTimeout anterior.
+ */
+internal fun Socket.readLineWithin(timeoutMs: Long, max: Int = 256): String {
+    val input = getInputStream()
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000
+    val previous = soTimeout
+    val buf = ByteArrayOutputStream()
+    try {
+        while (buf.size() < max) {
+            val left = (deadline - System.nanoTime()) / 1_000_000
+            if (left <= 0) throw SocketTimeoutException("deadline")
+            soTimeout = left.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            val b = input.read()
+            if (b < 0 || b == '\n'.code) break
+            buf.write(b)
+        }
+    } finally {
+        runCatching { soTimeout = previous }
     }
-    return sb.toString().trim()
+    return buf.toByteArray().decodeToString().trim()
 }
 
 /**

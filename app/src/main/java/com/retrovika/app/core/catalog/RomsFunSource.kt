@@ -268,10 +268,15 @@ class RomsFunSource(private val web: WebFetcher) : CatalogSource {
 
     /** Pede o primeiro byte para saber, antes de começar, se o servidor vai entregar o arquivo. */
     private suspend fun probe(link: DirectLink): Probe = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url(link.url)
-            .apply { link.headers.forEach { (k, v) -> header(k, v) } }
-            .header("Range", "bytes=0-0")
-            .build()
+        // O Cookie é do servidor de arquivos: num redirecionamento para outro host ele não vai junto (como no
+        // Http.download, que faz o mesmo no download de verdade).
+        val request = with(Http) {
+            Request.Builder().url(link.url)
+                .apply { link.headers.forEach { (k, v) -> header(k, v) } }
+                .header("Range", "bytes=0-0")
+                .apply { if (link.headers.keys.any { it.equals("Cookie", ignoreCase = true) }) scopeCookies(link.url) }
+                .build()
+        }
         with(Http) { Http.clientFor(link.ipv6).newCall(request).executeCancellable { res ->
             when {
                 res.isSuccessful -> Probe.OK

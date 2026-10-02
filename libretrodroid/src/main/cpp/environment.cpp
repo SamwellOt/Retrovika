@@ -17,6 +17,7 @@
 
 #define MODULE_NAME_CORE "Libretro Core"
 
+#include "vulkan/vulkancontext.h"
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -57,6 +58,7 @@ void Environment::deinitialize() {
     pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
     useHWAcceleration = false;
     hwContextRejected = false;
+    useVulkan = false;
     relaxedGlesVersion = false;
     frameTimeCallback = {};
     useDepth = false;
@@ -72,6 +74,12 @@ void Environment::deinitialize() {
     gameGeometryAspectRatio = -1.0f;
 
     rumbleStates.fill(libretrodroid::RumbleState {});
+
+    // O Environment é global: sem isso as opções e os controles do núcleo anterior chegavam ao próximo
+    // (o GET_VARIABLE respondia chaves que ele nunca declarou).
+    variables.clear();
+    dirtyVariables = false;
+    controllers.clear();
 }
 
 void Environment::updateVariable(const std::string& key, const std::string& value) {
@@ -176,7 +184,49 @@ bool Environment::environment_handle_set_controller_info(const struct retro_cont
     return true;
 }
 
+namespace {
+// Definido antes de o núcleo carregar (o Environment é reiniciado a cada create): vale por view.
+bool allowVulkanFlag = false;
+}
+
+void Environment::setAllowVulkan(bool allow) {
+    allowVulkanFlag = allow;
+}
+
+bool Environment::isUseVulkan() const {
+    return useVulkan;
+}
+
+bool Environment::isHwContextAccepted() const {
+    return useHWAcceleration || useVulkan;
+}
+
+bool Environment::environment_handle_set_hw_render_vulkan(struct retro_hw_render_callback* hw_render_callback) {
+    // A ponte Vulkan > GLES precisa de GLES 3 (buffers de hardware importados como EGLImage, fences do GL)
+    // e de um aparelho que a sustente. Sem isso o pedido é recusado e o núcleo cai para outro renderizador.
+    GLint major = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    if (!allowVulkanFlag || major < 3 || !libretrodroid::VulkanContext::isAvailable()) {
+        LOGE("Vulkan context refused (allowed: %d, GLES %d)", allowVulkanFlag, major);
+        hwContextRejected = true;
+        return false;
+    }
+
+    useVulkan = true;
+    useHWAcceleration = false;
+    useDepth = false;
+    useStencil = false;
+    bottomLeftOrigin = false;
+    hw_context_reset = hw_render_callback->context_reset;
+    hw_context_destroy = hw_render_callback->context_destroy;
+    return true;
+}
+
 bool Environment::environment_handle_set_hw_render(struct retro_hw_render_callback* hw_render_callback) {
+    if (hw_render_callback->context_type == RETRO_HW_CONTEXT_VULKAN) {
+        return environment_handle_set_hw_render_vulkan(hw_render_callback);
+    }
+
     // Only GLES contexts can be provided. Accepting Vulkan or desktop GL makes the core believe
     // it has a context it will never get: returning false lets it fall back to GLES.
     switch (hw_render_callback->context_type) {
@@ -336,6 +386,37 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
         case RETRO_ENVIRONMENT_SET_HW_RENDER:
             LOGD("Called RETRO_ENVIRONMENT_SET_HW_RENDER");
             return environment_handle_set_hw_render(static_cast<struct retro_hw_render_callback*>(data));
+
+        case RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE: {
+            LOGD("Called SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE");
+            auto* negotiation = static_cast<const struct retro_hw_render_context_negotiation_interface*>(data);
+            if (negotiation == nullptr || !allowVulkanFlag ||
+                negotiation->interface_type != RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN) {
+                return false;
+            }
+            libretrodroid::VulkanContext::getInstance().setNegotiation(
+                static_cast<const struct retro_hw_render_context_negotiation_interface_vulkan*>(data)
+            );
+            return true;
+        }
+
+        case RETRO_ENVIRONMENT_GET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_SUPPORT: {
+            LOGD("Called GET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_SUPPORT");
+            auto* support = static_cast<struct retro_hw_render_context_negotiation_interface*>(data);
+            // Versão 0: o tipo não é suportado (a chamada continua sendo atendida, como manda a API).
+            support->interface_version = support->interface_type == RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN && allowVulkanFlag
+                ? RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION : 0;
+            return true;
+        }
+
+        case RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE: {
+            LOGD("Called GET_HW_RENDER_INTERFACE");
+            if (!useVulkan) return false;
+            auto* vulkanInterface = libretrodroid::VulkanContext::getInstance().renderInterface();
+            if (vulkanInterface == nullptr) return false;
+            *static_cast<const struct retro_hw_render_interface**>(data) = reinterpret_cast<const struct retro_hw_render_interface*>(vulkanInterface);
+            return true;
+        }
 
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             // Input::getInputState responde RETRO_DEVICE_ID_JOYPAD_MASK.

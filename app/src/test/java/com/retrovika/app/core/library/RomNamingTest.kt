@@ -21,6 +21,11 @@ class RomNamingTest {
         assertEquals("Brasil", RomNaming.region("Sonic (Brazil)"))
         // Mesma grafia da ordem de regiões do Versions.
         assertEquals("Austrália", RomNaming.region("Game (Australia)"))
+        assertEquals("Ásia", RomNaming.region("Game (Asia)"))
+        assertEquals("França", RomNaming.region("Game (France)"))
+        assertEquals("Alemanha", RomNaming.region("Game (Germany)"))
+        assertEquals("Espanha", RomNaming.region("Game (Spain)"))
+        assertEquals("Itália", RomNaming.region("Game (Italy)"))
         assertNull(RomNaming.region("Homebrew"))
     }
 
@@ -60,6 +65,37 @@ class RomNamingTest {
     }
 
     @Test
+    fun `extensoes genericas de outros programas nao viram jogo fora da pasta do console`() {
+        // Uma pasta vinculada com tudo misturado: README, WAD do Doom, BIOS, certificado, código-fonte.
+        listOf("README.md", "doom2.wad", "MSX.ROM", "cert.crt", "game.prg", "data.int", "top.sv", "Form1.vb", "paleta.col", "a.cof", "b.abs")
+            .forEach { assertNull(it, RomNaming.resolveSystem(it, listOf("Downloads"))) }
+        assertEquals("genesis", RomNaming.resolveSystem("Sonic.md", listOf("Mega Drive"))?.id)
+        assertEquals("wii", RomNaming.resolveSystem("Canal.wad", listOf("roms", "wii"))?.id)
+        assertEquals("msx", RomNaming.resolveSystem("Nemesis.rom", listOf("MSX2"))?.id)
+        assertEquals("c64", RomNaming.resolveSystem("Jogo.crt", listOf("Commodore 64"))?.id)
+        // Pasta de um console com o arquivo exclusivo de outro (GB e GBC juntos) continua achando o certo.
+        assertEquals("gbc", RomNaming.resolveSystem("Jogo.gbc", listOf("gameboy"))?.id)
+    }
+
+    @Test
+    fun `apelidos de pasta com o nome completo ou do modelo Color`() {
+        mapOf(
+            "PC Engine CD" to "pce", "TurboGrafx-CD" to "pce", "TG-CD" to "pce", "N3DS" to "3ds", "Sega Genesis" to "genesis",
+            "Mega Drive - Genesis" to "genesis", "WonderSwan Color" to "wswan", "Neo Geo Pocket Color" to "ngp",
+            "Nintendo Entertainment System" to "nes",
+        ).forEach { (folder, id) -> assertEquals(folder, id, RomNaming.systemForFolder(folder)?.id) }
+    }
+
+    @Test
+    fun `capa do modelo monocromatico vem do acervo dele`() {
+        // O acervo, não a URL: o Uri.encode do Android não roda nos testes da JVM.
+        val ngp = com.retrovika.app.core.systems.Systems.byId("ngp")!!
+        assertEquals("SNK - Neo Geo Pocket", ngp.libretroDbFor("ngp"))
+        assertEquals("SNK - Neo Geo Pocket Color", ngp.libretroDbFor("ngc"))
+        assertEquals("Bandai - WonderSwan", com.retrovika.app.core.systems.Systems.byId("wswan")!!.libretroDbFor("WS"))
+    }
+
+    @Test
     fun `faixa citada por um indice e auxiliar`() {
         val siblings = setOf("jogo.cue", "jogo (track 1).bin", "jogo (track 2).bin")
         assertTrue(RomNaming.isAuxiliaryFile("Jogo (Track 1).bin", siblings, referenced = true, sheetsKnown = true))
@@ -89,5 +125,17 @@ class RomNamingTest {
     fun `palpite do navegador usa pistas da pagina`() {
         assertEquals("gba", RomNaming.guessSystem("jogo.zip", listOf("https://site/game-boy-advance/jogo"))?.id)
         assertEquals("nds", RomNaming.guessSystem("jogo.nds", emptyList())?.id)
+        assertEquals("snes", RomNaming.guessSystem("jogo.zip", listOf("Chrono Trigger - Super Nintendo Entertainment System"))?.id)
+    }
+
+    @Test
+    fun `apelido curto so vale sozinho na URL ou entre parenteses`() {
+        assertEquals("nds", RomNaming.guessSystem("jogo.zip", listOf("https://site/roms/ds/mario-kart"))?.id)
+        assertEquals("nds", RomNaming.guessSystem("jogo.zip", listOf("Mario Kart (DS)"))?.id)
+        // "FC Barcelona", "10 pm", o artigo "o": por acaso, não é console.
+        assertNull(RomNaming.guessSystem("jogo.zip", listOf("FC Barcelona Manager")))
+        assertNull(RomNaming.guessSystem("jogo.zip", listOf("Atualizado às 10 pm")))
+        assertNull(RomNaming.guessSystem("jogo.zip", listOf("Baixe o jogo aqui")))
+        assertNull(RomNaming.guessSystem("jogo.zip", listOf("https://site/o/jogo")))
     }
 }

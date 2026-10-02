@@ -32,6 +32,17 @@ class CheatFileTest {
     }
 
     @Test
+    fun `entrada sem descricao recebe o nome pelo numero`() {
+        val text = """
+            cheat0_code = "AAAA"
+            cheat1_desc = ""
+            cheat1_code = "BBBB"
+        """.trimIndent()
+        assertEquals(listOf("Cheat 1", "Cheat 2"), CheatFile.parse(text).map { it.description })
+        assertEquals(listOf("Trapaça 1", "Trapaça 2"), CheatFile.parse(text) { "Trapaça $it" }.map { it.description })
+    }
+
+    @Test
     fun `acha o arquivo do jogo pelo nome ou pelo titulo`() {
         val files = listOf("Super Mario World (USA).cht", "Super Mario World (Europe) (Rev 1).cht", "Super Mario Kart (USA).cht", "Mario Paint (Japan).cht")
         assertEquals("Super Mario World (USA).cht", CheatFile.match("Super Mario World (USA)", files, clean).first())

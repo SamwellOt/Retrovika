@@ -19,11 +19,15 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,12 +57,14 @@ import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -126,6 +132,8 @@ fun GameScreen(
     padListener: PadListener,
     menu: MenuActions,
     onDismissToast: () -> Unit,
+    /** Esperando o núcleo (o estado sai antes do menu abrir): um indicador mostra que o toque chegou. */
+    busy: Boolean = false,
 ) {
     CompositionLocalProvider(LocalContentColor provides Palette.TextPrimary) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -164,7 +172,10 @@ fun GameScreen(
                         onTranslate = if (menu.canTranslate()) menu::translate else null,
                         modifier = if (!fullVideo) {
                             Modifier.align(Alignment.TopCenter).padding(top = maxHeight * VIDEO_SPLIT + 4.dp)
-                        } else Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                        } else {
+                            // Tela inteira: a câmera na tela (furo ou entalhe) ficaria por cima dos botões.
+                            Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top)).padding(top = 12.dp)
+                        },
                         vertical = false,
                         // Sem controle na tela os botões ficam discretos para não tapar o jogo.
                         dimmed = !padShown,
@@ -200,17 +211,28 @@ fun GameScreen(
             )
         }
 
+        if (busy && !menuOpen) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Palette.Neon, strokeWidth = 3.dp, modifier = Modifier.size(44.dp))
+            }
+        }
+
         // Por cima do menu: o QR code do anfitrião ou o "conectando" do convidado.
         menu.netplay().ui?.takeIf { it !is NetplayUi.Playing }?.let { NetplaySheet(it, onCancel = { menu.netplay().end() }) }
 
+        // Durante a animação de saída o aviso já é nulo: o texto que sai é o último mostrado, não um balão vazio.
+        var lastToast by remember { mutableStateOf("") }
+        if (toast != null) lastToast = toast
         AnimatedVisibility(
             visible = toast != null,
             enter = slideInVertically { -it } + fadeIn(),
             exit = slideOutVertically { -it } + fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp),
+            modifier = Modifier.align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(top = 20.dp, start = 16.dp, end = 16.dp),
         ) {
             Text(
-                toast.orEmpty(),
+                lastToast,
                 color = Palette.TextPrimary,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
@@ -244,14 +266,17 @@ private fun Hud(
         onTranslate?.let { HudButton(Icons.Rounded.Translate, stringResource(R.string.translate_button), false, it) }
     }
     val m = if (dimmed) modifier.alpha(0.45f) else modifier
-    if (vertical) Column(m, verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
-    else Row(m, horizontalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    // Cada botão já ocupa 48 dp (área de toque mínima) com o círculo de 40 no meio: o espaço visível continua 10 dp.
+    if (vertical) Column(m, verticalArrangement = Arrangement.spacedBy(2.dp)) { content() }
+    else Row(m, horizontalArrangement = Arrangement.spacedBy(2.dp)) { content() }
 }
 
 @Composable
 private fun HudButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
+            // Círculo de 40 dp, mas o toque vale nos 48 dp recomendados ao redor dele.
+            .minimumInteractiveComponentSize()
             .size(40.dp)
             .clip(CircleShape)
             .background(if (active) Palette.Neon.copy(alpha = 0.85f) else Color(0x40FFFFFF))
@@ -294,9 +319,10 @@ private fun Color.compositeOverWhite(): Color =
 
 @Composable
 private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
+    // Rolável: a lista de BIOS que faltam (ou uma mensagem longa em paisagem) empurrava os botões para fora da tela.
+    Box(Modifier.fillMaxSize().background(Palette.Ink), contentAlignment = Alignment.Center) {
     Column(
-        Modifier.fillMaxSize().background(Palette.Ink).padding(32.dp),
-        verticalArrangement = Arrangement.Center,
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.safeDrawing).padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(state.title, style = MaterialTheme.typography.headlineSmall, color = Palette.Coral, textAlign = TextAlign.Center)
@@ -311,6 +337,7 @@ private fun FailedView(state: EmulationUi.Failed, onExit: () -> Unit) {
         } else {
             GradientButton(stringResource(R.string.game_back_to_library), onExit)
         }
+    }
     }
 }
 

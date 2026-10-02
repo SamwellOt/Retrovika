@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.13.2)
 # now build app's shared lib
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall")
 
-add_definitions("-DVFS_FRONTEND -DHAVE_STRL")
+add_definitions("-DVFS_FRONTEND -DHAVE_STRL -DVK_USE_PLATFORM_ANDROID_KHR")
 
 # Let's include oboe
 set (OBOE_DIR oboe)
@@ -45,6 +45,10 @@ add_library(libretrodroid SHARED
         renderers/es2/imagerendereres2.cpp
         renderers/es3/imagerendereres3.h
         renderers/es3/imagerendereres3.cpp
+        renderers/es3/vulkanrendereres3.h
+        renderers/es3/vulkanrendereres3.cpp
+        vulkan/vulkancontext.h
+        vulkan/vulkancontext.cpp
         audio.h
         audio.cpp
         capture.h
@@ -103,4 +107,5 @@ target_link_libraries(libretrodroid
                       EGL
                       oboe
                       GLESv3
+                      vulkan
 )

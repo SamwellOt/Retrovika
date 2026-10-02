@@ -18,6 +18,7 @@
 #include "log.h"
 
 #include "audio.h"
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -50,19 +51,33 @@ bool Audio::initializeStream() {
         builder.setFramesPerCallback(audioBufferSize / 10);
     }
 
-    oboe::Result result = builder.openManagedStream(stream);
-    if (result == oboe::Result::OK) {
-        baseConversionFactor = (double) inputSampleRate / stream->getSampleRate();
-        fifoBuffer = std::make_unique<oboe::FifoBuffer>(2, audioBufferSize);
-        temporaryAudioBuffer = std::unique_ptr<int16_t[]>(new int16_t[audioBufferSize]);
-        latencyTuner = std::make_unique<oboe::LatencyTuner>(*stream);
-        return true;
-    } else {
+    // Aberto fora do lock (pode levar dezenas de ms); o novo só recebe callbacks depois do requestStart.
+    oboe::ManagedStream newStream;
+    oboe::Result result = builder.openManagedStream(newStream);
+    if (result != oboe::Result::OK) {
         LOGE("Failed to create stream. Error: %s", oboe::convertToText(result));
+        std::shared_ptr<Pipeline> empty;
+        std::atomic_store(&pipeline, empty);
+        std::lock_guard<std::mutex> lock(streamLock);
         stream = nullptr;
-        latencyTuner = nullptr;
         return false;
     }
+
+    auto newPipeline = std::make_shared<Pipeline>();
+    newPipeline->baseConversionFactor = (double) inputSampleRate / newStream->getSampleRate();
+    newPipeline->fifoBuffer = std::make_unique<oboe::FifoBuffer>(2, audioBufferSize);
+    newPipeline->temporaryAudioBuffer = std::unique_ptr<int16_t[]>(new int16_t[audioBufferSize]);
+    newPipeline->temporaryAudioBufferSize = audioBufferSize;
+    newPipeline->latencyTuner = std::make_unique<oboe::LatencyTuner>(*newStream);
+
+    oboe::ManagedStream oldStream;
+    {
+        std::lock_guard<std::mutex> lock(streamLock);
+        std::atomic_store(&pipeline, newPipeline);
+        oldStream = std::move(stream);
+        stream = std::move(newStream);
+    }
+    return true;
 }
 
 std::unique_ptr<Audio::AudioLatencySettings> Audio::findBestLatencySettings(bool preferLowLatencyAudio) {
@@ -86,19 +101,24 @@ double Audio::computeMaximumLatency() const {
 }
 
 void Audio::start() {
+    std::lock_guard<std::mutex> lock(streamLock);
     startRequested = true;
     if (stream != nullptr)
         stream->requestStart();
 }
 
 void Audio::stop() {
+    std::lock_guard<std::mutex> lock(streamLock);
     startRequested = false;
     if (stream != nullptr)
         stream->requestStop();
 }
 
 void Audio::write(const int16_t *data, size_t frames) {
-    fifoBuffer->write(data, frames * 2);
+    // Sem pipeline quando a saída não abriu: o áudio é descartado em vez de derrubar o app.
+    std::shared_ptr<Pipeline> current = std::atomic_load(&pipeline);
+    if (current == nullptr) return;
+    current->fifoBuffer->write(data, (int32_t) (frames * 2));
 }
 
 void Audio::setPlaybackSpeed(const double newPlaybackSpeed) {
@@ -106,30 +126,44 @@ void Audio::setPlaybackSpeed(const double newPlaybackSpeed) {
 }
 
 oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) {
-    double dynamicBufferFactor = computeDynamicBufferConversionFactor(0.001 * numFrames);
-    double finalConversionFactor = baseConversionFactor * dynamicBufferFactor * playbackSpeed;
+    auto outputArray = reinterpret_cast<int16_t *>(audioData);
+    std::shared_ptr<Pipeline> current = std::atomic_load(&pipeline);
+    if (current == nullptr || numFrames <= 0) {
+        if (numFrames > 0) std::fill(outputArray, outputArray + numFrames * 2, 0);
+        return oboe::DataCallbackResult::Continue;
+    }
+
+    double dynamicBufferFactor = computeDynamicBufferConversionFactor(*current, 0.001 * numFrames);
+    double finalConversionFactor = current->baseConversionFactor * dynamicBufferFactor * playbackSpeed;
 
     // When using low-latency stream, numFrames is very low (~100) and the dynamic buffer scaling doesn't work with rounding.
     // By keeping track of the "fractional" frames we can keep the error smaller.
     framesToSubmit += numFrames * finalConversionFactor;
-    int32_t currentFramesToSubmit = std::round(framesToSubmit);
+    auto currentFramesToSubmit = (int32_t) std::round(framesToSubmit);
     framesToSubmit -= currentFramesToSubmit;
 
-    fifoBuffer->readNow(temporaryAudioBuffer.get(), currentFramesToSubmit * 2);
+    // Em velocidade alta (avanço rápido) o pedido passava do buffer temporário, e o readNow, que completa com
+    // zeros até o tamanho pedido, escrevia além do fim dele. O excedente fica na fila (que descarta quando enche).
+    currentFramesToSubmit = std::clamp(currentFramesToSubmit, 0, current->temporaryAudioBufferSize / 2);
+    if (currentFramesToSubmit == 0) {
+        std::fill(outputArray, outputArray + numFrames * 2, 0);
+        return oboe::DataCallbackResult::Continue;
+    }
 
-    auto outputArray = reinterpret_cast<int16_t *>(audioData);
-    resampler.resample(temporaryAudioBuffer.get(), currentFramesToSubmit, outputArray, numFrames);
+    current->fifoBuffer->readNow(current->temporaryAudioBuffer.get(), currentFramesToSubmit * 2);
 
-    latencyTuner->tune();
+    resampler.resample(current->temporaryAudioBuffer.get(), currentFramesToSubmit, outputArray, numFrames);
+
+    current->latencyTuner->tune();
 
     return oboe::DataCallbackResult::Continue;
 }
 
 // To prevent audio buffer overruns or underruns we set up a PI controller. The idea is to run the
 // audio slower when the buffer is empty and faster when it's full.
-double Audio::computeDynamicBufferConversionFactor(double dt) {
-    double framesCapacityInBuffer = fifoBuffer->getBufferCapacityInFrames();
-    double framesAvailableInBuffer = fifoBuffer->getFullFramesAvailable();
+double Audio::computeDynamicBufferConversionFactor(Pipeline& current, double dt) {
+    double framesCapacityInBuffer = current.fifoBuffer->getBufferCapacityInFrames();
+    double framesAvailableInBuffer = current.fifoBuffer->getFullFramesAvailable();
 
     // Error is represented by normalized distance to half buffer utilization. Range [-1.0, 1.0]
     double errorMeasure = (framesCapacityInBuffer - 2.0f * framesAvailableInBuffer) / framesCapacityInBuffer;

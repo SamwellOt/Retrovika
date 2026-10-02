@@ -2,6 +2,7 @@ package com.retrovika.app.ui.screens.explore
 
 import androidx.annotation.StringRes
 import com.retrovika.app.R
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.retrovika.app.AppContainer
@@ -78,7 +79,7 @@ const val ROMS_GROUP = "roms"
 private val ROM_SITES = setOf("cdromance", "romsfun")
 
 @OptIn(FlowPreview::class)
-class ExploreViewModel(private val app: AppContainer) : ViewModel() {
+class ExploreViewModel(private val app: AppContainer, private val saved: SavedStateHandle = SavedStateHandle()) : ViewModel() {
     private val realSources: List<SourceInfo> =
         app.catalog.sources.map { SourceInfo(it.id, it.name, it.description, it.requiresSystem) }
 
@@ -107,11 +108,35 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
 
     private fun filter(id: String) = sources.first { it.id == id }
 
+    /**
+     * Fonte, termo e filtros guardados no [saved]: o sistema pode encerrar o processo com o app em segundo
+     * plano, e ao voltar o Explorar reabre na mesma busca. Valores que não existem mais caem no padrão.
+     */
+    private fun restoredState(): ExploreState {
+        val default = ExploreState(sourceId = sources.first().id)
+        val sourceId = saved.get<String>(KEY_SOURCE)?.takeIf { id -> sources.any { it.id == id } } ?: return default
+        return default.copy(
+            sourceId = sourceId,
+            query = saved.get<String>(KEY_QUERY).orEmpty(),
+            systemId = saved.get<String>(KEY_SYSTEM),
+            kind = if (saved.contains(KEY_KIND)) saved.get<String>(KEY_KIND) else default.kind,
+            genre = saved.get<String>(KEY_GENRE)?.let { name -> Genre.entries.firstOrNull { it.name == name } },
+        )
+    }
+
+    private fun persistFilters(s: ExploreState) {
+        saved[KEY_SOURCE] = s.sourceId
+        saved[KEY_QUERY] = s.query
+        saved[KEY_SYSTEM] = s.systemId
+        saved[KEY_KIND] = s.kind
+        saved[KEY_GENRE] = s.genre?.name
+    }
+
     /** Consoles oferecidos pelo filtro selecionado (num filtro de várias fontes, a união delas). */
     val systems: List<String>
         get() = filter(_state.value.sourceId).members.flatMapTo(LinkedHashSet()) { app.catalog.source(it).systems }.toList()
 
-    private val _state = MutableStateFlow(ExploreState(sourceId = sources.first().id))
+    private val _state = MutableStateFlow(restoredState())
     val state: StateFlow<ExploreState> = _state.asStateFlow()
     val downloads = app.downloads.tasks
 
@@ -196,6 +221,8 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     fun retry() = reload(debounce = false)
 
     private fun reload(debounce: Boolean) {
+        // Toda troca de filtro passa por aqui.
+        persistFilters(_state.value)
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             if (debounce) delay(350)
@@ -339,5 +366,13 @@ class ExploreViewModel(private val app: AppContainer) : ViewModel() {
     fun dismissPrompt() {
         promptJob?.cancel()
         _prompt.value = null
+    }
+
+    private companion object {
+        const val KEY_SOURCE = "explore_source"
+        const val KEY_QUERY = "explore_query"
+        const val KEY_SYSTEM = "explore_system"
+        const val KEY_KIND = "explore_kind"
+        const val KEY_GENRE = "explore_genre"
     }
 }

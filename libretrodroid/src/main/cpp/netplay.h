@@ -37,11 +37,14 @@ public:
     Netplay(int fd, unsigned localPort, unsigned delayFrames, uint8_t epoch);
     ~Netplay();
 
+    /** Lê a entrada local (porta 0). O chamador segura o lock do [input]: ele é trocado em outra thread. */
+    Pad capture(Input* input) const;
+
     /**
-     * Antes do retro_run: manda a entrada local do quadro atual + atraso e devolve se a do outro para o
-     * quadro atual já chegou (senão o quadro é pulado).
+     * Antes do retro_run: manda a entrada local [localPad] (lida com [capture]) para o quadro atual + atraso
+     * e devolve se a do outro para o quadro atual já chegou (senão o quadro é pulado).
      */
-    bool prepareFrame(Input* input);
+    bool prepareFrame(const Pad& localPad);
     /** Depois do retro_run: passa para o próximo quadro. */
     void frameDone();
 
@@ -60,8 +63,9 @@ private:
     static constexpr int KEEPALIVE_INTERVAL_S = 3;
     static constexpr int KEEPALIVE_COUNT = 5;
     static constexpr int64_t DEAD_PEER_MS = 20000;
+    // Folga além do adiantamento máximo legítimo do outro lado (2 * atraso + 1).
+    static constexpr uint64_t MAX_FRAMES_AHEAD_MARGIN = 4;
 
-    Pad capture(Input* input) const;
     void send(uint32_t forFrame, const Pad& pad);
     void pump();
     void flush();

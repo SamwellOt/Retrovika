@@ -37,4 +37,11 @@
     <string name="settings_ai_model_hint">Default: %1$s (always the newest Flash)</string>
     <string name="settings_ai_save">Save</string>
     <string name="settings_ai_remove">Remove key</string>
+    <!-- Download do runtime de dentro do .aar (RemoteZip). -->
+    <string name="remote_zip_missing_entry">%s is missing from the downloaded package</string>
+    <string name="remote_zip_corrupt">%s arrived corrupted. Try again.</string>
+    <string name="remote_zip_no_range">The server doesn\'t support partial downloads</string>
+    <string name="remote_zip_invalid">The downloaded package is not a valid archive</string>
+    <string name="settings_ocr_pack_delete_title">Delete the OCR pack?</string>
+    <string name="settings_ocr_pack_delete_message">To use it again you\'ll need to download it again (about %1$d MB).</string>
 </resources>

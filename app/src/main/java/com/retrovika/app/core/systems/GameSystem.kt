@@ -2,6 +2,7 @@ package com.retrovika.app.core.systems
 
 import androidx.annotation.StringRes
 import com.retrovika.app.R
+import com.retrovika.app.core.tuning.DeviceProfile
 import com.retrovika.app.emulation.input.PadLayout
 
 /**
@@ -35,10 +36,20 @@ data class CoreInfo(
     /** Aceita o contexto GLES abaixo da versão que o núcleo pede (o Play! pede 3.2 e roda em 3.1). */
     val relaxedGlesVersion: Boolean = false,
     /**
+     * O núcleo pode pedir um contexto Vulkan: o LibretroDroid o atende (ponte por AHardwareBuffer) e, se o aparelho
+     * ou o núcleo não derem conta, o app volta para o renderizador que não usa Vulkan (`deviceOptions` escolhe).
+     */
+    val vulkan: Boolean = false,
+    /**
      * Variáveis que valem por cima das escolhas do usuário e nem aparecem nas opções do núcleo: o que
      * quebraria o jogo se fosse mudado (sem memory card, jogo de PlayStation não salva nem continua).
      */
     val fixed: Map<String, String> = emptyMap(),
+    /**
+     * Opções que dependem do aparelho (não do nível de qualidade): ex.: quantas threads o renderizador por
+     * software usa conforme os núcleos rápidos da CPU. Valem por cima do preset e abaixo das escolhas do usuário.
+     */
+    val deviceOptions: ((DeviceProfile) -> Map<String, String>)? = null,
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */
@@ -100,7 +111,15 @@ data class GameSystem(
      * só contam dentro de uma pasta com o nome do console.
      */
     val folderOnlyExtensions: Set<String> = emptySet(),
+    /**
+     * Acervo do libretro-thumbnails de um modelo que divide o console com outro (Neo Geo Pocket e
+     * WonderSwan monocromáticos ao lado dos Color), pela extensão do arquivo; as demais usam [libretroDbName].
+     */
+    val libretroDbByExtension: Map<String, String> = emptyMap(),
 ) {
     val defaultCore: CoreInfo get() = cores.first()
+
+    /** Nome do acervo de capas para um arquivo com a extensão [ext]. */
+    fun libretroDbFor(ext: String?): String? = ext?.lowercase()?.let(libretroDbByExtension::get) ?: libretroDbName
     fun core(id: String?): CoreInfo = cores.firstOrNull { it.id == id } ?: defaultCore
 }

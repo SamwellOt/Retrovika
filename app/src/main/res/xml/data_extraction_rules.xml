@@ -1,13 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 12+: mesmas regras de backup_rules.xml, para a nuvem e para a transferência entre aparelhos. -->
+<!--
+    Android 12+: mesmas regras de backup_rules.xml, para a nuvem e para a transferência entre aparelhos.
+    Na transferência (cabo ou Wi-Fi direto, sem nuvem nem cota) os jogos e estados vão junto, e a chave do
+    Gemini também: ela passa direto de um aparelho do usuário para o outro. O que é medido no aparelho e
+    o que depende da ABI (núcleos, OCR) não vai.
+-->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="cores/" />
+        <exclude domain="file" path="ocr/" />
+        <exclude domain="file" path="benchmark/" />
+        <exclude domain="sharedpref" path="secrets.xml" />
+        <exclude domain="sharedpref" path="device_profile.xml" />
+        <exclude domain="sharedpref" path="vulkan_health.xml" />
+        <exclude domain="sharedpref" path="remote_play.xml" />
         <exclude domain="external" path="Retrovika/roms/" />
         <exclude domain="external" path="Retrovika/states/" />
         <exclude domain="external" path="Retrovika/system/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="cores/" />
+        <exclude domain="file" path="ocr/" />
+        <exclude domain="file" path="benchmark/" />
+        <exclude domain="sharedpref" path="device_profile.xml" />
+        <exclude domain="sharedpref" path="vulkan_health.xml" />
+        <exclude domain="sharedpref" path="remote_play.xml" />
     </device-transfer>
 </data-extraction-rules>

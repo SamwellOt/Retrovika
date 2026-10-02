@@ -101,6 +101,8 @@ class GLRetroView(
     @OnLifecycleEvent(Lifecycle.Event.ON_CREATE)
     fun onCreate(lifecycleOwner: LifecycleOwner) = catchExceptions {
         lifecycle = lifecycleOwner.lifecycle
+        // Antes do create: o núcleo pode pedir o contexto já no retro_init.
+        LibretroDroid.setAllowVulkan(data.allowVulkan)
         LibretroDroid.create(
             openGLESVersion,
             data.coreFilePath,
@@ -131,10 +133,15 @@ class GLRetroView(
                 data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
             }
         }
-        catchExceptions {
+        // Fora do catchExceptions: depois de um erro (isAborted) ele ignora tudo, e o núcleo carregado ficava vivo
+        // até o próximo create(), que o descarregava sem o retro_unload_game (um núcleo com threads, como o
+        // PPSSPP, aborta o processo no dlclose). O destroy() aguenta qualquer estado, até o de um carregamento que falhou.
+        try {
             LibretroDroid.destroy()
-            lifecycle = null
+        } catch (e: Exception) {
+            Log.e(TAG_LOG, "Error destroying the core", e)
         }
+        lifecycle = null
     }
 
     private fun getDeviceLanguage() = Locale.getDefault().language

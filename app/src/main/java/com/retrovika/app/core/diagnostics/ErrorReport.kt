@@ -5,6 +5,7 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.retrovika.app.core.tuning.DeviceProfile
 import androidx.core.content.FileProvider
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -30,6 +31,11 @@ object ErrorReport {
         appendLine("OpenGL ES ${gles shr 16}.${gles and 0xFFFF}")
         val mem = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
         appendLine("RAM ${mem.totalMem / (1024 * 1024)} MB, heap Java ${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
+        // Base do ajuste automático de qualidade: a classe que o app deduziu para este aparelho.
+        val device = DeviceProfile.detect(context)
+        // O estado do Vulkan: resultado do autoteste da ponte e tentativas/desligamentos por núcleo.
+        appendLine("Vulkan (estado): ${context.getSharedPreferences("vulkan_health", Context.MODE_PRIVATE).all.entries.joinToString { "${it.key.take(48)}=${it.value}" }.ifEmpty { "sem registro" }}")
+        appendLine("GPU ${device.gpu ?: "?"}, CPU até ${device.maxMhz} MHz (${device.perfCores}/${device.cpuCores} rápidos), classe ${device.tier}, Vulkan 1.1+: ${if (device.vulkan) "sim" else "não"}")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             appendLine()

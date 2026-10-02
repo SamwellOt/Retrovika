@@ -10,6 +10,13 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.selection.selectable
+import android.content.Context
+import android.provider.Settings
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -121,6 +128,29 @@ val LocalBottomInset = compositionLocalOf { 0.dp }
 /** Rota da aba tocada de novo quando já estava aberta: a tela daquela aba volta ao topo. */
 val LocalTabReselect = staticCompositionLocalOf<SharedFlow<String>> { MutableSharedFlow() }
 
+/**
+ * "Reduzir animações" do app ou animações desligadas no sistema: os efeitos decorativos (brilho dos
+ * esqueletos, encolher ao tocar) ficam parados. Fornecido pela raiz da navegação.
+ */
+val LocalReduceMotion = compositionLocalOf { false }
+
+/** Animações desligadas nas opções do Android (escala de duração do animador em 0). */
+fun Context.systemAnimationsOff(): Boolean =
+    runCatching { Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+
+/** Largura máxima do conteúdo das telas de lista (ajustes, downloads…) em telas largas. */
+val ReadableMaxWidth = 720.dp
+
+/**
+ * Em tablets e na horizontal, listas esticadas de borda a borda ficam difíceis de ler: [content] recebe a
+ * margem lateral que centraliza o conteúdo em até [max]. A lista continua ocupando a tela toda (a rolagem
+ * funciona também nas laterais); só o padding dela cresce.
+ */
+@Composable
+fun ReadableWidth(max: Dp = ReadableMaxWidth, content: @Composable (side: Dp) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) { content(((maxWidth - max) / 2).coerceAtLeast(0.dp)) }
+}
+
 /** Tocar de novo na aba [route] rola a lista de volta ao início. */
 @Composable
 fun ScrollToTopOnReselect(route: String, state: LazyListState) {
@@ -220,7 +250,9 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier, inset: Dp = 20.d
                 action,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onAction).padding(8.dp),
+                // Alvo de toque de 48dp, com o texto do mesmo tamanho de antes.
+                modifier = Modifier.minimumInteractiveComponentSize().clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button, onClick = onAction).padding(8.dp),
             )
         }
     }
@@ -242,7 +274,7 @@ fun SurfaceCard(
             .clip(shape)
             .then(if (brush != null) Modifier.background(brush) else Modifier.background(Palette.SurfaceHigh))
             .border(1.dp, Palette.Outline.copy(alpha = 0.7f), shape)
-            .then(if (onClick != null) Modifier.clickable(source, null, onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clickable(source, null, role = Role.Button, onClick = onClick) else Modifier),
         content = content,
     )
 }
@@ -250,7 +282,7 @@ fun SurfaceCard(
 /** Encolhe levemente o elemento enquanto pressionado: resposta tátil visual. */
 @Composable
 fun Modifier.pressScale(source: MutableInteractionSource, enabled: Boolean = true, pressed: Float = 0.96f): Modifier {
-    if (!enabled) return this
+    if (!enabled || LocalReduceMotion.current) return this
     val isPressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(if (isPressed) pressed else 1f, spring(stiffness = 600f), label = "press")
     // Lido só na camada gráfica: a animação redesenha o elemento sem recompor o cartão a cada quadro.
@@ -277,7 +309,7 @@ fun GradientButton(
             .defaultMinSize(minHeight = height)
             .clip(shape)
             .background(if (enabled) Palette.SunsetHorizontal else Brush.linearGradient(listOf(Palette.SurfaceHighest, Palette.SurfaceHighest)))
-            .clickable(source, null, enabled = enabled, onClick = onClick)
+            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 22.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -300,7 +332,7 @@ fun GhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
             .clip(shape)
             .background(Color.White.copy(alpha = 0.05f))
             .border(1.dp, Palette.Outline, shape)
-            .clickable(source, null, onClick = onClick)
+            .clickable(source, null, role = Role.Button, onClick = onClick)
             .padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -370,8 +402,9 @@ fun GameCover(
             .clip(RoundedCornerShape(corner))
             .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.6f), Palette.SurfaceHighest, Palette.Surface))),
     ) {
-        // Fallback: etiqueta de cartucho com sulcos no topo, sigla e título.
-        Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        // Fallback: etiqueta de cartucho com sulcos no topo, sigla e título. Decorativo para o leitor de tela:
+        // quem usa a capa já mostra o título ao lado, e ele seria lido duas vezes.
+        Column(Modifier.fillMaxSize().clearAndSetSemantics {}.padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 repeat(4) { Box(Modifier.width(10.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.18f))) }
             }
@@ -388,7 +421,7 @@ fun GameCover(
             }
         }
         if (url != null) {
-            AsyncImage(model = url, contentDescription = title, contentScale = contentScale, modifier = Modifier.fillMaxSize())
+            AsyncImage(model = url, contentDescription = null, contentScale = contentScale, modifier = Modifier.fillMaxSize())
         }
         // Brilho de vidro na borda superior, dá volume à capa.
         Box(
@@ -409,7 +442,7 @@ fun GameCard(game: Game, onClick: () -> Unit, modifier: Modifier = Modifier, wid
         modifier
             .then(if (width != null) Modifier.width(width) else Modifier)
             .pressScale(source)
-            .clickable(source, null, onClick = onClick),
+            .clickable(source, null, role = Role.Button, onClick = onClick),
     ) {
         Box {
             GameCover(game.title, system, game.coverUrl, Modifier.fillMaxWidth().aspectRatio(0.75f))
@@ -479,7 +512,7 @@ fun SystemTile(system: GameSystem, count: Int, onClick: () -> Unit, modifier: Mo
                 onDrawBehind { drawRect(glow) }
             }
             .border(1.dp, Brush.linearGradient(listOf(readable.copy(alpha = 0.55f), Palette.Outline.copy(alpha = 0.4f))), shape)
-            .clickable(source, null, onClick = onClick),
+            .clickable(source, null, role = Role.Button, onClick = onClick),
     ) {
         Text(
             system.shortName,
@@ -594,13 +627,14 @@ fun SearchField(value: String, onChange: (String) -> Unit, placeholder: String, 
 
 /**
  * Chip de seleção próprio: preenchido com o degradê quando ativo. Anuncia o estado ao leitor de
- * tela (`selectable`) e tem altura mínima de 36dp, para o toque não escapar em listas densas.
+ * tela (`selectable`). O desenho tem 36dp de altura; o alvo de toque reserva 48dp em volta dele.
  */
 @Composable
 fun SelectChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(50)
     Box(
         modifier
+            .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 36.dp)
             .clip(shape)
             .then(
@@ -631,6 +665,7 @@ fun AccentChip(
     val shape = RoundedCornerShape(50)
     Row(
         modifier
+            .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 36.dp)
             .clip(shape)
             .background(if (selected) accent.copy(alpha = 0.18f) else Palette.SurfaceHigh)
@@ -661,13 +696,16 @@ fun FilterLabel(text: String, modifier: Modifier = Modifier, trailing: @Composab
  */
 @Composable
 fun Modifier.shimmer(shape: Shape = RoundedCornerShape(8.dp)): Modifier {
+    val base = clip(shape).background(Palette.SurfaceHighest.copy(alpha = 0.7f))
+    // Com animações reduzidas, o bloco fica parado: continua marcando o lugar do conteúdo.
+    if (LocalReduceMotion.current) return base
     val transition = rememberInfiniteTransition(label = "shimmer")
     val progress = transition.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
         label = "shimmer",
     )
-    return clip(shape).background(Palette.SurfaceHighest.copy(alpha = 0.7f)).drawBehind {
+    return base.drawBehind {
         val w = size.width
         val x = -w + progress.value * 2f * w
         drawRect(
@@ -741,3 +779,28 @@ fun busyWaitText(task: DownloadTask, short: Boolean = false): String? {
  */
 @Composable
 fun countString(@PluralsRes id: Int, count: Int): String = pluralStringResource(id, if (count == 0) 2 else count, count)
+
+/**
+ * Confirmação de ação que apaga ou interrompe algo (cancelar downloads, desvincular pasta, remover núcleo):
+ * título, explicação e o botão de confirmar em coral. [onConfirm] roda antes de [onDismiss].
+ */
+@Composable
+fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    dismissLabel: String = stringResource(R.string.common_cancel),
+    icon: ImageVector? = null,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = if (icon != null) { { Icon(icon, null, tint = Palette.Coral) } } else null,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = { onConfirm(); onDismiss() }) { Text(confirmLabel, color = Palette.Coral) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(dismissLabel) } },
+        containerColor = Palette.SurfaceHigh,
+    )
+}

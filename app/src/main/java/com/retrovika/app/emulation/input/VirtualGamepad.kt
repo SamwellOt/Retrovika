@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -137,7 +138,7 @@ fun VirtualGamepad(
             val config = elements[element] ?: PadElementConfig()
             val gone = config.hidden && editor == null
             if (gone && overlay) return
-            PadPart(element, config, area, { areaOrigin }, editor, modifier) { if (gone) content(NoInput, {}) else content(input, feedback) }
+            PadPart(element, config, area, { areaOrigin }, editor, modifier, excludeGestures = !gone) { if (gone) content(NoInput, {}) else content(input, feedback) }
         }
 
         if (!overlay) {
@@ -199,6 +200,7 @@ private fun PadPart(
     areaOrigin: () -> Offset,
     editor: PadEditor?,
     modifier: Modifier,
+    excludeGestures: Boolean,
     content: @Composable () -> Unit,
 ) {
     val selected = editor?.selected == element
@@ -228,7 +230,11 @@ private fun PadPart(
                 scaleX = config.scale
                 scaleY = config.scale
                 alpha = if (!config.hidden) 1f else if (editor != null) 0.28f else 0f
-            },
+            }
+            // D-pad e botões encostados na borda: sem isto, deslizar o polegar para fora abria o gesto de
+            // voltar do sistema (Android 10+; o sistema aceita até 200 dp por borda). Depois da camada,
+            // para o retângulo seguir o tamanho e a posição do perfil.
+            .then(if (excludeGestures) Modifier.systemGestureExclusion() else Modifier),
     ) {
         content()
         if (editor != null) {
@@ -354,19 +360,28 @@ private fun FaceCluster(layout: PadLayout, s: Float, listener: PadListener, feed
     }
 }
 
-/** Modificador de botão: pressiona no toque, solta ao levantar o dedo ou cancelar. */
-private fun Modifier.pressable(onChange: (Boolean) -> Unit): Modifier = pointerInput(Unit) {
-    awaitEachGesture {
-        awaitFirstDown(requireUnconsumed = false).consume()
-        onChange(true)
-        try {
-            while (true) {
-                val event = awaitPointerEvent()
-                event.changes.forEach(PointerInputChange::consume)
-                if (event.changes.none { it.pressed }) break
+/**
+ * Modificador de botão: pressiona no toque, solta ao levantar o dedo ou cancelar. O gesto é criado uma vez,
+ * mas usa sempre o [onChange] mais recente: a parte que é ocultada (ou volta) troca o listener sem recriar
+ * o botão. A soltura vai para quem recebeu o aperto, para nada ficar preso no jogo.
+ */
+@Composable
+private fun Modifier.pressable(onChange: (Boolean) -> Unit): Modifier {
+    val current by rememberUpdatedState(onChange)
+    return pointerInput(Unit) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false).consume()
+            val target = current
+            target(true)
+            try {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    event.changes.forEach(PointerInputChange::consume)
+                    if (event.changes.none { it.pressed }) break
+                }
+            } finally {
+                target(false)
             }
-        } finally {
-            onChange(false)
         }
     }
 }
@@ -431,8 +446,11 @@ private fun PillButton(button: PadButton, s: Float, listener: PadListener, feedb
 @Composable
 private fun DPad(size: Dp, listener: PadListener, feedback: () -> Unit) {
     var direction by remember { mutableStateOf(0 to 0) }
+    // O gesto é criado uma vez: lê sempre o listener e a vibração atuais (parte ocultada ou de volta, editor).
+    val currentListener by rememberUpdatedState(listener)
+    val currentFeedback by rememberUpdatedState(feedback)
 
-    fun update(position: Offset, sizePx: Float) {
+    fun update(position: Offset, sizePx: Float, listener: PadListener) {
         val cx = sizePx / 2
         val dx = position.x - cx
         val dy = position.y - cx
@@ -442,7 +460,7 @@ private fun DPad(size: Dp, listener: PadListener, feedback: () -> Unit) {
             DIRS[sector]
         }
         if (next != direction) {
-            if (next != (0 to 0)) feedback()
+            if (next != (0 to 0)) currentFeedback()
             direction = next
             listener.onMotion(MotionSources.DPAD, next.first.toFloat(), next.second.toFloat())
         }
@@ -455,18 +473,20 @@ private fun DPad(size: Dp, listener: PadListener, feedback: () -> Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    update(down.position, this.size.width.toFloat())
+                    // O gesto inteiro (até a soltura) vai para quem recebeu o primeiro toque.
+                    val target = currentListener
+                    update(down.position, this.size.width.toFloat(), target)
                     try {
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
                             change.consume()
-                            update(change.position, this.size.width.toFloat())
+                            update(change.position, this.size.width.toFloat(), target)
                         }
                     } finally {
                         direction = 0 to 0
-                        listener.onMotion(MotionSources.DPAD, 0f, 0f)
+                        target.onMotion(MotionSources.DPAD, 0f, 0f)
                     }
                 }
             },
@@ -506,12 +526,13 @@ private val DIRS = listOf(1 to 0, 1 to 1, 0 to 1, -1 to 1, -1 to 0, -1 to -1, 0 
 @Composable
 private fun AnalogStick(size: Dp, source: Int, listener: PadListener) {
     var knob by remember { mutableStateOf(Offset.Zero) }
+    val currentListener by rememberUpdatedState(listener)
 
     Canvas(
         Modifier
             .size(size)
             .pointerInput(Unit) {
-                fun emit(p: Offset) {
+                fun emit(p: Offset, listener: PadListener) {
                     // Lido a cada movimento: o tamanho muda sem reiniciar o bloco (tela dividida, dobráveis).
                     val radius = min(this.size.width, this.size.height) / 2f
                     val v = Offset(p.x - radius, p.y - radius)
@@ -523,18 +544,19 @@ private fun AnalogStick(size: Dp, source: Int, listener: PadListener) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    emit(down.position)
+                    val target = currentListener
+                    emit(down.position, target)
                     try {
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
                             change.consume()
-                            emit(change.position)
+                            emit(change.position, target)
                         }
                     } finally {
                         knob = Offset.Zero
-                        listener.onMotion(source, 0f, 0f)
+                        target.onMotion(source, 0f, 0f)
                     }
                 }
             },

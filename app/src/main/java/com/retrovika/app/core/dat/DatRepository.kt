@@ -36,6 +36,10 @@ class DatRepository(
     suspend fun identify(game: Game): Identification {
         if (!supports(game.systemId)) return Identification.Unsupported
         ensureLoaded(game.systemId)
+        return match(game)
+    }
+
+    private suspend fun match(game: Game): Identification {
         val hashes = RomHasher.hash(context, game) ?: return Identification.NotFound
         val match = dao.findByCrc(game.systemId, hashes.crc32)
             ?: dao.findByMd5(game.systemId, hashes.md5)
@@ -51,15 +55,32 @@ class DatRepository(
     suspend fun identifyAll(games: List<Game>, onProgress: (Int, Int) -> Unit): List<Pair<Game, DatEntry>> {
         val pending = games.filter { !it.verified && supports(it.systemId) }
         val found = mutableListOf<Pair<Game, DatEntry>>()
+        // Sistemas cujo DAT já foi tentado nesta rodada. Um DAT que não rende nenhuma entrada não é baixado de
+        // novo para cada jogo: os jogos daquele sistema ficam de fora.
+        val loaded = HashSet<String>()
+        val empty = HashSet<String>()
         pending.forEachIndexed { i, game ->
             onProgress(i, pending.size)
+            if (game.systemId in empty) return@forEachIndexed
             val result = try {
-                identify(game)
+                if (loaded.add(game.systemId)) {
+                    ensureLoaded(game.systemId)
+                    if (dao.countHashed(game.systemId) == 0) {
+                        empty += game.systemId
+                        return@forEachIndexed
+                    }
+                }
+                match(game)
             } catch (c: kotlinx.coroutines.CancellationException) {
                 throw c
             } catch (t: java.io.IOException) {
                 // Sem internet para baixar o DAT: nenhum outro jogo vai conseguir, então para aqui.
                 if (dao.countHashed(game.systemId) == 0) throw t
+                null
+            } catch (t: Exception) {
+                // Arquivo ou entrada estranha (não de rede): só este jogo fica de fora, o lote segue. Se foi o DAT
+                // que não deu índice, os outros jogos do sistema nem são lidos.
+                if (runCatching { dao.countHashed(game.systemId) }.getOrDefault(0) == 0) empty += game.systemId
                 null
             }
             if (result is Identification.Found) found += game to result.match

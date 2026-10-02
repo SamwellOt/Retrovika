@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
 import com.retrovika.app.ui.components.LocalBottomInset
+import com.retrovika.app.ui.components.ReadableWidth
 import com.retrovika.app.ui.theme.Palette
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
@@ -101,7 +102,11 @@ fun BiosScreen(onBack: () -> Unit) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(primary = Palette.Sun, secondary = Palette.Neon), contentPadding = PaddingValues(bottom = 32.dp + LocalBottomInset.current)) {
+    ReadableWidth { side ->
+    LazyColumn(
+        Modifier.fillMaxSize().ambientGlow(primary = Palette.Sun, secondary = Palette.Neon),
+        contentPadding = PaddingValues(start = side, end = side, bottom = 32.dp + LocalBottomInset.current),
+    ) {
         item {
             val ready = systems.count { sys -> checks[sys].orEmpty().let { c -> c.isNotEmpty() && BiosManager.unsatisfied(sys.bios) { b -> c.any { it.bios == b && it.status == BiosStatus.OK } }.isEmpty() } }
             ScreenHeader(stringResource(R.string.bios_ui_title), subtitle = stringResource(R.string.bios_ui_subtitle, ready, systems.size), onBack = onBack)
@@ -141,7 +146,15 @@ fun BiosScreen(onBack: () -> Unit) {
                             BiosStatus.WRONG_HASH, BiosStatus.INVALID -> Icons.Rounded.ErrorOutline to Palette.Coral
                             BiosStatus.MISSING -> Icons.Rounded.RadioButtonUnchecked to (if (check.bios.required) Palette.Coral else Palette.TextMuted)
                         }
-                        Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
+                        // O estado não pode depender só da cor e do desenho do ícone: o leitor de tela o anuncia.
+                        val statusLabel = stringResource(
+                            when (check.status) {
+                                BiosStatus.OK -> R.string.bios_ui_status_ok
+                                BiosStatus.WRONG_HASH, BiosStatus.INVALID -> R.string.bios_ui_status_wrong
+                                BiosStatus.MISSING -> R.string.bios_ui_status_missing
+                            },
+                        )
+                        Icon(icon, statusLabel, tint = tint, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(check.bios.fileName, style = MaterialTheme.typography.labelMedium)
@@ -159,5 +172,6 @@ fun BiosScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
     }
 }

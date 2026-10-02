@@ -158,6 +158,50 @@ class RemoteServerTest {
         assertEquals("close", events.poll(5, TimeUnit.SECONDS))
     }
 
+    @Test
+    fun slowRequestHeadIsDroppedAtTheDeadline() {
+        val port = startServer()
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 15_000
+            val out = socket.getOutputStream()
+            out.write("GET /tv HTTP/1.1\r\n".toByteArray())
+            // Um byte por segundo: cada leitura chega antes do soTimeout, mas o pedido inteiro passa do prazo.
+            val started = System.currentTimeMillis()
+            val closed = runCatching {
+                repeat(12) {
+                    Thread.sleep(1000)
+                    out.write('X'.code)
+                    out.flush()
+                }
+            }.isFailure || socket.getInputStream().read() < 0
+            assertTrue("connection should be closed", closed)
+            assertTrue(System.currentTimeMillis() - started < 12_000)
+        }
+    }
+
+    @Test
+    fun capsConnectionsPerAddress() {
+        val port = startServer()
+        // Conexões paradas do mesmo endereço ocupam as vagas dele até o prazo do pedido.
+        val idle = (1..RemoteServer.MAX_PER_ADDRESS).map { Socket("127.0.0.1", port) }
+        try {
+            Thread.sleep(300)
+            Socket("127.0.0.1", port).use { extra ->
+                extra.soTimeout = 2000
+                assertEquals(-1, extra.getInputStream().read())
+            }
+        } finally {
+            idle.forEach { it.close() }
+        }
+        // Soltas as vagas, o mesmo endereço volta a ser atendido.
+        Thread.sleep(300)
+        Socket("127.0.0.1", port).use { socket ->
+            socket.getOutputStream().write("GET /tv HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+            val response = socket.getInputStream().readBytes().toString(Charsets.UTF_8)
+            assertTrue(response, response.startsWith("HTTP/1.1 200 OK"))
+        }
+    }
+
     private fun upgrade(target: String) =
         "GET $target HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"

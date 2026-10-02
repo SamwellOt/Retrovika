@@ -1,0 +1,764 @@
+{
+"mupen64plus-169screensize": [
+"640x360",
+"960x540",
+"1280x720",
+"1706x720",
+"1366x768",
+"1920x810",
+"1920x1080",
+"2560x1080",
+"2560x1440",
+"3414x1440",
+"3840x2160",
+"4096x2160",
+"5120x1440",
+"5120x2160",
+"7680x3240",
+"7680x4320",
+"7680x2160",
+"10240x4320"
+],
+"mupen64plus-43screensize": [
+"320x240",
+"640x480",
+"960x720",
+"1280x960",
+"1440x1080",
+"1600x1200",
+"1920x1440",
+"2240x1680",
+"2560x1920",
+"2880x2160",
+"3200x2400",
+"3520x2640",
+"3840x2880"
+],
+"mupen64plus-BackgroundMode": [
+"Stripped",
+"OnePiece"
+],
+"mupen64plus-BilinearMode": [
+"3point",
+"standard"
+],
+"mupen64plus-CorrectTexrectCoords": [
+"Off",
+"Auto",
+"Force"
+],
+"mupen64plus-CountPerOp": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5"
+],
+"mupen64plus-CountPerOpDenomPot": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11"
+],
+"mupen64plus-DitheringPattern": [
+"True",
+"False"
+],
+"mupen64plus-DitheringQuantization": [
+"True",
+"False"
+],
+"mupen64plus-EnableCopyAuxToRDRAM": [
+"False",
+"True"
+],
+"mupen64plus-EnableCopyColorFromRDRAM": [
+"False",
+"True"
+],
+"mupen64plus-EnableCopyColorToRDRAM": [
+"Off",
+"Sync",
+"Async",
+"TripleBuffer"
+],
+"mupen64plus-EnableCopyDepthToRDRAM": [
+"Off",
+"Software",
+"FromMem"
+],
+"mupen64plus-EnableEnhancedHighResStorage": [
+"False",
+"True"
+],
+"mupen64plus-EnableEnhancedTextureStorage": [
+"False",
+"True"
+],
+"mupen64plus-EnableFBEmulation": [
+"False",
+"True"
+],
+"mupen64plus-EnableFragmentDepthWrite": [
+"False",
+"True"
+],
+"mupen64plus-EnableHWLighting": [
+"False",
+"True"
+],
+"mupen64plus-EnableHiResAltCRC": [
+"False",
+"True"
+],
+"mupen64plus-EnableInaccurateTextureCoordinates": [
+"False",
+"True"
+],
+"mupen64plus-EnableLODEmulation": [
+"False",
+"True"
+],
+"mupen64plus-EnableLegacyBlending": [
+"False",
+"True"
+],
+"mupen64plus-EnableNativeResFactor": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8"
+],
+"mupen64plus-EnableNativeResTexrects": [
+"Disabled",
+"Unoptimized",
+"Optimized"
+],
+"mupen64plus-EnableOverscan": [
+"Disabled",
+"Enabled"
+],
+"mupen64plus-EnableTexCoordBounds": [
+"False",
+"True"
+],
+"mupen64plus-EnableTextureCache": [
+"False",
+"True"
+],
+"mupen64plus-FXAA": [
+"0",
+"1"
+],
+"mupen64plus-ForceDisableExtraMem": [
+"False",
+"True"
+],
+"mupen64plus-FrameDuping": [
+"False",
+"True"
+],
+"mupen64plus-Framerate": [
+"Original",
+"Fullspeed"
+],
+"mupen64plus-GLideN64IniBehaviour": [
+"late",
+"early",
+"disabled"
+],
+"mupen64plus-HybridFilter": [
+"True",
+"False"
+],
+"mupen64plus-IgnoreTLBExceptions": [
+"False",
+"OnlyNotEnabled",
+"AlwaysIgnoreTLB"
+],
+"mupen64plus-MaxHiResTxVramLimit": [
+"0",
+"500",
+"1000",
+"1500",
+"2000",
+"2500",
+"3000",
+"3500",
+"4000"
+],
+"mupen64plus-MaxTxCacheSize": [
+"1500",
+"4000",
+"8000"
+],
+"mupen64plus-MultiSampling": [
+"0",
+"2",
+"4",
+"8",
+"16"
+],
+"mupen64plus-OverscanBottom": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11",
+"12",
+"13",
+"14",
+"15",
+"16",
+"17",
+"18",
+"19",
+"20",
+"21",
+"22",
+"23",
+"24",
+"25",
+"26",
+"27",
+"28",
+"29",
+"30",
+"31",
+"32",
+"33",
+"34",
+"35",
+"36",
+"37",
+"38",
+"39",
+"40",
+"41",
+"42",
+"43",
+"44",
+"45",
+"46",
+"47",
+"48",
+"49",
+"50"
+],
+"mupen64plus-OverscanLeft": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11",
+"12",
+"13",
+"14",
+"15",
+"16",
+"17",
+"18",
+"19",
+"20",
+"21",
+"22",
+"23",
+"24",
+"25",
+"26",
+"27",
+"28",
+"29",
+"30",
+"31",
+"32",
+"33",
+"34",
+"35",
+"36",
+"37",
+"38",
+"39",
+"40",
+"41",
+"42",
+"43",
+"44",
+"45",
+"46",
+"47",
+"48",
+"49",
+"50"
+],
+"mupen64plus-OverscanRight": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11",
+"12",
+"13",
+"14",
+"15",
+"16",
+"17",
+"18",
+"19",
+"20",
+"21",
+"22",
+"23",
+"24",
+"25",
+"26",
+"27",
+"28",
+"29",
+"30",
+"31",
+"32",
+"33",
+"34",
+"35",
+"36",
+"37",
+"38",
+"39",
+"40",
+"41",
+"42",
+"43",
+"44",
+"45",
+"46",
+"47",
+"48",
+"49",
+"50"
+],
+"mupen64plus-OverscanTop": [
+"0",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11",
+"12",
+"13",
+"14",
+"15",
+"16",
+"17",
+"18",
+"19",
+"20",
+"21",
+"22",
+"23",
+"24",
+"25",
+"26",
+"27",
+"28",
+"29",
+"30",
+"31",
+"32",
+"33",
+"34",
+"35",
+"36",
+"37",
+"38",
+"39",
+"40",
+"41",
+"42",
+"43",
+"44",
+"45",
+"46",
+"47",
+"48",
+"49",
+"50"
+],
+"mupen64plus-RDRAMImageDitheringMode": [
+"False",
+"Bayer",
+"MagicSquare",
+"BlueNoise"
+],
+"mupen64plus-ThreadedRenderer": [
+"True",
+"False"
+],
+"mupen64plus-alt-map": [
+"False",
+"True"
+],
+"mupen64plus-angrylion-multithread": [
+"all threads",
+"1",
+"2",
+"3",
+"4",
+"5",
+"6",
+"7",
+"8",
+"9",
+"10",
+"11",
+"12",
+"13",
+"14",
+"15",
+"16",
+"17",
+"18",
+"19",
+"20",
+"21",
+"22",
+"23",
+"24",
+"25",
+"26",
+"27",
+"28",
+"29",
+"30",
+"31",
+"32",
+"33",
+"34",
+"35",
+"36",
+"37",
+"38",
+"39",
+"40",
+"41",
+"42",
+"43",
+"44",
+"45",
+"46",
+"47",
+"48",
+"49",
+"50",
+"51",
+"52",
+"53",
+"54",
+"55",
+"56",
+"57",
+"58",
+"59",
+"60",
+"61",
+"62",
+"63",
+"75"
+],
+"mupen64plus-angrylion-overscan": [
+"disabled",
+"enabled"
+],
+"mupen64plus-angrylion-sync": [
+"Low",
+"Medium",
+"High"
+],
+"mupen64plus-angrylion-vioverlay": [
+"Filtered",
+"AA+Blur",
+"AA+Dedither",
+"AA only",
+"Unfiltered",
+"Depth",
+"Coverage"
+],
+"mupen64plus-aspect": [
+"4:3",
+"16:9",
+"16:9 adjusted"
+],
+"mupen64plus-astick-deadzone": [
+"0",
+"5",
+"10",
+"15",
+"20",
+"25",
+"30"
+],
+"mupen64plus-astick-sensitivity": [
+"50",
+"55",
+"60",
+"65",
+"70",
+"75",
+"80",
+"85",
+"90",
+"95",
+"100",
+"105",
+"110",
+"115",
+"120",
+"125",
+"130",
+"135",
+"140",
+"145",
+"150"
+],
+"mupen64plus-cpucore": [
+"pure_interpreter",
+"cached_interpreter",
+"dynamic_recompiler"
+],
+"mupen64plus-d-cbutton": [
+"C1",
+"C2",
+"C3",
+"C4"
+],
+"mupen64plus-l-cbutton": [
+"C1",
+"C2",
+"C3",
+"C4"
+],
+"mupen64plus-pak1": [
+"none",
+"memory",
+"rumble",
+"transfer"
+],
+"mupen64plus-pak2": [
+"none",
+"memory",
+"rumble",
+"transfer"
+],
+"mupen64plus-pak3": [
+"none",
+"memory",
+"rumble",
+"transfer"
+],
+"mupen64plus-pak4": [
+"none",
+"memory",
+"rumble",
+"transfer"
+],
+"mupen64plus-parallel-rdp-deinterlace-method": [
+"Bob",
+"Weave"
+],
+"mupen64plus-parallel-rdp-dither-filter": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-divot-filter": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-downscaling": [
+"disable",
+"1/2",
+"1/4",
+"1/8"
+],
+"mupen64plus-parallel-rdp-gamma-dither": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-native-tex-rect": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-native-texture-lod": [
+"False",
+"True"
+],
+"mupen64plus-parallel-rdp-overscan": [
+"0",
+"2",
+"4",
+"6",
+"8",
+"10",
+"12",
+"14",
+"16",
+"18",
+"20",
+"22",
+"24",
+"26",
+"28",
+"30",
+"32",
+"34",
+"36",
+"38",
+"40",
+"42",
+"44",
+"46",
+"48",
+"50",
+"52",
+"54",
+"56",
+"58",
+"60",
+"62",
+"64"
+],
+"mupen64plus-parallel-rdp-super-sampled-read-back": [
+"False",
+"True"
+],
+"mupen64plus-parallel-rdp-super-sampled-read-back-dither": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-synchronous": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-upscaling": [
+"1x",
+"2x",
+"4x",
+"8x"
+],
+"mupen64plus-parallel-rdp-vi-aa": [
+"True",
+"False"
+],
+"mupen64plus-parallel-rdp-vi-bilinear": [
+"True",
+"False"
+],
+"mupen64plus-r-cbutton": [
+"C1",
+"C2",
+"C3",
+"C4"
+],
+"mupen64plus-rdp-plugin": [
+"angrylion",
+"parallel",
+"gliden64"
+],
+"mupen64plus-rsp-plugin": [
+"cxd4",
+"parallel",
+"hle"
+],
+"mupen64plus-txCacheCompression": [
+"False",
+"True"
+],
+"mupen64plus-txEnhancementMode": [
+"None",
+"As Is",
+"X2",
+"X2SAI",
+"HQ2X",
+"HQ2XS",
+"LQ2X",
+"LQ2XS",
+"HQ4X",
+"2xBRZ",
+"3xBRZ",
+"4xBRZ",
+"5xBRZ",
+"6xBRZ"
+],
+"mupen64plus-txFilterIgnoreBG": [
+"False",
+"True"
+],
+"mupen64plus-txFilterMode": [
+"None",
+"Smooth filtering 1",
+"Smooth filtering 2",
+"Smooth filtering 3",
+"Smooth filtering 4",
+"Sharp filtering 1",
+"Sharp filtering 2"
+],
+"mupen64plus-txHiresEnable": [
+"False",
+"True"
+],
+"mupen64plus-txHiresFullAlphaChannel": [
+"False",
+"True"
+],
+"mupen64plus-u-cbutton": [
+"C1",
+"C2",
+"C3",
+"C4"
+],
+"mupen64plus-virefresh": [
+"Auto",
+"1500",
+"2200"
+]
+}

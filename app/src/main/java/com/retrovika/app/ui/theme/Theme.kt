@@ -37,7 +37,9 @@ object Palette {
     val Success = Color(0xFF5BE49B)
     val TextPrimary = Color(0xFFF5F1FB)
     val TextSecondary = Color(0xFFABA3C4)
-    val TextMuted = Color(0xFF6E6690)
+    // Contraste mínimo de 4,5:1 (WCAG AA) sobre Ink (5,9:1) e SurfaceHigh (5,2:1), e ainda 4,6:1 sobre
+    // SurfaceHighest; continua abaixo do TextSecondary na hierarquia.
+    val TextMuted = Color(0xFF8D86B2)
 
     /** Degradê do sol do logo, usado em botões principais e na marca. */
     val SunsetGradient = Brush.linearGradient(listOf(Neon, Orange, Sun))

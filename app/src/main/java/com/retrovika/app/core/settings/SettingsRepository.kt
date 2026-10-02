@@ -3,6 +3,8 @@ package com.retrovika.app.core.settings
 import androidx.annotation.StringRes
 import com.retrovika.app.R
 import android.content.Context
+import android.os.Build
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -14,22 +16,32 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Preset
+import com.retrovika.app.core.tuning.TuneResult
 import com.retrovika.app.core.cores.SystemBenchmark
 import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.emulation.input.PadProfile
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.io.IOException
 
-private val Context.dataStore by preferencesDataStore("retrovika_settings")
+// Arquivo corrompido (gravação cortada, cartão com defeito): recomeça dos padrões em vez de falhar toda leitura.
+private val Context.dataStore by preferencesDataStore(
+    "retrovika_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 enum class ShaderOption(@StringRes val label: Int) {
     DEFAULT(R.string.shader_default), SHARP(R.string.shader_sharp), CRT(R.string.shader_crt), LCD(R.string.shader_lcd)
@@ -101,11 +113,14 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val geminiKey = stringPreferencesKey("gemini_key")
         val geminiModel = stringPreferencesKey("gemini_model")
         val autoBenchmark = booleanPreferencesKey("auto_benchmark")
-        fun benchmark(systemId: String) = stringPreferencesKey("bench_$systemId")
+        fun benchmark(systemId: String) = stringPreferencesKey("$BENCH_PREFIX$systemId")
         val checkUpdates = booleanPreferencesKey("check_updates")
         val dismissedUpdate = stringPreferencesKey("dismissed_update")
         fun core(systemId: String) = stringPreferencesKey("core_$systemId")
         fun preset(systemId: String) = stringPreferencesKey("preset_$systemId")
+        fun noVulkan(coreId: String) = booleanPreferencesKey("no_vulkan_$coreId")
+        fun tuning(systemId: String, coreId: String) = stringPreferencesKey("$TUNE_PREFIX${systemId}_$coreId")
+        fun gameTuning(gameId: Long) = stringPreferencesKey("$GAME_TUNE_PREFIX$gameId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
         fun padProfile(systemId: String) = stringPreferencesKey("pad_console_$systemId")
         fun gamePadProfile(gameId: Long) = stringPreferencesKey("$GAME_PAD_PREFIX$gameId")
@@ -116,7 +131,30 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     // Um erro de leitura do arquivo de preferências não pode derrubar o app na abertura: usa os padrões.
     private val data: Flow<Preferences> = context.dataStore.data.catch { if (it is IOException) emit(emptyPreferences()) else throw it }
 
-    val settings: Flow<AppSettings> = data.map { p ->
+    /**
+     * Segredos (a chave do Gemini) ficam num arquivo próprio, fora do backup do Android (ver
+     * res/xml/backup_rules.xml): a chave é do usuário e não deve ir parar na nuvem junto com as preferências.
+     */
+    private val secrets = context.getSharedPreferences(SECRETS_FILE, Context.MODE_PRIVATE)
+    private val geminiKey = MutableStateFlow(secrets.getString(SECRET_GEMINI_KEY, null))
+
+    init {
+        // Versões anteriores guardavam a chave no DataStore (que vai para o backup): passa para o arquivo de segredos.
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                context.dataStore.edit { p ->
+                    val old = p[Keys.geminiKey] ?: return@edit
+                    if (secrets.getString(SECRET_GEMINI_KEY, null) == null && old.isNotBlank()) {
+                        secrets.edit().putString(SECRET_GEMINI_KEY, old.trim()).commit()
+                        geminiKey.value = old.trim()
+                    }
+                    p.remove(Keys.geminiKey)
+                }
+            }
+        }
+    }
+
+    val settings: Flow<AppSettings> = combine(data, geminiKey) { p, secretKey ->
         AppSettings(
             linkedFolders = p[Keys.folders].orEmpty(),
             shader = p[Keys.shader]?.let { runCatching { ShaderOption.valueOf(it) }.getOrNull() } ?: ShaderOption.DEFAULT,
@@ -135,7 +173,8 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             coverSize = p[Keys.coverSize]?.let { runCatching { CoverSize.valueOf(it) }.getOrNull() } ?: CoverSize.NORMAL,
             gameSort = p[Keys.gameSort]?.let { runCatching { GameSort.valueOf(it) }.getOrNull() } ?: GameSort.TITLE,
             translateEverywhere = p[Keys.translateEverywhere] ?: false,
-            geminiKey = p[Keys.geminiKey]?.takeIf { it.isNotBlank() },
+            // A do DataStore só até a migração do init terminar.
+            geminiKey = (secretKey ?: p[Keys.geminiKey])?.takeIf { it.isNotBlank() },
             geminiModel = p[Keys.geminiModel]?.takeIf { it.isNotBlank() } ?: GeminiText.DEFAULT_MODEL,
             autoBenchmark = p[Keys.autoBenchmark] ?: true,
             checkUpdates = p[Keys.checkUpdates] ?: true,
@@ -173,12 +212,20 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun setCoverSize(v: CoverSize) = set(Keys.coverSize, v.name)
     suspend fun setGameSort(v: GameSort) = set(Keys.gameSort, v.name)
     suspend fun setTranslateEverywhere(v: Boolean) = set(Keys.translateEverywhere, v)
-    suspend fun setGeminiKey(v: String) = context.dataStore.edit { p ->
-        val value = v.trim()
-        if (value.isEmpty()) p.remove(Keys.geminiKey) else p[Keys.geminiKey] = value
+    suspend fun setGeminiKey(v: String) {
+        val value = v.trim().ifEmpty { null }
+        withContext(Dispatchers.IO) {
+            val editor = secrets.edit()
+            if (value == null) editor.remove(SECRET_GEMINI_KEY) else editor.putString(SECRET_GEMINI_KEY, value)
+            editor.commit()
+        }
+        geminiKey.value = value
+        // Uma cópia antiga que a migração ainda não tirou não pode voltar a valer.
+        context.dataStore.edit { it.remove(Keys.geminiKey) }
     }
     suspend fun setGeminiModel(v: String) = context.dataStore.edit { p ->
-        val value = v.trim()
+        // "models/gemini-…" é como a própria API lista os modelos; o endereço só quer o id.
+        val value = v.trim().removePrefix("models/").trim()
         if (value.isEmpty()) p.remove(Keys.geminiModel) else p[Keys.geminiModel] = value
     }
     suspend fun setAutoBenchmark(v: Boolean) = set(Keys.autoBenchmark, v)
@@ -201,6 +248,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         p[Keys.core(systemId)] ?: p[Keys.benchmark(systemId)]?.let(::decodeBenchmark)?.takeIf { !it.skipped }?.chosen
     }
 
+    /**
+     * Resultado do teste de núcleos do console neste aparelho. O de outro aparelho (backup restaurado num
+     * celular novo) conta como ausente: a escolha não vale aqui e o teste roda de novo.
+     */
     fun benchmark(systemId: String): Flow<SystemBenchmark?> = data.map { p -> p[Keys.benchmark(systemId)]?.let(::decodeBenchmark) }
 
     suspend fun setBenchmark(systemId: String, result: SystemBenchmark?) = context.dataStore.edit { p ->
@@ -208,13 +259,59 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         else p[Keys.benchmark(systemId)] = Http.json.encodeToString(SystemBenchmark.serializer(), result)
     }
 
-    private fun decodeBenchmark(raw: String): SystemBenchmark? = runCatching { Http.json.decodeFromString(SystemBenchmark.serializer(), raw) }.getOrNull()
+    private fun decodeBenchmark(raw: String): SystemBenchmark? =
+        runCatching { Http.json.decodeFromString(SystemBenchmark.serializer(), raw) }.getOrNull()?.takeIf { it.device == BENCH_DEVICE }
     suspend fun setCore(systemId: String, coreId: String) = set(Keys.core(systemId), coreId)
 
-    fun presetFor(systemId: String): Flow<Preset> = data.map { p ->
-        p[Keys.preset(systemId)]?.let { runCatching { Preset.valueOf(it) }.getOrNull() } ?: Preset.BALANCED
+    /** O usuário desligou o Vulkan deste núcleo (ele tem a opção, mas o resultado não agradou). */
+    fun vulkanDisabled(coreId: String): Flow<Boolean> = data.map { it[Keys.noVulkan(coreId)] ?: false }
+    suspend fun setVulkanDisabled(coreId: String, disabled: Boolean) = context.dataStore.edit { p ->
+        if (disabled) p[Keys.noVulkan(coreId)] = true else p.remove(Keys.noVulkan(coreId))
     }
-    suspend fun setPreset(systemId: String, preset: Preset) = set(Keys.preset(systemId), preset.name)
+
+    /** Predefinição escolhida pelo usuário para o console; nulo = automática (a do aparelho). */
+    fun presetChoice(systemId: String): Flow<Preset?> = data.map { p ->
+        p[Keys.preset(systemId)]?.let { runCatching { Preset.valueOf(it) }.getOrNull() }
+    }
+    suspend fun setPresetChoice(systemId: String, preset: Preset?) = context.dataStore.edit { p ->
+        if (preset == null) p.remove(Keys.preset(systemId)) else p[Keys.preset(systemId)] = preset.name
+    }
+
+    /** O que o teste de velocidade (ou o chute pela classe do aparelho) decidiu para [coreId] no console. */
+    fun tuning(systemId: String, coreId: String): Flow<TuneResult?> = data.map { p -> decodeTuning(p[Keys.tuning(systemId, coreId)]) }
+
+    suspend fun setTuning(systemId: String, coreId: String, result: TuneResult) = context.dataStore.edit { p ->
+        p[Keys.tuning(systemId, coreId)] = Http.json.encodeToString(TuneResult.serializer(), result)
+    }
+
+    /** Ajuste próprio de um jogo, que vence o do console. */
+    fun gameTuning(gameId: Long): Flow<TuneResult?> = data.map { p -> decodeTuning(p[Keys.gameTuning(gameId)]) }
+
+    /** Nulo volta o jogo a seguir o console. */
+    suspend fun setGameTuning(gameId: Long, result: TuneResult?) = context.dataStore.edit { p ->
+        if (result == null) p.remove(Keys.gameTuning(gameId))
+        else p[Keys.gameTuning(gameId)] = Http.json.encodeToString(TuneResult.serializer(), result)
+    }
+
+    /** Apaga o que foi medido do console (e dos jogos dele, via [gameIds]): o próximo jogo mede de novo. */
+    suspend fun clearTuning(systemId: String, gameIds: Collection<Long>) = context.dataStore.edit { p ->
+        p.asMap().keys.filter { it.name.startsWith("$TUNE_PREFIX${systemId}_") }.forEach { p.remove(it) }
+        gameIds.forEach { p.remove(Keys.gameTuning(it)) }
+    }
+
+    /** Apaga tudo o que foi medido neste aparelho: o teste dos núcleos e os níveis de qualidade, de consoles e de jogos. */
+    suspend fun clearAllTuning() = context.dataStore.edit { p ->
+        p.asMap().keys.filter { it.name.startsWith(TUNE_PREFIX) || it.name.startsWith(BENCH_PREFIX) }.toList().forEach { p.remove(it) }
+    }
+
+    /** Esquece o que era só de um jogo removido da biblioteca: controle próprio e nível de qualidade medido. */
+    suspend fun forgetGame(gameId: Long) = context.dataStore.edit { p ->
+        p.remove(Keys.gamePadProfile(gameId))
+        p.remove(Keys.gameTuning(gameId))
+    }
+
+    private fun decodeTuning(raw: String?): TuneResult? =
+        raw?.let { runCatching { Http.json.decodeFromString(TuneResult.serializer(), it) }.getOrNull() }
 
     /** Opções de núcleo alteradas manualmente pelo usuário (sobrepõem os presets). */
     suspend fun coreOptions(coreId: String): Map<String, String> =
@@ -276,5 +373,14 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         private const val PAD_PREFIX = "pad_console_"
         private const val OLD_PAD_PREFIX = "pad_profile_"
         private const val GAME_PAD_PREFIX = "pad_game_"
+        private const val BENCH_PREFIX = "bench_"
+        private const val TUNE_PREFIX = "tune_"
+        private const val GAME_TUNE_PREFIX = "tune_game_"
+        /** Arquivo de SharedPreferences fora do backup (res/xml/backup_rules.xml e data_extraction_rules.xml). */
+        private const val SECRETS_FILE = "secrets"
+        private const val SECRET_GEMINI_KEY = "gemini_key"
+
+        /** Como o GameActivity identifica o aparelho em [SystemBenchmark.device]: os dois têm de bater. */
+        val BENCH_DEVICE: String get() = "${Build.MANUFACTURER} ${Build.MODEL}"
     }
 }

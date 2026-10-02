@@ -47,8 +47,9 @@ import com.retrovika.app.ui.components.ambientGlow
 import com.retrovika.app.ui.theme.Palette
 
 /**
- * Primeira vez do console no aparelho: cada núcleo roda o jogo por alguns segundos, acelerado e sem
- * som, numa prévia ao vivo; a lista mostra a velocidade de cada um. Dá para pular (fica o padrão).
+ * Primeira vez do console no aparelho: cada núcleo (ou cada nível de qualidade do núcleo) roda o jogo por
+ * alguns segundos, acelerado e sem som, numa prévia ao vivo; a lista mostra a velocidade de cada um.
+ * Dá para pular (fica o padrão).
  */
 @Composable
 internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?, onSkip: () -> Unit) {
@@ -58,12 +59,25 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Kicker(stringResource(R.string.bench_kicker, system?.shortName.orEmpty()))
+        Kicker(
+            if (state.kind == BenchKind.GAME) stringResource(R.string.tune_kicker_game)
+            else stringResource(R.string.bench_kicker, system?.shortName.orEmpty()),
+        )
         Spacer(Modifier.height(10.dp))
-        Text(stringResource(R.string.bench_title), style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Text(
+            stringResource(if (state.kind == BenchKind.CORES) R.string.bench_title else R.string.tune_title),
+            style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center,
+        )
         Spacer(Modifier.height(6.dp))
         Text(
-            stringResource(R.string.bench_message), style = MaterialTheme.typography.bodySmall,
+            stringResource(
+                when (state.kind) {
+                    BenchKind.CORES -> R.string.bench_message
+                    BenchKind.QUALITY -> R.string.tune_message
+                    BenchKind.GAME -> R.string.tune_message_game
+                },
+            ),
+            style = MaterialTheme.typography.bodySmall,
             color = Palette.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 420.dp),
         )
         Spacer(Modifier.height(18.dp))
@@ -79,8 +93,8 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
         }
         Spacer(Modifier.height(18.dp))
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            state.cores.forEachIndexed { i, core ->
-                val result = state.results.firstOrNull { it.coreId == core.id }
+            state.items.forEachIndexed { i, item ->
+                val result = state.results.firstOrNull { it.coreId == item.id }
                 val done = result != null
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh)
@@ -96,7 +110,7 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(core.displayName, style = MaterialTheme.typography.titleSmall)
+                        Text(item.label, style = MaterialTheme.typography.titleSmall)
                         val speed = result?.speed
                         if (speed != null) {
                             Spacer(Modifier.height(4.dp))

@@ -1,0 +1,17 @@
+{
+"play_res_multi": [
+"1x",
+"2x",
+"4x",
+"8x"
+],
+"play_presentation_mode": [
+"Fit Screen",
+"Fill Screen",
+"Original Size"
+],
+"play_bilinear_filtering": [
+"false",
+"true"
+]
+}

@@ -30,21 +30,42 @@ import com.retrovika.app.core.translate.OcrPack
 import com.retrovika.app.core.update.AppUpdater
 import com.retrovika.app.remote.RemotePlay
 import java.io.File
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.core.tuning.VulkanHealth
+import com.swordfish.libretrodroid.LibretroDroid
 import com.retrovika.app.ui.share.Incoming
 import com.retrovika.app.ui.share.ReceiveSession
 
 /** Contêiner de dependências simples, sem framework de injeção. */
 class AppContainer(app: Application) {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Uma falha num trabalho de fundo (varredura, download, migração) fica no log: sem o handler, uma exceção
+    // não tratada em launch derrubaria o processo inteiro, inclusive um jogo aberto.
+    val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, t -> android.util.Log.e("Retrovika", "Falha em tarefa de fundo", t) },
+    )
     val paths = StoragePaths(app)
     val settings = SettingsRepository(app, scope)
     val database = AppDatabase.build(app)
     val library = LibraryRepository(app, database.games(), paths, settings, scope)
     val cores = CoreManager(app, paths)
+    /** Quais núcleos Vulkan deram certo neste aparelho (ver VulkanHealth). */
+    val vulkanHealth = VulkanHealth(app.getSharedPreferences("vulkan_health", android.content.Context.MODE_PRIVATE))
+    /** Processador, GPU, memória e Vulkan deste aparelho, lidos uma vez (e só quando algum ajuste pede). */
+    val deviceProfile: Deferred<DeviceProfile> = scope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+        val detected = DeviceProfile.detectOrDefault(app)
+        // Declarar Vulkan 1.1 não basta: a ponte do LibretroDroid (buffer compartilhado com o GL) precisa funcionar de verdade.
+        if (detected.vulkan && vulkanHealth.bridgeWorks(bridgeBuild(app)) { LibretroDroid.probeVulkan() }) detected
+        else detected.copy(vulkan = false)
+    }
     /** OCR para jogos japoneses, baixado sob demanda em Ajustes. */
     val ocrPack = OcrPack(app, scope, cores.abi)
     val bios = BiosManager(paths, app.contentResolver)
@@ -64,7 +85,7 @@ class AppContainer(app: Application) {
         dir = File(app.cacheDir, "gameinfo"),
     )
     val dat = DatRepository(app, database.dats())
-    val cheats = CheatRepository(paths)
+    val cheats = CheatRepository(app, paths)
     val sharedStates = SharedStates(app, paths, library)
     /** Estado ou partida recebidos de fora (Intent, QR code), à espera da tela que os mostra. */
     val incoming = MutableStateFlow<Incoming?>(null)
@@ -78,6 +99,13 @@ class AppContainer(app: Application) {
         link = { entry, variant -> catalog.directLink(entry, variant) },
     )
 }
+
+/**
+ * Identifica o que foi testado: o sistema (driver) e a versão do app (a ponte muda com ela). Um "falhou" de uma versão
+ * antiga, com a ponte ainda com defeito, não pode valer para sempre.
+ */
+private fun bridgeBuild(app: Application): String =
+    "${android.os.Build.FINGERPRINT}|${runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull()}"
 
 private const val BACKLOGGD = "https://backloggd.com/"
 

@@ -8,7 +8,6 @@ activityCompose = "1.11.0"
 lifecycle = "2.9.4"
 navigation = "2.9.5"
 room = "2.8.3"
-work = "2.10.5"
 datastore = "1.1.7"
 coil = "3.3.0"
 okhttp = "4.12.0"
@@ -45,7 +44,6 @@ compose-icons = { module = "androidx.compose.material:material-icons-extended" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 datastore = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }

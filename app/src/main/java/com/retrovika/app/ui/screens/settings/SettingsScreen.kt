@@ -105,11 +105,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.rounded.Tune
 import coil3.SingletonImageLoader
 import com.retrovika.app.container
+import com.retrovika.app.core.tuning.DeviceProfile
+import com.retrovika.app.ui.components.tierLabel
 import com.retrovika.app.core.settings.ShaderOption
 import com.retrovika.app.core.storage.formatBytes
 import com.retrovika.app.core.storage.sizeRecursive
 import com.retrovika.app.ui.components.BrandMark
 import com.retrovika.app.ui.components.ChipStrip
+import com.retrovika.app.ui.components.ConfirmDialog
+import com.retrovika.app.ui.components.ReadableWidth
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.retrovika.app.ui.components.IconTile
 import com.retrovika.app.ui.components.Kicker
 import com.retrovika.app.ui.components.LocalBottomInset
@@ -141,6 +146,8 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
     val counts by app.library.counts.collectAsStateWithLifecycle()
     var storageVersion by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
+    // Pasta a desvincular, aguardando confirmação (o URI, para sobreviver à rotação).
+    var confirmFolder by rememberSaveable { mutableStateOf<String?>(null) }
     // Mostra na hora o último cálculo e atualiza em segundo plano: somar a pasta de ROMs demora.
     val storage by produceState(lastStorage, storageVersion) {
         value = withContext(Dispatchers.IO) {
@@ -161,10 +168,11 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
     val activeDownloads by app.downloads.activeCount.collectAsStateWithLifecycle()
     val update by app.updater.state.collectAsStateWithLifecycle()
 
+    ReadableWidth { side ->
     LazyColumn(
         Modifier.fillMaxSize().ambientGlow(secondary = Palette.Cyan),
         state = listState,
-        contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp),
+        contentPadding = PaddingValues(start = side, end = side, bottom = LocalBottomInset.current + 24.dp),
     ) {
         item { ScreenHeader(stringResource(R.string.settings_title), subtitle = stringResource(R.string.settings_subtitle)) }
 
@@ -203,18 +211,12 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                     IconTile(Icons.Rounded.Folder, Palette.Sun, size = 36.dp)
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        Uri.decode(uri).substringAfterLast("tree/").replace("primary:", stringResource(R.string.settings_folder_internal)),
+                        folderLabel(uri),
                         style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = {
-                        // Varreduras no escopo do app: trocar de aba no meio não as interrompe.
-                        app.scope.launch {
-                            runCatching { context.contentResolver.releasePersistableUriPermission(Uri.parse(uri), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                            repo.removeFolder(uri)
-                            app.library.rescan()
-                        }
-                    }) { Icon(Icons.Rounded.Close, stringResource(R.string.settings_remove_folder), tint = Palette.TextMuted) }
+                    // Os jogos da pasta saem da biblioteca: pede confirmação antes.
+                    IconButton(onClick = { confirmFolder = uri }) { Icon(Icons.Rounded.Close, stringResource(R.string.settings_remove_folder), tint = Palette.TextMuted) }
                 }
             }
             NavRow(Icons.Rounded.CreateNewFolder, Palette.Neon, stringResource(R.string.common_link_folder), stringResource(R.string.settings_link_folder_subtitle), onClick = onAddFolder)
@@ -284,7 +286,7 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                         }
                     }
                 },
-                onClick = {},
+                onClick = null,
             )
         }
 
@@ -300,6 +302,20 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             ChipRow(Icons.Rounded.Tv, Palette.Neon, stringResource(R.string.settings_default_shader), ShaderOption.entries, s.shader, { stringResource(it.label) }) { scope.launch { repo.setShader(it) } }
             RowDivider()
             SwitchRow(Icons.Rounded.Speed, Palette.Sun, stringResource(R.string.settings_auto_benchmark), stringResource(R.string.settings_auto_benchmark_subtitle), s.autoBenchmark) { scope.launch { repo.setAutoBenchmark(it) } }
+            RowDivider()
+            // O que o app sabe deste aparelho e que decide o ajuste inicial de cada núcleo.
+            val device by produceState<DeviceProfile?>(null) { value = app.deviceProfile.await() }
+            device?.let { d ->
+                NavRow(
+                    Icons.Rounded.Memory, Palette.Cyan, stringResource(R.string.tune_device_title),
+                    listOfNotNull(d.soc.takeIf { it.isNotBlank() }, d.gpu, stringResource(R.string.tune_device_ram, (d.ramMb + 512) / 1024)).joinToString(" · ") +
+                        "\n" + stringResource(R.string.tune_device_class, tierLabel(d.tier)),
+                    trailing = {
+                        TextButton(onClick = { scope.launch { repo.clearAllTuning(); app.vulkanHealth.reset() } }) { Text(stringResource(R.string.tune_reset), color = Palette.Neon) }
+                    },
+                    onClick = null,
+                )
+            }
         }
 
         group(R.string.settings_group_translate) {
@@ -371,6 +387,25 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             }
         }
     }
+    }
+
+    confirmFolder?.let { uri ->
+        ConfirmDialog(
+            title = stringResource(R.string.settings_remove_folder_title),
+            message = stringResource(R.string.settings_remove_folder_message, folderLabel(uri)),
+            confirmLabel = stringResource(R.string.settings_remove_folder),
+            onConfirm = {
+                // Varreduras no escopo do app: trocar de aba no meio não as interrompe.
+                app.scope.launch {
+                    runCatching { context.contentResolver.releasePersistableUriPermission(Uri.parse(uri), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                    repo.removeFolder(uri)
+                    app.library.rescan()
+                }
+            },
+            onDismiss = { confirmFolder = null },
+            icon = Icons.Rounded.Folder,
+        )
+    }
 
     if (confirmReset) {
         AlertDialog(
@@ -388,6 +423,11 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
         )
     }
 }
+
+/** Caminho legível de uma pasta vinculada ("Armazenamento interno/ROMs"). */
+@Composable
+private fun folderLabel(uri: String): String =
+    Uri.decode(uri).substringAfterLast("tree/").replace("primary:", stringResource(R.string.settings_folder_internal))
 
 /** Último uso de armazenamento calculado, guardado entre as visitas à aba. */
 private var lastStorage: StorageUsage? = null
@@ -455,10 +495,12 @@ private fun NavRow(
     title: String,
     subtitle: String,
     trailing: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
+    // Nulo: linha só informativa (com ações próprias no [trailing]), sem toque nem seta de "abrir".
+    onClick: (() -> Unit)?,
 ) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconTile(icon, tint, size = 36.dp)
@@ -468,7 +510,7 @@ private fun NavRow(
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
         }
         Spacer(Modifier.width(8.dp))
-        if (trailing != null) trailing() else Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.TextMuted)
+        if (trailing != null) trailing() else if (onClick != null) Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Palette.TextMuted)
     }
 }
 

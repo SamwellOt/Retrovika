@@ -91,6 +91,12 @@ public:
     bool isUseDepth() const;
     bool isHwContextRejected() const;
     void setRelaxedGlesVersion(bool relaxed);
+
+    /** O núcleo pode pedir um contexto Vulkan (ponte por AHardwareBuffer); recusado quando falso. */
+    static void setAllowVulkan(bool allow);
+    bool isUseVulkan() const;
+    /** O núcleo recebeu o contexto de vídeo que pediu (GLES ou Vulkan). */
+    bool isHwContextAccepted() const;
     const retro_frame_time_callback& getFrameTimeCallback() const { return frameTimeCallback; }
     bool isUseStencil() const;
     bool isBottomLeftOrigin() const;
@@ -118,6 +124,7 @@ private:
     bool environment_handle_get_variable(struct retro_variable* requested);
     bool environment_handle_set_controller_info(const struct retro_controller_info* received);
     bool environment_handle_set_hw_render(struct retro_hw_render_callback* hw_render_callback);
+    bool environment_handle_set_hw_render_vulkan(struct retro_hw_render_callback* hw_render_callback);
     bool environment_handle_get_vfs_interface(struct retro_vfs_interface_info* vfs_interface_info);
     bool environment_handle_get_microphone_interface(struct retro_microphone_interface* microphone_interface);
 
@@ -137,6 +144,7 @@ private:
     bool useHWAcceleration = false;
     bool useDepth = false;
     bool hwContextRejected = false;
+    bool useVulkan = false;
     bool relaxedGlesVersion = false;
     retro_frame_time_callback frameTimeCallback {};
     bool useStencil = false;

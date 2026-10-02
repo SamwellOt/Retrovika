@@ -22,7 +22,7 @@ mesmo submódulo do LibretroDroid 0.13.2.
   (base fixa de 640x480, com a resolução interna em 1280x960) e o Dolphin apareciam cortados ou num canto. O
   FBO agora usa a geometria máxima, só cresce, e a área útil de cada quadro é copiada (`glBlitFramebuffer`)
   para uma textura do tamanho exato, que é a que os shaders leem.
-- **Só contextos GLES são aceitos** em `SET_HW_RENDER`. Aceitar Vulkan ou GL de desktop fazia o núcleo
+- **Só contextos GLES são aceitos** em `SET_HW_RENDER` (Vulkan só pela ponte descrita abaixo, e só quando o app a liga). Aceitar Vulkan ou GL de desktop sem isso fazia o núcleo
   achar que tinha um contexto que nunca chegaria; recusando, ele cai para GLES.
 - **Ordem da inicialização igual à do RetroArch** (`libretrodroid.cpp`): `retro_set_environment`,
   `retro_init` e só depois os callbacks de vídeo, áudio e entrada. O Mesen (NES) derrubava o app ao receber
@@ -61,4 +61,37 @@ mesmo submódulo do LibretroDroid 0.13.2.
   `setAudioCapture`/`readCapturedAudio`): depois de cada quadro, a área do jogo é copiada para uma textura e dela
   para a superfície de um encoder, na thread de emulação; as amostras de áudio vão também para um buffer circular.
   Usado pelo "Jogar pela rede" do app. Só GLES 3.
+- **Contexto Vulkan para núcleos libretro** (`vulkan/vulkancontext.*`, `renderers/es3/vulkanrendereres3.*`, `Environment`).
+  Só com `GLRetroViewData.allowVulkan` (o app liga por núcleo); sem isso `SET_HW_RENDER` Vulkan segue recusado. O
+  núcleo desenha na `VkImage` dele; o frontend não tem swapchain: cada quadro é copiado (`vkCmdBlitImage`) para um
+  `AHardwareBuffer` de 4 buffers, importado no GL como `EGLImage`, e daí é uma textura comum (origem no topo) para a
+  cadeia de shaders de sempre, com captura, rotação e snapshot inalterados. Exige GLES 3, loader Vulkan 1.1,
+  `VK_ANDROID_external_memory_android_hardware_buffer` e as extensões de EGL para importar o buffer
+  (`VulkanContext::isAvailable`); sem isso o pedido é recusado e o núcleo cai para outro renderizador.
+  Instância e dispositivo: pela negociação do núcleo (v1 `create_device`, v2 `create_instance` e `create_device2`,
+  em que o frontend soma as extensões da ponte) ou criados aqui; o `destroy_device` dele roda antes do dispositivo e
+  da instância. A interface (`GET_HW_RENDER_INTERFACE`, versão 5) tem `set_image`, índice de sincronização (3),
+  `set_command_buffers` (enviados junto da cópia), `lock_queue` e `set_signal_semaphore`. A GPU pode ficar um quadro
+  atrás (no máximo dois adiantados): mostra o quadro mais novo que já terminou, sem esperar o atual. O contexto é
+  criado em `onSurfaceCreated`, antes do `context_reset`. Antes disso, no próprio `SET_HW_RENDER`, `isAvailable()` faz um
+  autoteste completo com um contexto descartável (instância, dispositivo e um buffer Vulkan > AHardwareBuffer > EGLImage):
+  se falhar, o pedido é recusado e o núcleo cai para outro renderizador, em vez de se comprometer e perder o contexto
+  depois (o PPSSPP, por exemplo, não se descarrega sem abortar o processo depois de um carregamento nesse estado).
+  Falha na criação do contexto, ainda assim, vira `ERROR_GL_NOT_COMPATIBLE` (o app volta ao renderizador sem Vulkan).
+  O `context_destroy` do núcleo roda sempre no `destroy()`, mesmo sem `context_reset`: é ele que encerra as threads de
+  vídeo do núcleo.
+- **`GLRetroView.onDestroy` sempre chama `LibretroDroid.destroy()`**, mesmo depois de um erro (`isAborted`). Antes, o
+  `catchExceptions` o ignorava, o núcleo carregado ficava vivo até o próximo `create()` e era descarregado sem o
+  `retro_unload_game`: um núcleo com threads (PPSSPP) abortava o processo no `dlclose`.
+- **Ponte Vulkan quebrada vira erro** (`libretrodroidjni.cpp`, `VulkanContext::isLost`): espera da GPU estourada,
+  envio recusado ou falta de memória para os buffers deixavam a tela preta para sempre, sem aviso. Agora o `step`
+  lança `ERROR_GL_NOT_COMPATIBLE`, que chega pelo `getGLRetroErrors()`. Quadro descartado ainda envia os command
+  buffers e os semáforos do núcleo, que senão ficaria esperando um trabalho que nunca roda.
+- **Threads e tempo de vida** (`libretrodroid.cpp`, `audio.cpp`, `video.cpp`): `onSurfaceCreated`/`onSurfaceChanged`,
+  `refreshAspectRatio` e `setViewport` pegam o `coreLock` (o `destroy()` da thread principal descarregava o núcleo no
+  meio deles); a entrada é lida com o `inputLock` (núcleos com thread própria a liam enquanto o `pause()` a soltava);
+  a saída de áudio reaberta pelo Oboe troca fila e buffers de uma vez, e o callback nunca pede mais amostras do que o
+  buffer temporário comporta (no avanço rápido o `readNow` escrevia além do fim dele). `Video` ganhou destrutor
+  (renderizador, programas de shader, captura), o conteúdo do jogo, o caminho e os códigos de trapaça vivem até o
+  `destroy()` em vez de vazar, e as opções e controles de um núcleo não passam mais para o seguinte.
 - `#include <functional>` em `rumble.h` e `utils/javautils.h`, exigido pelos NDKs atuais.

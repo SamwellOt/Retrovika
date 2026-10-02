@@ -16,7 +16,7 @@ object GameTitles {
     /** Remove região/revisão entre parênteses e colchetes, sufixos de formato e sublinhados. */
     fun clean(raw: String): String {
         var t = raw.replace('_', ' ')
-        t = t.replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
+        t = t.replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), " ")
         // "Jogo PSX ISO", "Jogo GBA": o console e o formato repetem o que a página já diz.
         repeat(3) { t = t.replace(trailing, " ").trim() }
         // "Legend of Zelda, The" (ordem de catálogo) volta a "The Legend of Zelda".

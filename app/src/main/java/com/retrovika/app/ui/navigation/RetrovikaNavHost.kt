@@ -32,7 +32,18 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.semantics.Role
+import com.retrovika.app.ui.components.LocalReduceMotion
+import com.retrovika.app.ui.components.systemAnimationsOff
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,7 +51,6 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -126,10 +136,14 @@ fun RetrovikaNavHost() {
     val context = LocalContext.current
     val app = context.container
     val backStack by nav.currentBackStackEntryAsState()
-    val route = backStack?.destination?.route
+    // No primeiro quadro a pilha ainda não tem entrada: sem o padrão, a barra de abas sumia e entrava animada.
+    val route = backStack?.destination?.route ?: "home"
     // Só o que a raiz usa: observar a lista inteira de downloads recompunha o NavHost a cada aviso de progresso.
-    val reduceMotion by remember { app.settings.cached.map { it.reduceMotion }.distinctUntilChanged() }
+    val reduceMotionSetting by remember { app.settings.cached.map { it.reduceMotion }.distinctUntilChanged() }
         .collectAsStateWithLifecycle(app.settings.cached.value.reduceMotion)
+    // Animações desligadas no Android também contam (lido ao criar a Activity).
+    val systemNoAnimations = remember { context.systemAnimationsOff() }
+    val reduceMotion = reduceMotionSetting || systemNoAnimations
     val activeDownloads by app.downloads.activeCount.collectAsStateWithLifecycle()
     // Tocar de novo na aba aberta: a tela daquela aba rola de volta ao topo.
     val reselect = remember { MutableSharedFlow<String>(extraBufferCapacity = 1) }
@@ -191,9 +205,13 @@ fun RetrovikaNavHost() {
           CompositionLocalProvider(
               LocalBottomInset provides padding.calculateBottomPadding(),
               LocalTabReselect provides reselect,
+              LocalReduceMotion provides reduceMotion,
           ) {
             NavHost(
                 nav, startDestination = "home",
+                // Na horizontal, a barra de navegação de 3 botões e o recorte da câmera ficam nas laterais:
+                // as telas só cuidam do topo e da base, então as laterais são descontadas aqui.
+                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
                 // Abas trocam com um fade curto; telas empilhadas entram deslizando levemente da direita.
                 // Durações enxutas: durante a transição as duas telas são desenhadas ao mesmo tempo.
                 // Com "reduzir animações" a troca é imediata: só uma tela é desenhada por vez.
@@ -352,13 +370,14 @@ private fun NavHostController.openTabRoot(route: String) {
  * A aba de downloads mostra quantos estão em andamento.
  */
 @Composable
-private fun FloatingTabBar(route: String?, activeDownloads: Int, onSelect: (String) -> Unit) {
+private fun FloatingTabBar(route: String, activeDownloads: Int, onSelect: (String) -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .background(Brush.verticalGradient(0f to Color.Transparent, 0.25f to Palette.Ink.copy(alpha = 0.94f), 0.55f to Palette.Ink))
-            .navigationBarsPadding()
+            // Barra de navegação (embaixo ou na lateral) e recorte da câmera na horizontal.
+            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)))
             .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)
             .shadow(24.dp, shape, ambientColor = Palette.Neon, spotColor = Palette.Neon)
             .clip(shape)
@@ -379,15 +398,20 @@ private fun FloatingTabBar(route: String?, activeDownloads: Int, onSelect: (Stri
                     .then(if (selected) Modifier.weight(1f, fill = false) else Modifier)
                     .clip(RoundedCornerShape(22.dp))
                     .then(if (selected) Modifier.background(Palette.SunsetHorizontal) else Modifier)
-                    .clickable(onClickLabel = label) { onSelect(tab.route) }
+                    // Aba de verdade para o leitor de tela ("selecionada", "aba 2 de 5"); tocar na ativa ainda
+                    // chama onSelect (volta ao topo).
+                    .selectable(selected = selected, role = Role.Tab) { onSelect(tab.route) }
                     .animateContentSize(spring(stiffness = 500f))
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
             ) {
                 BadgedBox(badge = {
                     if (badge > 0) Badge(containerColor = Palette.Cyan, contentColor = Palette.Ink) { Text("$badge") }
                 }) {
-                    Icon(tab.icon, label, tint = tint, modifier = Modifier.size(22.dp))
+                    // Na aba ativa o rótulo aparece ao lado: descrever o ícone também faria o nome ser lido duas vezes.
+                    Icon(tab.icon, if (selected) null else label, tint = tint, modifier = Modifier.size(22.dp))
                 }
                 if (selected) {
                     Spacer(Modifier.width(6.dp))

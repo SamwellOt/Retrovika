@@ -37,4 +37,11 @@
     <string name="settings_ai_model_hint">Padrão: %1$s (sempre o Flash mais novo)</string>
     <string name="settings_ai_save">Salvar</string>
     <string name="settings_ai_remove">Remover chave</string>
+    <!-- Download do runtime de dentro do .aar (RemoteZip). -->
+    <string name="remote_zip_missing_entry">%s não está no pacote baixado</string>
+    <string name="remote_zip_corrupt">%s chegou corrompido. Tente de novo.</string>
+    <string name="remote_zip_no_range">O servidor não aceita download em partes</string>
+    <string name="remote_zip_invalid">O pacote baixado não é um arquivo compactado válido</string>
+    <string name="settings_ocr_pack_delete_title">Apagar o pacote de OCR?</string>
+    <string name="settings_ocr_pack_delete_message">Para usá-lo de novo, será preciso baixá-lo outra vez (cerca de %1$d MB).</string>
 </resources>

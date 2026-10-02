@@ -115,7 +115,6 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
 
-    implementation(libs.work.runtime)
     implementation(libs.datastore)
     implementation(libs.documentfile)
     implementation(libs.coil.compose)

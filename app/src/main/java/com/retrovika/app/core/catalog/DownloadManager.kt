@@ -93,6 +93,11 @@ class DownloadManager(
     private val jobs = ConcurrentHashMap<String, Job>()
     /** O trabalho de cada tarefa, guardado para "tentar de novo" refazer o mesmo pedido. */
     private val work = ConcurrentHashMap<String, suspend (String) -> Unit>()
+    /**
+     * O .part de cada tarefa que falhou no meio, para "tentar de novo" continuar dali (ver [Http.ResumePoint]).
+     * Apagado quando a tarefa é cancelada, concluída ou sai da lista.
+     */
+    private val resumes = ConcurrentHashMap<String, Http.ResumePoint>()
 
     // Fila: no máximo AppSettings.maxDownloads baixando; os outros ficam QUEUED até abrir uma vaga.
     // Extrair também ocupa a vaga, porque disputa o mesmo disco.
@@ -108,6 +113,17 @@ class DownloadManager(
      * antes de começar, para a limpeza nunca apagar o temporário de um download em andamento.
      */
     private val sweep: Job = scope.launch(Dispatchers.IO) { runCatching { library.sweepStaleParts() } }
+
+    init {
+        // Serviço em primeiro plano enquanto a fila não está vazia: sem ele o Android mata o processo, e o
+        // download junto, pouco depois de o usuário sair do app. Ele mesmo se encerra quando a fila esvazia.
+        scope.launch { activeCount.collect { n -> if (n > 0) DownloadService.start(context) } }
+    }
+
+    /** Apaga o .part guardado de uma tarefa que não vai mais continuar. */
+    private fun discardResume(id: String) {
+        resumes.remove(id)?.let { point -> scope.launch(Dispatchers.IO) { point.discard() } }
+    }
 
     fun enqueue(entry: CatalogEntry) {
         val system = Systems.byId(entry.systemId) ?: return
@@ -180,7 +196,7 @@ class DownloadManager(
         work[task.id] = block
         // Pedir de novo um jogo que tinha falhado substitui a tentativa antiga, em vez de deixá-la na lista.
         val stale = _tasks.value.filter { task.entryKey != null && it.entryKey == task.entryKey && it.status in RETRYABLE }.map { it.id }.toSet()
-        stale.forEach { work.remove(it) }
+        stale.forEach { work.remove(it); discardResume(it) }
         _tasks.update { list -> listOf(task) + list.filterNot { it.id in stale } }
         start(task.id)
     }
@@ -201,8 +217,11 @@ class DownloadManager(
                 block(id)
                 // Concluído não se refaz: soltar o pedido libera a entrada, os cookies e os cabeçalhos guardados.
                 work.remove(id)
+                discardResume(id)
             } catch (t: kotlinx.coroutines.CancellationException) {
                 update(id) { it.copy(status = DownloadStatus.CANCELED, speed = 0, retryAt = 0) }
+                // Cancelado pelo usuário: nada a continuar depois.
+                discardResume(id)
                 throw t
             } catch (t: Throwable) {
                 update(id) { it.copy(status = DownloadStatus.FAILED, error = t.userMessage(context), speed = 0, retryAt = 0) }
@@ -266,18 +285,22 @@ class DownloadManager(
         val dir = paths.romsFor(system.id)
         val target = File(dir, FileNames.safe(fileName))
         // Velocidade suavizada: a média móvel evita que o número pule a cada aviso.
-        var lastBytes = 0L
+        // -1: ainda sem amostra. Continuando um .part guardado, o primeiro aviso já traz o que veio antes, e
+        // contar isso como baixado agora mostraria uma velocidade absurda.
+        var lastBytes = -1L
         var lastTime = System.nanoTime()
         var saved: File? = null
         val file = try {
             // keepExisting: outro jogo com o mesmo nome de arquivo (dois "rom.gb") não é apagado.
-            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), parallel = parallel, onSaved = { saved = it }, onWait = { until ->
+            // resume: uma falha no meio deixa o .part guardado, e "tentar de novo" continua de onde parou.
+            val resume = resumes.getOrPut(taskId) { Http.ResumePoint() }
+            Http.download(url, target, headers, cookiesFor, keepExisting = true, serverName = serverName, http = Http.clientFor(ipv6), parallel = parallel, resume = resume, onSaved = { saved = it }, onWait = { until ->
                 if (until > 0) onWaited()
                 update(taskId) { it.copy(retryAt = until, speed = 0) }
             }, onBytes = { read, total ->
                 val now = System.nanoTime()
                 val elapsed = (now - lastTime) / 1e9
-                val instant = if (elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L
+                val instant = if (lastBytes >= 0 && elapsed > 0) ((read - lastBytes) / elapsed).toLong() else 0L
                 lastBytes = read
                 lastTime = now
                 update(taskId) {
@@ -350,13 +373,14 @@ class DownloadManager(
     fun remove(id: String) {
         if (jobs.containsKey(id)) return
         work.remove(id)
+        discardResume(id)
         _tasks.update { list -> list.filterNot { it.id == id } }
     }
 
     /** Limpa da lista os downloads concluídos; os que falharam continuam lá para tentar de novo. */
     fun clearCompleted() {
         val done = _tasks.value.filter { it.status == DownloadStatus.DONE }.map { it.id }.toSet()
-        done.forEach { work.remove(it) }
+        done.forEach { work.remove(it); discardResume(it) }
         _tasks.update { list -> list.filterNot { it.id in done } }
     }
 

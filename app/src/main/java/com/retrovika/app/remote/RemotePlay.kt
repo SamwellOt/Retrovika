@@ -24,6 +24,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.Json
+import java.security.MessageDigest
 import java.security.SecureRandom
 
 /** O que as páginas precisam saber do jogo aberto. */
@@ -66,8 +67,17 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
 
     private val lock = Any()
     private val sessions = mutableListOf<Session>()
-    /** Porta de cada controle já conectado ("id/slot"): ao reconectar, volta a ser o mesmo jogador. */
-    private val rememberedPorts = mutableMapOf<String, Int>()
+    /**
+     * Porta de cada controle já conectado ("endereço/id/slot"): ao reconectar, volta a ser o mesmo jogador.
+     * O id vem do navegador, então a lista tem teto: as entradas mais antigas saem primeiro.
+     */
+    private val rememberedPorts = object : LinkedHashMap<String, Int>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?) = size > MAX_REMEMBERED
+    }
+    /**
+     * Endereços expulsos pelo menu. Pelo endereço, não pelo id: o id é o navegador que escolhe, e quem foi
+     * expulso voltaria só trocando de id.
+     */
     private val kicked = mutableSetOf<String>()
     /** Códigos errados por endereço: (quantidade, início da janela). */
     private val failures = mutableMapOf<String, Pair<Int, Long>>()
@@ -193,9 +203,22 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     }
 
     fun kick(clientId: Int) {
-        val session = synchronized(lock) { sessions.firstOrNull { it.connection.id == clientId } } ?: return
-        synchronized(lock) { kicked += session.clientKey }
+        val session = synchronized(lock) {
+            val s = sessions.firstOrNull { it.connection.id == clientId } ?: return
+            kicked += s.connection.remoteAddress
+            // Sai da lista e solta as portas já: nos instantes até a conexão fechar, o que ela mandar não chega
+            // mais ao jogo (onText só aceita sessões da lista).
+            sessions -= s
+            releasePorts(s)
+            s
+        }
         closeWith(session.connection, "kicked")
+        // onClose não acha mais a sessão na lista: avisa daqui.
+        publishClients()
+        if (session.kind == Kind.SCREEN) {
+            updateStreaming()
+            applyHostAudio()
+        }
     }
 
     private fun closeWith(connection: WsConnection, message: String) {
@@ -254,32 +277,46 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         return HttpResponse(200, "text/html; charset=utf-8", body)
     }
 
-    override fun authorize(request: HttpRequest, remoteAddress: String): HttpResponse? = synchronized(lock) {
+    override fun authorize(request: HttpRequest, remoteAddress: String): HttpResponse? {
+        // Fora da trava: um código errado acima do limite espera antes de responder (checkCode).
         checkCode(request, remoteAddress)?.let { return it }
-        if (clientKey(request) in kicked) return HttpResponse.text(403, "")
-        null
+        return synchronized(lock) { if (remoteAddress in kicked) HttpResponse.text(403, "") else null }
     }
 
-    /** Recusa (403/429) ou null se o código confere. */
-    private fun checkCode(request: HttpRequest, remoteAddress: String): HttpResponse? = synchronized(lock) {
-        // Seis dígitos: sem limite, dava para adivinhar tentando todos. A janela zera sozinha, porque uma
-        // TV que ficou tentando com o código de antes (o app reiniciou) não pode ficar bloqueada para sempre.
-        val now = System.currentTimeMillis()
-        val (count, since) = failures[remoteAddress]?.takeIf { now - it.second < FAILURE_WINDOW_MS } ?: (0 to now)
-        val (total, totalSince) = globalFailures.takeIf { now - it.second < FAILURE_WINDOW_MS } ?: (0 to now)
-        if (count >= MAX_FAILURES || total >= MAX_GLOBAL_FAILURES) return HttpResponse.text(429, "")
-        if (request.query["c"] != code) {
+    /**
+     * Recusa (403/429) ou null se o código confere. O código certo passa sempre, sem olhar contador nenhum:
+     * se os erros bloqueassem todo mundo, qualquer aparelho da rede (ou uma página aberta no navegador da TV,
+     * com um `<img src=…/qr.svg?c=0>`) deixaria os jogadores de verdade de fora errando de propósito.
+     *
+     * Seis dígitos: sem limite, dava para adivinhar tentando todos. Por isso o erro acima do limite (por
+     * endereço ou de todos juntos, para quem troca de endereço) demora [FAILURE_DELAY_MS] para responder:
+     * com o teto de conexões do servidor, isso segura o ritmo de quem chuta. A janela zera sozinha, porque
+     * uma TV que ficou tentando com o código de antes (o app reiniciou) não pode ficar lenta para sempre.
+     */
+    private fun checkCode(request: HttpRequest, remoteAddress: String): HttpResponse? {
+        val given = request.query["c"]
+        if (given != null && MessageDigest.isEqual(given.toByteArray(), code.toByteArray())) return null
+        val limited = synchronized(lock) {
+            val now = System.currentTimeMillis()
+            val (count, since) = failures[remoteAddress]?.takeIf { now - it.second < FAILURE_WINDOW_MS } ?: (0 to now)
+            val (total, totalSince) = globalFailures.takeIf { now - it.second < FAILURE_WINDOW_MS } ?: (0 to now)
             failures.entries.removeAll { now - it.value.second >= FAILURE_WINDOW_MS }
             failures[remoteAddress] = (count + 1) to since
             globalFailures = (total + 1) to totalSince
-            return HttpResponse.text(403, "")
+            count >= MAX_FAILURES || total >= MAX_GLOBAL_FAILURES
         }
-        null
+        if (!limited) return HttpResponse.text(403, "")
+        try {
+            Thread.sleep(FAILURE_DELAY_MS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        return HttpResponse.text(429, "")
     }
 
     override fun onOpen(connection: WsConnection, request: HttpRequest) {
         val kind = if (request.query["role"] == "screen") Kind.SCREEN else Kind.PAD
-        val session = Session(connection, kind, clientKey(request), request.query["name"].orEmpty().take(40))
+        val session = Session(connection, kind, clientKey(request, connection.remoteAddress), request.query["name"].orEmpty().take(40))
         connection.attachment = session
         val stale = synchronized(lock) {
             // O mesmo aparelho voltando (o Wi-Fi caiu sem fechar a conexão antiga): a antiga sai já, senão
@@ -346,7 +383,9 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
                 view?.sendKeyEvent(if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, key, port)
                 if (down) session.held += port to key else session.held -= port to key
             }
-            "m" -> {
+            "m" -> synchronized(lock) {
+                // Como nas teclas: uma sessão expulsa ou substituída não move mais nada, nem no meio da saída.
+                if (session !in sessions) return
                 val port = session.slots[slot] ?: return
                 val source = MOTION_SOURCES.getOrNull(msg.int("s") ?: return) ?: return
                 val x = msg.float("x")?.coerceIn(-1f, 1f) ?: 0f
@@ -355,7 +394,11 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
             }
             // A tela pede um jogador para o teclado ou um controle ligado no computador.
             "join" -> {
-                val port = synchronized(lock) { if (session in sessions) assignPort(session, slot) else null }
+                if (session.kind != Kind.SCREEN) return
+                // Slot fora da faixa recebe "cheio": a página para de pedir e a lista de portas lembradas não
+                // ganha uma entrada por número inventado.
+                val port = if (slot !in 0 until MAX_SLOTS) null
+                else synchronized(lock) { if (session in sessions) assignPort(session, slot) else null }
                 session.connection.sendText(
                     if (port == null) json("t" to "full", "p" to slot)
                     else json("t" to "player", "p" to slot, "port" to port),
@@ -364,20 +407,36 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
                 if (port != null) publishClients()
             }
             "leave" -> {
-                synchronized(lock) {
-                    session.slots.remove(slot)?.let { port -> releasePort(session, port) }
+                val left = synchronized(lock) {
+                    val port = session.slots.remove(slot) ?: return@synchronized false
+                    releasePort(session, port)
+                    // Saída de propósito (o controle foi desligado do computador): não há porta a guardar.
+                    rememberedPorts.remove("${session.clientKey}/$slot")
+                    true
                 }
-                publishClients()
+                if (left) publishClients()
             }
             "name" -> {
-                session.name = msg.string("v").orEmpty().take(40)
+                val name = msg.string("v").orEmpty().take(40)
+                val now = System.currentTimeMillis()
+                // Cada troca avisa todas as telas e o menu: em rajada, só a primeira de cada intervalo vale.
+                if (name == session.name || now - session.lastNameAt < CONTROL_INTERVAL_MS) return
+                session.lastNameAt = now
+                session.name = name
                 publishClients()
             }
             // A tela descartou quadros (fila cheia no navegador): precisa de um quadro-chave para voltar.
             "key" -> if (session.kind == Kind.SCREEN) requestKeyFrame()
-            // O player da tela deu erro: recomeça do segmento de inicialização.
+            // O player da tela deu erro: recomeça do segmento de inicialização. Cada pedido força um
+            // quadro-chave (pesado para o encoder): no máximo um por intervalo.
             "restart" -> if (session.kind == Kind.SCREEN) {
-                synchronized(lock) { fmp4?.let { startVideo(session, it) } }
+                val now = System.currentTimeMillis()
+                if (now - session.lastRestartAt < CONTROL_INTERVAL_MS) return
+                session.lastRestartAt = now
+                synchronized(lock) {
+                    if (session !in sessions) return
+                    fmp4?.let { startVideo(session, it) }
+                }
                 requestKeyFrame(force = true)
             }
         }
@@ -666,7 +725,12 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
 
     // endregion
 
-    private fun clientKey(request: HttpRequest) = request.query["id"].orEmpty().take(64).ifEmpty { "anon-${request.hashCode()}" }
+    /**
+     * Quem é o aparelho: o id que o navegador guarda, preso ao endereço dele. Sem o endereço, outro aparelho
+     * com o código podia mandar o mesmo id e tomar a vaga (e a porta) de quem já joga.
+     */
+    private fun clientKey(request: HttpRequest, remoteAddress: String) =
+        remoteAddress + "/" + request.query["id"].orEmpty().take(64).ifEmpty { "anon-${request.hashCode()}" }
 
     private class Session(val connection: WsConnection, val kind: Kind, val clientKey: String, var name: String) {
         /**
@@ -677,6 +741,9 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         /** Escrito pela thread da conexão e lido por quem solta as teclas (saída, parar o servidor). */
         val held: MutableSet<Pair<Int, Int>> = java.util.concurrent.ConcurrentHashMap.newKeySet()
         @Volatile var video: VideoTrack? = null
+        /** Só a thread da conexão mexe: limitam "restart" e "name" em rajada. */
+        var lastRestartAt = 0L
+        var lastNameAt = 0L
     }
 
     companion object {
@@ -686,6 +753,13 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         private const val MAX_FAILURES = 20
         private const val MAX_GLOBAL_FAILURES = 60
         private const val FAILURE_WINDOW_MS = 60_000L
+        private const val FAILURE_DELAY_MS = 5_000L
+        /** Slots locais de uma conexão: o controle (0) e, na tela, teclado e controles do computador. */
+        private const val MAX_SLOTS = 16
+        /** Portas lembradas para quem reconectar: as mais antigas saem antes. */
+        private const val MAX_REMEMBERED = 64
+        /** Mínimo entre dois "restart" (cada um força um quadro-chave) ou duas trocas de nome de uma conexão. */
+        private const val CONTROL_INTERVAL_MS = 1_000L
         /** Núcleos pesados (PS2, GameCube) demoram a mostrar o primeiro quadro: folga antes de dar erro. */
         private const val VIDEO_TIMEOUT_MS = 12_000L
         /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */

@@ -1,6 +1,7 @@
 package com.retrovika.app.core.systems
 
 import com.retrovika.app.R
+import com.retrovika.app.core.tuning.DeviceTier
 import com.retrovika.app.emulation.input.PadLayouts
 
 /**
@@ -162,6 +163,8 @@ object Systems {
             cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD)),
             layout = PadLayouts.WII, accent = 0xFF90CAF9,
             libretroDbName = "Nintendo - Wii", experimental = true,
+            // .wad também é o pacote de dados do Doom (e de outros jogos de PC): só dentro de uma pasta "wii".
+            folderOnlyExtensions = setOf("wad"),
         ),
         GameSystem(
             id = "psx", name = "PlayStation", shortName = "PS1",
@@ -211,9 +214,48 @@ object Systems {
             manufacturer = "Sony", year = 2000,
             extensions = setOf("iso", "chd", "cso", "bin", "cue"),
             cores = listOf(
-                CoreInfo("play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true),
+                CoreInfo(
+                    "play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true,
+                    // O Play! desenha com GLES 3 (é o único PS2 daqui que usa a GPU): o custo é o preenchimento, e a
+                    // resolução é o que o nível escolhe. Valores da lista do próprio núcleo ("1x|2x|4x|8x").
+                    defaults = mapOf("play_res_multi" to "1x"),
+                    presets = mapOf(
+                        Preset.PERFORMANCE to mapOf("play_res_multi" to "1x"),
+                        Preset.BALANCED to mapOf("play_res_multi" to "2x"),
+                        Preset.QUALITY to mapOf("play_res_multi" to "4x"),
+                    ),
+                ),
                 CoreInfo(
                     "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
+                    // Vulkan pela ponte do LibretroDroid (o quadro vai por um AHardwareBuffer para o GLES): é o renderizador
+                    // de GPU do núcleo que o app consegue servir (o OpenGL dele é o de desktop, e exige GL 4.2).
+                    vulkan = true,
+                    // Os níveis mexem no que pesa na GPU (resolução, mistura de cores, leitura de volta ao CPU) e, no
+                    // leve, poupam a CPU (salto de ciclos do EE, acesso rápido ao disco). O resto (EE e VU1 recompilados,
+                    // MTVU, fastmem) já vem ligado no núcleo. Os valores são os da lista do próprio núcleo.
+                    presets = mapOf(
+                        Preset.PERFORMANCE to mapOf(
+                            "pcsx2_upscale_multiplier" to "1x (Native)", "pcsx2_blending_accuracy" to "Minimum",
+                            "pcsx2_hw_download_mode" to "Unsynchronized", "pcsx2_ee_cycle_skip" to "Mild Underclock", "pcsx2_fastcdvd" to "enabled",
+                        ),
+                        Preset.BALANCED to mapOf("pcsx2_upscale_multiplier" to "2x"),
+                        Preset.QUALITY to mapOf("pcsx2_upscale_multiplier" to "4x", "pcsx2_blending_accuracy" to "Medium"),
+                    ),
+                    // O que depende do aparelho: o renderizador (Vulkan quando o aparelho o tem; senão o por software, o
+                    // único que não pede GPU) e, no software, o teto de 1x e as threads do rasterizador, que somam às do
+                    // EE, do VU1 (MTVU) e do GS: sobram os núcleos rápidos além desses três (no máximo uma em CPU fraca).
+                    deviceOptions = { d ->
+                        if (d.vulkan) {
+                            mapOf("pcsx2_renderer" to "Vulkan")
+                        } else {
+                            val spare = (d.fastCores - 3).coerceIn(0, 4)
+                            mapOf(
+                                "pcsx2_renderer" to "Software (SW)",
+                                "pcsx2_upscale_multiplier" to "1x (Native)",
+                                "pcsx2_sw_renderer_threads" to (if (d.tier == DeviceTier.ENTRY) minOf(spare, 1) else spare).toString(),
+                            )
+                        }
+                    },
                     // Compartilhados, os dois cartões ficam em system/pcsx2/memcards; por jogo, só existe o 1.
                     fixed = mapOf("pcsx2_shared_memory_cards" to "enabled"),
                 ),
@@ -230,6 +272,10 @@ object Systems {
             cores = listOf(
                 CoreInfo(
                     "ppsspp", "PPSSPP", R.string.core_ppsspp,
+                    // Vulkan pela ponte do LibretroDroid quando o aparelho a sustenta (o backend "auto" do núcleo seguiria o
+                    // renderizador preferido, que é o GLES; só o valor explícito pede Vulkan).
+                    vulkan = true,
+                    deviceOptions = { d -> mapOf("ppsspp_backend" to if (d.vulkan) "vulkan" else "opengl") },
                     defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "disabled"),
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf("ppsspp_internal_resolution" to "480x272", "ppsspp_frameskip" to "1"),
@@ -252,6 +298,8 @@ object Systems {
             ),
             layout = PadLayouts.GENESIS, accent = 0xFF212121,
             libretroDbName = "Sega - Mega Drive - Genesis",
+            // .md é o Markdown de qualquer README: só dentro de uma pasta "megadrive"/"genesis".
+            folderOnlyExtensions = setOf("md"),
         ),
         GameSystem(
             id = "segacd", name = "Mega CD / Sega CD", shortName = "SCD",
@@ -389,6 +437,8 @@ object Systems {
             cores = listOf(CoreInfo("mednafen_ngp", "Beetle NeoPop", R.string.core_mednafen_ngp)),
             layout = PadLayouts.HANDHELD_2, accent = 0xFF00897B, orientation = Orientation.PORTRAIT,
             libretroDbName = "SNK - Neo Geo Pocket Color",
+            // Os jogos do modelo monocromático (.ngp, padrão No-Intro) têm capas num acervo à parte.
+            libretroDbByExtension = mapOf("ngp" to "SNK - Neo Geo Pocket"),
         ),
         GameSystem(
             id = "wswan", name = "WonderSwan / Color", shortName = "WS",
@@ -397,6 +447,8 @@ object Systems {
             cores = listOf(CoreInfo("mednafen_wswan", "Beetle Cygne", R.string.core_mednafen_wswan)),
             layout = PadLayouts.HANDHELD_2, accent = 0xFF3949AB,
             libretroDbName = "Bandai - WonderSwan Color",
+            // Os jogos do modelo monocromático (.ws) têm capas num acervo à parte.
+            libretroDbByExtension = mapOf("ws" to "Bandai - WonderSwan"),
         ),
         GameSystem(
             id = "vb", name = "Virtual Boy", shortName = "VB",
@@ -405,6 +457,8 @@ object Systems {
             cores = listOf(CoreInfo("mednafen_vb", "Beetle VB", R.string.core_mednafen_vb)),
             layout = PadLayouts.GBA, accent = 0xFFB71C1C,
             libretroDbName = "Nintendo - Virtual Boy",
+            // .vb é código-fonte de Visual Basic: só dentro de uma pasta "virtualboy"/"vb".
+            folderOnlyExtensions = setOf("vb"),
         ),
         GameSystem(
             id = "coleco", name = "ColecoVision", shortName = "CV",
@@ -414,6 +468,8 @@ object Systems {
             layout = PadLayouts.HANDHELD_2, accent = 0xFF5D4037,
             libretroDbName = "Coleco - ColecoVision",
             bios = listOf(BiosFile("colecovision.rom", R.string.bios_colecovision_rom, "2c66f5911e5b42b8ebe113403548eee7")),
+            // .col também é paleta de cores de programas de desenho: só dentro de uma pasta "coleco".
+            folderOnlyExtensions = setOf("col"),
         ),
         GameSystem(
             id = "pokemini", name = "Pokémon Mini", shortName = "PM",
@@ -473,6 +529,8 @@ object Systems {
             cores = listOf(CoreInfo("virtualjaguar", "Virtual Jaguar", R.string.core_virtualjaguar)),
             layout = PadLayouts.JAGUAR, accent = 0xFFB71C1C,
             libretroDbName = "Atari - Jaguar",
+            // .abs e .cof são formatos genéricos de binário/objeto de compilador: só dentro de uma pasta "jaguar".
+            folderOnlyExtensions = setOf("abs", "cof"),
         ),
 
         // ---- SNK / NEC / 3DO ----
@@ -538,6 +596,8 @@ object Systems {
                 BiosFile("exec.bin", R.string.bios_exec_bin, "62e761035cb657903761800f4437b8af"),
                 BiosFile("grom.bin", R.string.bios_grom_bin, "0cd5946c6473e42e8e4c2137785e427f"),
             ),
+            // .int aparece em arquivos intermediários e de dados de vários programas: só dentro de uma pasta "intv".
+            folderOnlyExtensions = setOf("int"),
         ),
         GameSystem(
             id = "odyssey2", name = "Odyssey² / Videopac", shortName = "O²",
@@ -570,6 +630,8 @@ object Systems {
             cores = listOf(CoreInfo("potator", "Potator", R.string.core_potator)),
             layout = PadLayouts.HANDHELD_2, accent = 0xFF78909C, orientation = Orientation.PORTRAIT,
             libretroDbName = "Watara - Supervision",
+            // .sv é código-fonte de SystemVerilog: só dentro de uma pasta "supervision".
+            folderOnlyExtensions = setOf("sv"),
         ),
         GameSystem(
             id = "megaduck", name = "Mega Duck / Cougar Boy", shortName = "DUCK",
@@ -605,6 +667,8 @@ object Systems {
                 BiosFile("MSX2.ROM", R.string.bios_msx2_rom, required = false),
                 BiosFile("MSX2EXT.ROM", R.string.bios_msx2ext_rom, required = false),
             ),
+            // .rom é o nome de qualquer dump (BIOS de outros consoles, firmware, a própria MSX.ROM): só dentro de uma pasta "msx".
+            folderOnlyExtensions = setOf("rom"),
         ),
         GameSystem(
             id = "c64", name = "Commodore 64", shortName = "C64",
@@ -616,6 +680,8 @@ object Systems {
             ),
             layout = PadLayouts.COMPUTER, accent = 0xFF7986CB,
             libretroDbName = "Commodore - 64",
+            // .crt também é certificado (X.509) e .prg, programa de vários sistemas: só dentro de uma pasta "c64".
+            folderOnlyExtensions = setOf("crt", "prg"),
         ),
         GameSystem(
             id = "amiga", name = "Commodore Amiga", shortName = "AMIGA",

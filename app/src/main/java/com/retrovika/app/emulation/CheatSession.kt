@@ -42,7 +42,8 @@ class CheatSession(
     val supported: Boolean get() = repo.supports(game.systemId)
 
     suspend fun restore() {
-        state = repo.load(game)
+        // Arquivos gravados por versões antigas podem ter o mesmo código repetido.
+        state = repo.load(game).let { it.copy(cheats = it.cheats.distinctBy(::identity)) }
     }
 
     /** Na primeira vez que a aba abre, procura o arquivo do jogo e carrega a melhor sugestão. */
@@ -76,8 +77,14 @@ class CheatSession(
         val loaded = repo.read(game.systemId, file)
         val wasOn = state.enabled.map { it.code }.toSet()
         val custom = state.cheats.filter { it.custom }
-        update(GameCheats(file, loaded.map { it.copy(enabled = it.code in wasOn) } + custom))
+        // Um .cht pode repetir a mesma trapaça, e um código próprio pode ser igual a um do arquivo:
+        // fica uma só (a lista não aceita dois itens iguais, e o núcleo receberia o código duas vezes).
+        val merged = (loaded.map { it.copy(enabled = it.code in wasOn) } + custom).distinctBy(::identity)
+        update(GameCheats(file, merged))
     }
+
+    /** O que torna duas trapaças a mesma: código e descrição (próprias e do arquivo contam separado). */
+    private fun identity(c: Cheat) = Triple(c.custom, c.code.trim(), c.description)
 
     fun toggle(cheat: Cheat) = update(state.copy(cheats = state.cheats.map { if (it === cheat) it.copy(enabled = !it.enabled) else it }))
 
@@ -85,6 +92,11 @@ class CheatSession(
 
     fun addCustom(description: String, code: String) {
         val c = Cheat(description.ifBlank { code }, code.trim(), enabled = true, custom = true)
+        // A mesma trapaça já está na lista (toque duplo em "Adicionar", ou igual a uma do arquivo): só liga a que existe.
+        state.cheats.firstOrNull { it.code.trim() == c.code && it.description == c.description }?.let { existing ->
+            if (!existing.enabled) toggle(existing)
+            return
+        }
         update(state.copy(cheats = state.cheats + c))
     }
 

@@ -1,9 +1,12 @@
 package com.retrovika.app.core.translate
 
 import android.content.Context
+import com.retrovika.app.R
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.RemoteZip
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,7 +14,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
-import java.io.IOException
 import java.security.MessageDigest
 
 /**
@@ -30,7 +32,8 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
 
     private class PackFile(val name: String, val url: String, val sha256: String, val size: Long)
 
-    val dir = File(context.filesDir, "ocr/$PACK")
+    private val base = File(context.filesDir, "ocr")
+    val dir = File(base, PACK)
     private val marker = File(dir, ".complete")
     val runtime: File get() = File(dir, "libonnxruntime.so")
     fun model(name: String) = File(dir, name)
@@ -41,6 +44,27 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
     private var job: Job? = null
 
     val installed: Boolean get() = marker.exists()
+
+    init {
+        // Pacotes de versões anteriores (outro runtime do ONNX): os modelos, iguais, passam para o atual (o
+        // próximo download só busca o runtime); o resto sai, para não ficarem ~80 MB esquecidos.
+        scope.launch(Dispatchers.IO) {
+            lock.withLock {
+                runCatching {
+                    base.listFiles()?.filter { it.isDirectory && it.name != PACK }?.forEach { old ->
+                        dir.mkdirs()
+                        MODELS.forEach { m ->
+                            val from = File(old, m.name)
+                            val to = model(m.name)
+                            if (from.exists() && !to.exists()) from.renameTo(to)
+                        }
+                        old.walkBottomUp().forEach { it.setWritable(true) }
+                        old.deleteRecursively()
+                    }
+                }
+            }
+        }
+    }
 
     /** Baixa o que falta; chamar de novo durante o download não abre outro. */
     fun download() {
@@ -74,7 +98,7 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
 
     private suspend fun install() {
         dir.mkdirs()
-        val runtimeSha = RUNTIME_SHA256[abi] ?: throw IOException("ABI sem runtime do ONNX: $abi")
+        val runtimeSha = RUNTIME_SHA256[abi] ?: throw LocalizedException(R.string.ocr_pack_unsupported_abi, abi)
         val runtimeSize = RUNTIME_SIZE.getValue(abi)
         val total = MODELS.sumOf { it.size } + runtimeSize
         var done = 0L
@@ -85,7 +109,7 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
             if (!(target.exists() && sha256(target) == file.sha256)) {
                 target.delete()
                 Http.download(file.url, target, onBytes = { read, _ -> report(read) })
-                if (sha256(target) != file.sha256) { target.delete(); throw IOException("${file.name} veio corrompido") }
+                if (sha256(target) != file.sha256) { target.delete(); throw LocalizedException(R.string.ocr_pack_corrupted, file.name) }
             }
             done += file.size
             report(0)
@@ -94,7 +118,7 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
             runtime.setWritable(true)
             runtime.delete()
             RemoteZip.extract(RUNTIME_AAR, "jni/$abi/libonnxruntime.so", runtime) { read, _ -> report(read) }
-            if (sha256(runtime) != runtimeSha) { runtime.delete(); throw IOException("runtime do ONNX veio corrompido") }
+            if (sha256(runtime) != runtimeSha) { runtime.delete(); throw LocalizedException(R.string.ocr_pack_runtime_corrupted) }
         }
         // Android 14+ só carrega código nativo baixado se o arquivo for somente leitura (como os núcleos).
         runtime.setWritable(false, false)
@@ -103,7 +127,13 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
     }
 
     companion object {
-        const val PACK = "meiki-v0"
+        /**
+         * Pasta e marcador do pacote. Leva a versão do runtime: trocar o onnxruntime (libs.versions.toml e
+         * [RUNTIME_AAR]) muda o nome, e o pacote antigo deixa de contar como instalado; a ponte JNI nova não
+         * pode carregar a biblioteca da versão anterior.
+         */
+        private const val RUNTIME_VERSION = "1.30.0"
+        const val PACK = "meiki-v0-ort$RUNTIME_VERSION"
         const val DETECTOR = "det.onnx"
         const val RECOGNIZER = "rec.onnx"
         const val RECOGNIZER_VERTICAL = "rec-vertical.onnx"
@@ -118,7 +148,8 @@ class OcrPack(context: Context, private val scope: CoroutineScope, private val a
         )
 
         /** O mesmo onnxruntime-android de libs.versions.toml: as classes Java e a biblioteca têm de ser da mesma versão. */
-        private const val RUNTIME_AAR = "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.30.0/onnxruntime-android-1.30.0.aar"
+        private const val RUNTIME_AAR =
+            "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/$RUNTIME_VERSION/onnxruntime-android-$RUNTIME_VERSION.aar"
         private val RUNTIME_SHA256 = mapOf(
             "arm64-v8a" to "df5d25c72a868dca773597c71e2000756d43fe4d70ade516d3693c54e12e0ada",
             "armeabi-v7a" to "d8c6e57af1848c4b9b2571a8864ac53592e57105dc67fb1e7b9e49828e555279",
