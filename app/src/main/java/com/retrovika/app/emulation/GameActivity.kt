@@ -941,11 +941,15 @@ class GameActivity : ComponentActivity() {
                 netplay.join(guestOf.first, guestOf.second, guestOf.third)
             } else if (received != null) {
                 pendingStateFile = null
-                val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
-                if (retroView !== view) return@launch
-                val ok = data != null && withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
-                toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
-            } else if (settings.autoLoad) {
+                if (!statesSupported()) {
+                    toast = getString(R.string.game_states_unsupported, core.displayName)
+                } else {
+                    val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
+                    if (retroView !== view) return@launch
+                    val ok = data != null && withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
+                    toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
+                }
+            } else if (settings.autoLoad && statesSupported()) {
                 val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
@@ -1147,6 +1151,9 @@ class GameActivity : ComponentActivity() {
         }
     }
 
+    /** Falso para núcleos cujo estado sai corrompido ([CoreInfo.saveStates]): nem se lê nem se grava estado. */
+    private fun statesSupported() = ::core.isInitialized && core.saveStates
+
     private fun emulationRunning() = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
 
     /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
@@ -1163,7 +1170,7 @@ class GameActivity : ComponentActivity() {
             // salvou na sessão não pode se perder porque ele falhou depois.
             writeSram(view.serializeSRAM(false))
             // O estado inteiro só com o jogo de pé: depois de um erro o núcleo pode estar num estado inválido.
-            if (auto && autoSaveReady && ui is EmulationUi.Running) {
+            if (auto && autoSaveReady && ui is EmulationUi.Running && statesSupported()) {
                 // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
                 // parado, vale o que foi capturado quando a emulação parou.
                 if (running) frozenState = view.serializeState().takeIf { it.isNotEmpty() }
@@ -1196,6 +1203,7 @@ class GameActivity : ComponentActivity() {
         override fun thumbnail(slot: Int) = states.thumbnail(slot)
 
         override fun save(slot: Int, onDone: () -> Unit) {
+            if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             // Antes do primeiro quadro o jogo ainda nem carregou: o estado sairia vazio ou inútil.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             // Com o menu aberto a emulação está parada: o estado é o capturado ao abrir o menu.
@@ -1223,6 +1231,7 @@ class GameActivity : ComponentActivity() {
         override fun load(slot: Int) {
             val view = retroView ?: return
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
+            if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
             lifecycleScope.launch {
@@ -1298,6 +1307,7 @@ class GameActivity : ComponentActivity() {
 
         override fun share(slot: Int) {
             if (!::states.isInitialized) return
+            if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             lifecycleScope.launch {
                 val data = withContext(Dispatchers.IO) { runCatching { states.read(slot) }.getOrNull() }
                 if (data == null || data.isEmpty()) { toast = getString(R.string.game_state_load_failed); return@launch }
@@ -1349,6 +1359,8 @@ class GameActivity : ComponentActivity() {
 
         override fun hostNetplay() {
             if (!::game.isInitialized || !::core.isInitialized || !autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            // A partida começa mandando o estado do anfitrião ao convidado.
+            if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             val view = retroView ?: return
             // Trapaças ligadas só aqui desencontrariam os jogos: saem durante a partida e voltam depois.
             if (cheats?.state?.enabled?.isNotEmpty() == true) {
@@ -1463,7 +1475,7 @@ class GameActivity : ComponentActivity() {
                     if (retroView === view) toast = getString(R.string.translate_capture_failed)
                     return@launch
                 }
-                val state = withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
+                val state = if (!statesSupported()) null else withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
                 menuOpening = false
                 if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }
@@ -1546,7 +1558,7 @@ class GameActivity : ComponentActivity() {
                 if (!emulationRunning()) { menuOpening = false; return@launch }
                 // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
                 // é ele que o menu grava nos slots e no salvamento automático.
-                val state = withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
+                val state = if (!statesSupported()) null else withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
                 menuOpening = false
                 if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }

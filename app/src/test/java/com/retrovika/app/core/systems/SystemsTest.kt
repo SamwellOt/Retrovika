@@ -96,4 +96,13 @@ class SystemsTest {
             assertTrue(core.id, core.fixed.keys.none { it in tuned })
         }
     }
+
+    @Test
+    fun `nucleos de PS2 sem o que trava o jogo`() {
+        val cores = Systems.byId("ps2")!!.cores.associateBy { it.id }
+        // O LRPS2 abre o disco sem a VFS: jogo de pasta vinculada só pelo caminho real.
+        assertTrue(cores.getValue("pcsx2").needsRealPath)
+        // O estado do Play! sai com a máquina rodando: carregá-lo corrompia o jogo.
+        assertTrue(!cores.getValue("play").saveStates)
+    }
 }

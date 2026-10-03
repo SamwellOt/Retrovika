@@ -34,6 +34,7 @@
     <string name="game_state_load_failed">Não foi possível carregar este estado</string>
     <string name="translate_capture_failed">Não deu para capturar a tela para traduzir. Tente de novo.</string>
     <string name="game_state_not_ready">O jogo ainda está iniciando. Tente de novo em instantes.</string>
+    <string name="game_states_unsupported">O %1$s não salva estados com segurança. Salve dentro do jogo, no memory card.</string>
     <string name="game_state_save_failed">Não foi possível salvar o estado: %1$s</string>
     <string name="game_autosave_incompatible">O salvamento automático não é compatível com este núcleo e não foi carregado. Ele foi guardado como cópia de segurança.</string>
     <string name="game_disk_inserted">Disco %d inserido</string>

@@ -216,6 +216,7 @@ object Systems {
             cores = listOf(
                 CoreInfo(
                     "play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true,
+                    saveStates = false,
                     // O Play! desenha com GLES 3 (é o único PS2 daqui que usa a GPU): o custo é o preenchimento, e a
                     // resolução é o que o nível escolhe. Valores da lista do próprio núcleo ("1x|2x|4x|8x").
                     defaults = mapOf("play_res_multi" to "1x"),
@@ -227,6 +228,8 @@ object Systems {
                 ),
                 CoreInfo(
                     "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
+                    // Lê o disco com o próprio I/O (não chama filestream_vfs_init): o caminho virtual do SAF não abre.
+                    needsRealPath = true,
                     // Vulkan pela ponte do LibretroDroid (o quadro vai por um AHardwareBuffer para o GLES): é o renderizador
                     // de GPU do núcleo que o app consegue servir (o OpenGL dele é o de desktop, e exige GL 4.2).
                     vulkan = true,

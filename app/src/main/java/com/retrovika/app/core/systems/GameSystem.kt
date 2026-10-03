@@ -33,6 +33,12 @@ data class CoreInfo(
      * deixar o núcleo seguir sem o jogo (o Play! fechava segundos depois).
      */
     val needsRealPath: Boolean = false,
+    /**
+     * O núcleo salva e carrega estados com segurança. O Play! lê e grava o estado sem pausar a própria
+     * thread de emulação: o salvamento automático carregado ao abrir o jogo corrompia a máquina, que
+     * travava logo depois. Sem isso, nada de estados, carregamento automático, compartilhar nem jogar em rede.
+     */
+    val saveStates: Boolean = true,
     /** Aceita o contexto GLES abaixo da versão que o núcleo pede (o Play! pede 3.2 e roda em 3.1). */
     val relaxedGlesVersion: Boolean = false,
     /**
