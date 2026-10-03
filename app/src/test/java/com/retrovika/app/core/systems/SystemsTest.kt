@@ -78,11 +78,21 @@ class SystemsTest {
             "pcsx2" to mapOf("pcsx2_shared_memory_cards" to "enabled"),
         )
         val cores = Systems.all.filter { it.id == "psx" || it.id == "ps2" }.flatMap { it.cores }.associateBy { it.id }
-        expected.forEach { (id, fixed) -> assertEquals(id, fixed, cores.getValue(id).fixed) }
+        expected.forEach { (id, fixed) -> assertEquals(id, fixed, cores.getValue(id).fixed.filterKeys { it in fixed }) }
         // Um valor fixo também nos padrões ou presets seria ignorado: cada chave num lugar só.
         Systems.all.flatMap { it.cores }.forEach { core ->
             val tuned = core.defaults.keys + core.presets.values.flatMap { it.keys }
             assertTrue(core.id, core.fixed.keys.none { it in tuned })
         }
+    }
+
+    @Test
+    fun `nucleos de PS2 sem o que trava o jogo`() {
+        val cores = Systems.byId("ps2")!!.cores.associateBy { it.id }
+        // Sem Vulkan, só o renderizador por software do LRPS2 abre o GS.
+        assertEquals("Software (SW)", cores.getValue("pcsx2").fixed["pcsx2_renderer"])
+        assertTrue(cores.getValue("pcsx2").needsRealPath)
+        // O estado do Play! sai com a máquina rodando: carregá-lo corrompia o jogo.
+        assertTrue(!cores.getValue("play").saveStates)
     }
 }

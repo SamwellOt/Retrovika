@@ -211,11 +211,24 @@ object Systems {
             manufacturer = "Sony", year = 2000,
             extensions = setOf("iso", "chd", "cso", "bin", "cue"),
             cores = listOf(
-                CoreInfo("play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true),
+                CoreInfo(
+                    "play", "Play!", R.string.core_play, experimental = true, needsRealPath = true, relaxedGlesVersion = true,
+                    saveStates = false,
+                ),
                 CoreInfo(
                     "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
-                    // Compartilhados, os dois cartões ficam em system/pcsx2/memcards; por jogo, só existe o 1.
-                    fixed = mapOf("pcsx2_shared_memory_cards" to "enabled"),
+                    // Lê o disco com o próprio I/O (não chama filestream_vfs_init): o caminho virtual do SAF não abre.
+                    needsRealPath = true,
+                    fixed = mapOf(
+                        // Compartilhados, os dois cartões ficam em system/pcsx2/memcards; por jogo, só existe o 1.
+                        "pcsx2_shared_memory_cards" to "enabled",
+                        // O renderizador OpenGL do LRPS2 só funciona com GL de desktop (pede GL 3.3 e
+                        // ARB_shading_language_420pack; GLES é "TODO" no GS.cpp) e no Android ele depende do
+                        // Vulkan, que o LibretroDroid não oferece. Em "Auto", "OpenGL" e "Software (HW)" o GS
+                        // nunca abria num contexto GLES e o jogo travava; "Vulkan" nem carregava. Só o
+                        // software puro (sem contexto de GPU) desenha aqui.
+                        "pcsx2_renderer" to "Software (SW)",
+                    ),
                 ),
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,
