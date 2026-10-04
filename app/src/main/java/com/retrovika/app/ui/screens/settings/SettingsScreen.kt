@@ -363,6 +363,9 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
                     loader.memoryCache?.clear()
                     withContext(Dispatchers.IO) {
                         loader.diskCache?.clear()
+                        // Fichas dos jogos, listas do Explorar e pacotes já compartilhados: tudo volta da rede
+                        // (ou é refeito) quando for preciso de novo.
+                        listOf("gameinfo", "explore", "shared").forEach { context.cacheDir.resolve(it).deleteRecursively() }
                         // Só arquivos temporários de downloads que não estão em andamento.
                         if (app.downloads.tasks.value.none { it.status in DownloadManager.ACTIVE }) {
                             app.paths.downloadsTmp.listFiles()?.forEach { it.deleteRecursively() }

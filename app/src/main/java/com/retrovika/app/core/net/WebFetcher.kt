@@ -250,7 +250,24 @@ class WebFetcher(
 
     private fun scheduleRelease() {
         idle?.cancel()
-        idle = main.launch { delay(IDLE_MS); lock.withLock { release() } }
+        val wait = if (background) BACKGROUND_IDLE_MS else IDLE_MS
+        idle = main.launch { delay(wait); lock.withLock { release() } }
+    }
+
+    /** O app está fora da frente: o WebView ocioso fecha em [BACKGROUND_IDLE_MS] (lido e escrito na thread principal). */
+    private var background = false
+
+    /**
+     * Com o app fora da frente (um jogo abriu, o usuário foi para outro app), o WebView ocioso fecha em segundos em
+     * vez de minutos: a página do site segue rodando os scripts dela (anúncios, contadores), gastando bateria e CPU
+     * que o jogo usaria. Pedidos em andamento terminam normalmente; de volta à frente, o prazo volta ao normal.
+     */
+    fun setBackground(value: Boolean) {
+        main.launch {
+            if (background == value) return@launch
+            background = value
+            if (view != null && pending.isEmpty()) scheduleRelease()
+        }
     }
 
     private fun release() {
@@ -267,6 +284,7 @@ class WebFetcher(
         private const val CHALLENGE_TIMEOUT_MS = 20_000L
         private const val REQUEST_TIMEOUT_MS = 20_000L
         private const val IDLE_MS = 3 * 60_000L
+        private const val BACKGROUND_IDLE_MS = 20_000L
         private const val POLL_MS = 250L
         private const val CHALLENGE_RETRY_MS = 2_000L
         /** Status interno de um pedido cuja página foi fechada por [release] antes da resposta. */

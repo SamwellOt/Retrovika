@@ -121,8 +121,9 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     private val assets = mutableMapOf<String, ByteArray>()
 
     /**
-     * Com o servidor ligado, o Wi-Fi do celular não entra em economia de energia: nela os pacotes esperam o
-     * próximo beacon do roteador (~100 ms), atrasando a imagem que sai e os botões que chegam.
+     * Com algum aparelho conectado, o Wi-Fi do celular não entra em economia de energia: nela os pacotes esperam o
+     * próximo beacon do roteador (~100 ms), atrasando a imagem que sai e os botões que chegam. Só enquanto há
+     * conexão ([updateWifiLock]): o servidor ligado esperando alguém não precisa do rádio sempre acordado.
      */
     private val wifiLock by lazy {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -151,7 +152,6 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
                 return
             }
             server = s
-            runCatching { wifiLock.acquire() }.onFailure { Log.w(TAG, "Wi-Fi lock failed", it) }
             val base = if (port == 80) "http://$address" else "http://$address:$port"
             _state.update { it.copy(running = true, address = base, code = code, errorRes = null) }
         }
@@ -168,7 +168,7 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         }
         stopStreaming(view)
         s.stop()
-        runCatching { if (wifiLock.isHeld) wifiLock.release() }
+        updateWifiLock()
         _state.update { State(muteHost = it.muteHost, streamSupported = it.streamSupported) }
         applyHostAudio()
     }
@@ -473,11 +473,23 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
         MOTION_SOURCES.forEach { v.sendMotionEvent(it, 0f, 0f, port) }
     }
 
+    /** Trava própria: a decisão e o acquire/release andam juntos, sem segurar o [lock] da entrada numa chamada ao sistema. */
+    private val wifiGuard = Any()
+
+    private fun updateWifiLock() = synchronized(wifiGuard) {
+        val wanted = synchronized(lock) { server != null && sessions.isNotEmpty() }
+        runCatching {
+            if (wanted && !wifiLock.isHeld) wifiLock.acquire()
+            else if (!wanted && wifiLock.isHeld) wifiLock.release()
+        }.onFailure { Log.w(TAG, "Wi-Fi lock failed", it) }
+    }
+
     private fun publishClients() {
         val list = synchronized(lock) {
             sessions.map { Client(it.connection.id, it.kind, it.name, it.slots.values.sorted()) }
         }
         _state.update { it.copy(clients = list) }
+        updateWifiLock()
         // A tela esconde o QR quando alguém já entrou.
         val info = synchronized(lock) { sessions.filter { it.kind == Kind.SCREEN } }
         info.forEach { sendInfo(it) }

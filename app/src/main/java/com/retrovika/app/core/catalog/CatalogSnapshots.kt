@@ -44,6 +44,11 @@ class CatalogSnapshots(private val dir: File) {
         }
     }
 
+    /** Apaga as listas vencidas: [read] já as ignorava, mas elas ficavam no disco para sempre. */
+    fun prune(now: Long = System.currentTimeMillis()) {
+        dir.listFiles()?.forEach { f -> if (now - f.lastModified() > TTL_MS) f.delete() }
+    }
+
     private companion object {
         const val TTL_MS = 7 * 24 * 60 * 60 * 1000L
         const val MAX_ENTRIES = 60

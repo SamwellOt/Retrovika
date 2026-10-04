@@ -80,7 +80,8 @@ class AppContainer(app: Application) {
     /** Verificações de sites que o WebView invisível não passou, à espera do usuário (ChallengeHost). */
     val challenges = ChallengePrompt()
     // O RomsFun tem o próprio WebView: dividir o do Backloggd faria os dois reabrirem o site a cada troca.
-    val catalog = CatalogRepository(RomsFunSource(WebFetcher(app, minGapMs = 400, prompt = challenges)))
+    private val catalogWeb = WebFetcher(app, minGapMs = 400, prompt = challenges)
+    val catalog = CatalogRepository(RomsFunSource(catalogWeb))
     /** A última lista de cada filtro do Explorar, para ele abrir na hora. */
     val catalogSnapshots = CatalogSnapshots(File(app.cacheDir, "explore"))
     private val web = WebFetcher(app)
@@ -108,7 +109,32 @@ class AppContainer(app: Application) {
         resolve = { catalog.resolve(it) },
         link = { entry, variant -> catalog.directLink(entry, variant) },
     )
+
+    /**
+     * A interface do app saiu da frente (ou voltou). Os WebViews ociosos fecham logo (ver [WebFetcher.setBackground]);
+     * o do RomsFun fica no prazo normal enquanto há downloads na fila, que ainda podem precisar dele.
+     */
+    fun setUiInBackground(value: Boolean) {
+        web.setBackground(value)
+        catalogWeb.setBackground(value && downloads.activeCount.value == 0)
+    }
+
+    init {
+        // Faxina de fundo, uma vez por processo e depois que a abertura do app passou: caches vencidos e os
+        // estados gravados crus pelas versões anteriores. Thread própria em prioridade de fundo: com um jogo
+        // aberto, ela não tira CPU da emulação.
+        kotlin.concurrent.thread(name = "Retrovika-housekeeping", isDaemon = true) {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            Thread.sleep(HOUSEKEEPING_DELAY_MS)
+            runCatching { gameInfo.prune() }
+            runCatching { catalogSnapshots.prune() }
+            runCatching { sharedStates.prune() }
+            runCatching { com.retrovika.app.core.storage.RZip.compactTree(paths.states) }
+        }
+    }
 }
+
+private const val HOUSEKEEPING_DELAY_MS = 20_000L
 
 /**
  * Identifica o que foi testado: o sistema (driver) e a versão do app (a ponte muda com ela). Um "falhou" de uma versão

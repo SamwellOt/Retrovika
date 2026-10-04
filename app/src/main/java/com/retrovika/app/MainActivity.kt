@@ -27,6 +27,17 @@ class MainActivity : ComponentActivity() {
         setContent { RetrovikaTheme { RetrovikaNavHost() } }
     }
 
+    override fun onStart() {
+        super.onStart()
+        container.setUiInBackground(false)
+    }
+
+    // Também quando um jogo abre por cima (o GameActivity tem a própria tarefa): a interface fica escondida.
+    override fun onStop() {
+        super.onStop()
+        container.setUiInBackground(true)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.toIncoming()?.let { container.incoming.value = it }

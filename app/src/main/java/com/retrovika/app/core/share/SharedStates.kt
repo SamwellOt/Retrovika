@@ -11,6 +11,7 @@ import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.library.LibraryRepository
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.storage.FileNames
+import com.retrovika.app.core.storage.RZip
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.settings.localized
 import kotlinx.coroutines.Dispatchers
@@ -81,12 +82,23 @@ class SharedStates(
             ?: return@withContext Received.MissingGame(contents.manifest, thumb)
         val dir = paths.statesFor(game.systemId, game.id)
         val file = File(dir, RECEIVED_STATE)
-        file.writeBytes(contents.state)
+        RZip.write(file, contents.state)
         contents.thumbnail?.let { File(dir, RECEIVED_THUMB).writeBytes(it) }
         Received.Ready(contents.manifest, game, file, thumb)
     }
 
+    /**
+     * Apaga os pacotes enviados (e o relatório de erros) que ficaram no cache: cada um é um estado inteiro, e o
+     * app que os recebeu já os leu há muito tempo.
+     */
+    fun prune(now: Long = System.currentTimeMillis()) {
+        context.cacheDir.resolve("shared").walkBottomUp()
+            .filter { it.isFile && now - it.lastModified() > SHARED_TTL_MS }
+            .forEach { it.delete() }
+    }
+
     companion object {
+        private const val SHARED_TTL_MS = 24 * 60 * 60 * 1000L
         const val RECEIVED_STATE = "received.state"
         const val RECEIVED_THUMB = "received.png"
     }

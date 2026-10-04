@@ -26,6 +26,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -41,6 +42,7 @@ import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.SettingsRepository
 import com.retrovika.app.core.settings.ShaderOption
+import com.retrovika.app.core.storage.RZip
 import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.share.LanTransfer
 import com.retrovika.app.core.share.StatePackage
@@ -90,6 +92,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -248,7 +251,7 @@ class GameActivity : ComponentActivity() {
         // Recursos só estão disponíveis depois do attachBaseContext, por isso o texto inicial entra aqui.
         ui = EmulationUi.Preparing(getString(R.string.game_loading), null)
         enableEdgeToEdge()
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        keepScreenOnWhileActive()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
@@ -453,6 +456,8 @@ class GameActivity : ComponentActivity() {
         val view = GLRetroView(this, data).apply {
             isFocusable = true
             isFocusableInTouchMode = true
+            // O GLRetroView pede a tela acesa enquanto existe; quem decide é keepScreenOnWhileActive (apaga no menu).
+            keepScreenOn = false
         }
         retroView = view
         emulationOwner.registry.addObserver(view)
@@ -822,7 +827,7 @@ class GameActivity : ComponentActivity() {
         // A primeira abertura de um núcleo Vulkan compila shaders e pipelines: leva bem mais que um núcleo comum.
         val loadTimeout = if (core.vulkan) BENCH_LOAD_TIMEOUT_VULKAN_MS else BENCH_LOAD_TIMEOUT_MS
         val owner = EmulationOwner()
-        val view = GLRetroView(this, data)
+        val view = GLRetroView(this, data).apply { keepScreenOn = false }
         owner.registry.currentState = Lifecycle.State.CREATED
         owner.registry.addObserver(view)
         // O create do LibretroDroid liga o som: desliga logo depois, antes do primeiro quadro.
@@ -944,13 +949,20 @@ class GameActivity : ComponentActivity() {
                 if (!statesSupported()) {
                     toast = getString(R.string.game_states_unsupported, core.displayName)
                 } else {
-                    val data = withContext(Dispatchers.IO) { runCatching { received.readBytes() }.getOrNull() }
+                    val data = withContext(Dispatchers.IO) { runCatching { RZip.read(received) }.getOrNull() }
                     if (retroView !== view) return@launch
                     val ok = data != null && withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) }.getOrDefault(false) }
                     toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
                 }
             } else if (settings.autoLoad && statesSupported()) {
-                val saved = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) }.getOrNull() }
+                val read = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) } }
+                // O arquivo existe mas não abriu (corrompido): guardado à parte, senão o próximo salvamento
+                // automático o apagaria sem ninguém saber.
+                if (read.isFailure) {
+                    withContext(Dispatchers.IO) { runCatching { states.backup(SaveStates.AUTO_SLOT) } }
+                    toast = getString(R.string.game_state_load_failed)
+                }
+                val saved = read.getOrNull()
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
                     // Pausou no meio (menu, segundo plano) ou a thread não respondeu: não prova que o estado é
@@ -1098,6 +1110,29 @@ class GameActivity : ComponentActivity() {
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
         super.onDestroy()
+    }
+
+    /**
+     * A tela fica acesa sozinha enquanto há algo andando (o jogo, o carregamento, o teste de núcleos, uma partida
+     * em rede ou um QR code esperando alguém). Com o jogo parado no menu de pausa, ou na tela de erro, ela apaga no
+     * tempo normal do sistema: o celular esquecido na mesa não gasta bateria com a tela por horas, e o onPause
+     * grava o salvamento automático como sempre.
+     */
+    private fun keepScreenOnWhileActive() {
+        lifecycleScope.launch {
+            combine(snapshotFlow { screenBusy() }, app.remote.state.map { it.running }) { busy, remote -> busy || remote }
+                .distinctUntilChanged()
+                .collect { on ->
+                    if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+        }
+    }
+
+    private fun screenBusy(): Boolean = when (ui) {
+        is EmulationUi.Failed -> false
+        is EmulationUi.Running -> !menuOpen || netplay.ui != null || sharing != null
+        else -> true
     }
 
     private fun updateEmulationState() {

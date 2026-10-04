@@ -131,6 +131,19 @@ class GameInfoRepository(
         }
     }
 
+    /**
+     * Apaga do disco o que já venceu (nunca seria lido de novo, só ocupava espaço) e as pastas de formatos
+     * antigos do cache (ex.: "backloggd", trocada por "backloggd2").
+     */
+    fun prune(now: Long = System.currentTimeMillis()) {
+        val d = dir ?: return
+        val current = setOf(backloggdStore.name, wikiStore.name, hltbStore.name)
+        d.listFiles()?.forEach { sub ->
+            if (!sub.isDirectory || sub.name !in current) { sub.deleteRecursively(); return@forEach }
+            sub.listFiles()?.forEach { f -> if (now - f.lastModified() > TTL_MS) f.delete() }
+        }
+    }
+
     private companion object {
         const val TTL_MS = 3 * 24 * 60 * 60 * 1000L
         const val MISSING_TTL_MS = 12 * 60 * 60 * 1000L

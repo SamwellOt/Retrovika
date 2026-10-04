@@ -3,6 +3,7 @@ package com.retrovika.app.emulation
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.retrovika.app.core.library.Game
+import com.retrovika.app.core.storage.RZip
 import com.retrovika.app.core.storage.StoragePaths
 import java.io.File
 import java.io.IOException
@@ -25,19 +26,13 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
         SaveSlot(i, f.exists(), f.takeIf { it.exists() }?.lastModified(), thumbFile(i).takeIf { it.exists() })
     }
 
-    fun read(slot: Int): ByteArray? = stateFile(slot).takeIf { it.exists() }?.readBytes()
+    /** O estado do slot, já descompactado (os gravados antes da compactação são lidos como estão). */
+    fun read(slot: Int): ByteArray? = stateFile(slot).takeIf { it.exists() }?.let(RZip::read)
 
     fun write(slot: Int, data: ByteArray, thumbnail: Bitmap?) {
         // Estado vazio = o núcleo falhou ao serializar: nunca troca um save bom por ele.
         if (data.isEmpty()) throw IOException("empty state")
-        val tmp = File(dir, "slot$slot.tmp")
-        try {
-            tmp.writeBytes(data)
-            if (!tmp.renameTo(stateFile(slot))) throw IOException("rename ${tmp.name}")
-        } catch (t: Throwable) {
-            tmp.delete()
-            throw t
-        }
+        RZip.write(stateFile(slot), data)
         // Sem captura nova, a miniatura antiga mostraria um momento que não corresponde mais ao estado.
         if (thumbnail == null) thumbFile(slot).delete()
         else thumbFile(slot).outputStream().use { thumbnail.compress(Bitmap.CompressFormat.PNG, 90, it) }
@@ -52,6 +47,11 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
         // Nome único: um segundo estado incompatível (troca de núcleo e volta) não apaga o primeiro backup.
         if (file.exists()) file.renameTo(File(dir, "slot$slot.${System.currentTimeMillis()}.state.bak"))
         thumbFile(slot).delete()
+        // Só os mais recentes: cada troca de núcleo ou de versão deixava mais um estado inteiro para sempre.
+        dir.listFiles { f -> f.name.startsWith("slot$slot.") && f.name.endsWith(".state.bak") }
+            ?.sortedByDescending { it.name.removePrefix("slot$slot.").removeSuffix(".state.bak").toLongOrNull() ?: 0L }
+            ?.drop(MAX_BACKUPS)
+            ?.forEach { it.delete() }
     }
 
     fun thumbnail(slot: Int): Bitmap? = thumbFile(slot).takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.absolutePath) }
@@ -62,5 +62,7 @@ class SaveStates(private val paths: StoragePaths, private val game: Game) {
     companion object {
         const val AUTO_SLOT = 0
         const val SLOT_COUNT = 4
+        /** Backups ([backup]) guardados por slot. */
+        const val MAX_BACKUPS = 2
     }
 }
