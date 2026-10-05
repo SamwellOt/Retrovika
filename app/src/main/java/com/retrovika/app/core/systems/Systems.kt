@@ -39,14 +39,19 @@ object Systems {
     private val MGBA_DEFAULTS = mapOf("mgba_skip_bios" to "ON")
 
     /**
-     * Dolphin: a resolução interna (`dolphin_efb_scale`, múltiplo de 640x528) e a compilação de shaders. A síncrona
-     * trava o jogo a cada shader novo; a assíncrona com ubershaders ("2") desenha com um shader genérico enquanto o
-     * específico compila, e a que pula o desenho ("3") é a mais leve, com objetos faltando por instantes.
+     * Dolphin: a resolução interna (`dolphin_efb_scale`, múltiplo de 640x528) e a compilação de shaders. No
+     * LibretroDroid o Dolphin não cria o contexto compartilhado das threads de compilação ("Failed to initialize shader
+     * compiler worker thread" no logcat), então todo shader compila na hora, em qualquer modo: os assíncronos não
+     * evitam o engasgo, e os ubershaders ("1" e "2") só somam o custo deles na GPU. Com ubershaders e 2x/3x a 0.6.5
+     * deixou o Dolphin lento; ficam de fora. O equilibrado é o que rodava até a 0.6.4 (o padrão do núcleo) e o teto
+     * do Auto (ver CoreInfo.autoMax). O leve liga o VI Skip, que pula quadros só quando o jogo atrasa.
      */
     private val DOLPHIN_PRESETS = mapOf(
-        Preset.PERFORMANCE to mapOf("dolphin_efb_scale" to "1", "dolphin_shader_compilation_mode" to "3"),
-        Preset.BALANCED to mapOf("dolphin_efb_scale" to "2", "dolphin_shader_compilation_mode" to "2"),
-        Preset.QUALITY to mapOf("dolphin_efb_scale" to "3", "dolphin_shader_compilation_mode" to "2"),
+        Preset.PERFORMANCE to mapOf(
+            "dolphin_efb_scale" to "1", "dolphin_shader_compilation_mode" to "3", "dolphin_vi_skip" to "enabled",
+        ),
+        Preset.BALANCED to mapOf("dolphin_efb_scale" to "1", "dolphin_shader_compilation_mode" to "0"),
+        Preset.QUALITY to mapOf("dolphin_efb_scale" to "2", "dolphin_shader_compilation_mode" to "0"),
     )
 
     val all: List<GameSystem> = listOf(
@@ -179,6 +184,8 @@ object Systems {
                         Preset.BALANCED to mapOf("citra_resolution_factor" to "2x"),
                         Preset.QUALITY to mapOf("citra_resolution_factor" to "4x"),
                     ),
+                    // O Auto fica em 1x, como até a 0.6.4: 2x e 4x só por escolha do usuário.
+                    autoMax = Preset.PERFORMANCE,
                 ),
                 CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true, needsRealPath = true),
             ),
@@ -191,7 +198,7 @@ object Systems {
             id = "gc", name = "GameCube", shortName = "GC",
             manufacturer = "Nintendo", year = 2001,
             extensions = setOf("iso", "gcm", "rvz", "ciso", "gcz"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS)),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS, autoMax = Preset.BALANCED)),
             layout = PadLayouts.GAMECUBE, accent = 0xFF6A1B9A,
             libretroDbName = "Nintendo - GameCube", experimental = true,
         ),
@@ -199,7 +206,7 @@ object Systems {
             id = "wii", name = "Nintendo Wii", shortName = "WII",
             manufacturer = "Nintendo", year = 2006,
             extensions = setOf("wbfs", "rvz", "wia", "iso", "gcz", "ciso", "wad"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS)),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS, autoMax = Preset.BALANCED)),
             layout = PadLayouts.WII, accent = 0xFF90CAF9,
             libretroDbName = "Nintendo - Wii", experimental = true,
             // .wad também é o pacote de dados do Doom (e de outros jogos de PC): só dentro de uma pasta "wii".
@@ -416,6 +423,8 @@ object Systems {
                         Preset.BALANCED to mapOf("yabasanshiro_resolution_mode" to "2x"),
                         Preset.QUALITY to mapOf("yabasanshiro_resolution_mode" to "4x"),
                     ),
+                    // O Auto vai no máximo até 2x, o padrão de antes dos níveis.
+                    autoMax = Preset.BALANCED,
                 ),
                 CoreInfo("mednafen_saturn", "Beetle Saturn", R.string.core_mednafen_saturn, experimental = true),
             ),

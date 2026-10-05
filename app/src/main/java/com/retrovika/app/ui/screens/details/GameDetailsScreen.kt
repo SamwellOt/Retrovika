@@ -498,7 +498,10 @@ private fun GameTuning(game: Game, system: GameSystem) {
     }
     // FlowRow: em telas de 360dp os dois botões não cabem lado a lado e o segundo era cortado.
     FlowRow(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        GhostButton(stringResource(R.string.tune_game_optimize), { GameActivity.launch(context, game.id, retune = true) }, icon = Icons.Rounded.Speed)
+        // Núcleo com teto no Auto não tem teste (ver CoreInfo.autoMax): só o ajuste que o vigia gravou pode ser desfeito.
+        if (Tuning.measurable(core)) {
+            GhostButton(stringResource(R.string.tune_game_optimize), { GameActivity.launch(context, game.id, retune = true) }, icon = Icons.Rounded.Speed)
+        }
         if (own != null) GhostButton(stringResource(R.string.tune_game_reset), { scope.launch { app.settings.setGameTuning(game.id, null) } })
     }
 }

@@ -76,9 +76,18 @@ object Tuning {
     /** Degraus de qualidade que o núcleo tem, do mais leve ao mais pesado. */
     fun ladder(core: CoreInfo): List<Preset> = Preset.entries.filter { it in core.presets }
 
+    /** Degraus que o modo Auto pode escolher: a escada inteira, ou até [CoreInfo.autoMax]. */
+    private fun autoLadder(core: CoreInfo): List<Preset> = ladder(core).filter { core.autoMax == null || it <= core.autoMax }
+
+    /** O teste de velocidade escolhe o nível deste núcleo (fora dele só o chute, ver [CoreInfo.autoMax]). */
+    fun measurable(core: CoreInfo): Boolean = core.autoMax == null && core.presets.size >= 2
+
+    /** [preset] guardado pelo Auto (teste, vigia, queda) sem passar de [CoreInfo.autoMax]: resultados de antes do teto. */
+    private fun capped(core: CoreInfo, preset: Preset): Preset = core.autoMax?.let { minOf(preset, it) } ?: preset
+
     /** Chute pela classe do aparelho: nulo se o núcleo não tem predefinições. */
     fun estimate(tier: DeviceTier, core: CoreInfo): Preset? {
-        val ladder = ladder(core).ifEmpty { return null }
+        val ladder = autoLadder(core).ifEmpty { return null }
         val want = when (tier) {
             DeviceTier.ENTRY -> Preset.PERFORMANCE
             DeviceTier.MID, DeviceTier.HIGH -> Preset.BALANCED
@@ -97,9 +106,15 @@ object Tuning {
         core: CoreInfo, profile: DeviceProfile, userChoice: Preset?, game: TuneResult?, console: TuneResult?,
     ): EffectivePreset? {
         if (core.presets.isEmpty()) return null
-        game?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let { return EffectivePreset(it.presetOrNull!!, TuneSource.GAME, it.speed, it.slowdown, it.crashed) }
+        game?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let {
+            return EffectivePreset(capped(core, it.presetOrNull!!), TuneSource.GAME, it.speed, it.slowdown, it.crashed)
+        }
         userChoice?.takeIf { it in core.presets }?.let { return EffectivePreset(it, TuneSource.USER) }
-        console?.takeIf { !it.skipped && it.appliesTo(profile, core) }?.let { return EffectivePreset(it.presetOrNull!!, TuneSource.MEASURED, it.speed) }
+        // Núcleo com teto não é medido: um resultado guardado é de antes do teto (a 0.6.5 media o Dolphin pela abertura do
+        // jogo e subia para 3x) e o chute fica no lugar dele.
+        console?.takeIf { !it.skipped && it.appliesTo(profile, core) && measurable(core) }?.let {
+            return EffectivePreset(it.presetOrNull!!, TuneSource.MEASURED, it.speed)
+        }
         return EffectivePreset(estimate(profile.tier, core)!!, TuneSource.ESTIMATED)
     }
 

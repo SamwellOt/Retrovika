@@ -52,6 +52,7 @@ App data lives in `/sdcard/Android/data/com.retrovika.app/files/Retrovika/`, wit
 - BIOS entries without a single MD5 can declare a `format` (`BiosFormat.PS2`): `BiosFormats` checks the content with the core's own rules, Ajustes shows `INVALID` for a right name with wrong content, and import accepts a valid file under any name
 - `saveStates = false` for cores whose serialize/unserialize races their own emulation thread (Play! never pauses its VM): no autosave/autoload, slots, sharing or netplay. A racy autosave loaded at startup froze the game later
 - `GameSystem.lightweight` (8/16-bit consoles and handhelds): no first-launch core benchmark on MID+ devices. `CoreInfo.needsBios` (SwanStation, LRPS2): the core only takes part in the benchmark when one of the system's BIOS files is present
+- `CoreInfo.autoMax` caps the quality level Auto picks and skips the speed test, for heavy 3D cores whose game start says nothing about gameplay (Dolphin, Citra, YabaSanshiro; see `docs/device-tuning.md`)
 - BIOS entries can share a `group`: the group is satisfied when any one file in it is present (3DO, Neo Geo CD)
 
 To add a console, you mostly just add an entry here, plus folder aliases in `RomNaming` and, for cartridge systems with a No-Intro DAT, an entry in `DatCatalog`. `SystemsTest` checks the catalog for consistency. The Gradle `fetchCores` task finds core IDs by regex-matching `CoreInfo("<id>"` in this file, so keep that literal form.

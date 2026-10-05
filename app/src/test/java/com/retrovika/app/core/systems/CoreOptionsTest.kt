@@ -73,7 +73,7 @@ class CoreOptionsTest {
 
     @Test
     fun `os nucleos com escada de resolucao`() {
-        listOf("dolphin" to "dolphin_efb_scale", "citra" to "citra_resolution_factor", "yabasanshiro" to "yabasanshiro_resolution_mode").forEach { (id, key) ->
+        listOf("citra" to "citra_resolution_factor", "yabasanshiro" to "yabasanshiro_resolution_mode").forEach { (id, key) ->
             val cores = everyCore.filter { it.id == id }
             assertTrue("$id sem declaração", cores.isNotEmpty())
             cores.forEach { core ->
@@ -81,6 +81,30 @@ class CoreOptionsTest {
                 assertEquals("$id: a resolução tem de mudar em cada nível", 3, core.presets.values.map { it[key] }.toSet().size)
             }
         }
+    }
+
+    @Test
+    fun `Dolphin sem ubershaders, equilibrado igual ao padrao do nucleo e Auto ate ele`() {
+        val dolphins = everyCore.filter { it.id == "dolphin" }
+        assertEquals(2, dolphins.size)
+        dolphins.forEach { core ->
+            assertEquals(Preset.BALANCED, core.autoMax)
+            core.presets.forEach { (level, options) ->
+                assertTrue("Dolphin $level usa ubershaders", options["dolphin_shader_compilation_mode"] !in setOf("1", "2"))
+            }
+            // O que rodava até a 0.6.4, sem níveis: os padrões do núcleo (Options.cpp do libretro/dolphin).
+            assertEquals(
+                mapOf("dolphin_efb_scale" to "1", "dolphin_shader_compilation_mode" to "0"),
+                core.defaults + core.presets.getValue(Preset.BALANCED),
+            )
+        }
+    }
+
+    @Test
+    fun `nucleos 3D novos nos niveis tem teto no Auto`() {
+        // A abertura do jogo não diz nada da cena 3D: o teste de velocidade subia para resoluções que não aguentam.
+        assertEquals(Preset.PERFORMANCE, Systems.byId("3ds")!!.core("citra").autoMax)
+        assertEquals(Preset.BALANCED, Systems.byId("saturn")!!.core("yabasanshiro").autoMax)
     }
 
     @Test

@@ -453,7 +453,7 @@ class GameActivity : ComponentActivity() {
 
         // 2b. Nível de qualidade: mede neste aparelho o maior que roda com folga (ou refaz só para este jogo).
         val retune = intent.getBooleanExtra(EXTRA_RETUNE, false)
-        if (!guestSession && core.presets.size >= 2 && (retune || shouldTune(core))) {
+        if (!guestSession && Tuning.measurable(core) && (retune || shouldTune(core))) {
             runTuning(core, perGame = retune) ?: return
         }
 

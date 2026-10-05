@@ -62,6 +62,13 @@ data class CoreInfo(
      * em vez de baixar e medir um núcleo que falha.
      */
     val needsBios: Boolean = false,
+    /**
+     * Nível mais alto que o modo Auto escolhe, e sem o teste de velocidade: nos núcleos 3D pesados os primeiros
+     * segundos do jogo (logos, carregamento, o que o teste mede) não dizem nada das cenas de jogo, e o teste subia
+     * para resoluções que o aparelho não aguenta. O Auto fica no chute pela classe do aparelho até este nível; o vigia
+     * de velocidade e o SessionGuard seguem baixando por jogo, e níveis acima só por escolha do usuário.
+     */
+    val autoMax: Preset? = null,
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */

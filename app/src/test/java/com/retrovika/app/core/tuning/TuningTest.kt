@@ -93,6 +93,32 @@ class TuningTest {
         assertEquals(TuneSource.ESTIMATED, Tuning.effective(full, device, null, null, result(Preset.BALANCED).copy(preset = "ULTRA"))!!.source)
     }
 
+    private val capped = full.copy(autoMax = Preset.BALANCED)
+
+    @Test
+    fun `nucleo com teto no Auto nao passa dele nem pelo chute nem por resultado antigo`() {
+        assertEquals(Preset.BALANCED, Tuning.estimate(DeviceTier.TOP, capped))
+        assertEquals(Preset.PERFORMANCE, Tuning.estimate(DeviceTier.ENTRY, capped))
+        assertEquals(Preset.PERFORMANCE, Tuning.estimate(DeviceTier.TOP, full.copy(autoMax = Preset.PERFORMANCE)))
+        // Medido pela abertura antes do teto: o chute toma o lugar.
+        assertEquals(EffectivePreset(Preset.BALANCED, TuneSource.ESTIMATED), Tuning.effective(capped, device, null, null, result(Preset.QUALITY)))
+        assertEquals(EffectivePreset(Preset.PERFORMANCE, TuneSource.ESTIMATED), Tuning.effective(capped, weak, null, null, result(Preset.QUALITY, profile = weak)))
+        // Ajuste por jogo: o de cima do teto desce até ele, o de baixo (lentidão) fica.
+        assertEquals(Preset.BALANCED, Tuning.effective(capped, device, null, result(Preset.QUALITY), null)!!.preset)
+        assertEquals(Preset.PERFORMANCE, Tuning.effective(capped, device, null, result(Preset.PERFORMANCE, slowdown = true), null)!!.preset)
+        // A escolha do usuário passa do teto.
+        assertEquals(EffectivePreset(Preset.QUALITY, TuneSource.USER), Tuning.effective(capped, device, Preset.QUALITY, null, null))
+    }
+
+    @Test
+    fun `so nucleo sem teto e com dois niveis ou mais passa pelo teste`() {
+        assertTrue(Tuning.measurable(full))
+        assertTrue(Tuning.measurable(two))
+        assertFalse(Tuning.measurable(capped))
+        assertFalse(Tuning.measurable(none))
+        assertFalse(Tuning.measurable(CoreInfo("c", "C", 0, presets = mapOf(Preset.BALANCED to emptyMap()))))
+    }
+
     // endregion
 
     // region search
