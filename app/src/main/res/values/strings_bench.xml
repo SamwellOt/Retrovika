@@ -3,7 +3,7 @@
 <resources>
     <string name="bench_kicker">First time of %1$s on this device</string>
     <string name="bench_title">Finding the best core</string>
-    <string name="bench_message">Each core runs this game for a few seconds, sped up and muted. The most accurate one that runs with room to spare on your device becomes the default. Cores not installed yet are downloaded.</string>
+    <string name="bench_message">Each core runs this game for a few seconds, sped up and muted. The most accurate one that runs with room to spare on your device becomes the default, and the test stops there. Cores not installed yet are downloaded.</string>
     <string name="bench_speed">%1$d%%</string>
     <string name="bench_failed">Didn\'t run</string>
     <string name="bench_skip">Skip and use the default</string>
@@ -11,6 +11,10 @@
     <string name="bench_system_result">Chosen by the test on this device: %1$s, %2$d%% speed.</string>
     <string name="bench_system_overridden">Your choice above wins.</string>
     <string name="bench_system_skipped">Core test skipped: the default is used.</string>
+    <string name="bench_downloading">Downloading %1$s… %2$d%%</string>
+    <string name="bench_not_tested">Not tested</string>
+    <string name="bench_system_chosen">Chosen by the test on this device: %1$s.</string>
+    <string name="bench_system_untested">Not tested: %1$s (the first core with room to spare was enough).</string>
     <string name="bench_again">Test again</string>
     <string name="settings_auto_benchmark">Tune automatically</string>
     <string name="settings_auto_benchmark_subtitle">The first time a console runs, measures this device: picks the most accurate core and the highest quality level that run smoothly</string>

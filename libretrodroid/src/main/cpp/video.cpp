@@ -255,6 +255,22 @@ void Video::renderFrame() {
     }
 }
 
+void Video::representFrame() {
+    if (!hasFrame) return;
+
+    // Igual ao renderFrame, mas sem o skipDuplicateFrames: o buffer que o GLSurfaceView troca depois deste desenho
+    // vem indefinido, e sem redesenhar a imagem piscaria entre quadros velhos. O núcleo de GPU não roda aqui: a
+    // textura de apresentação (já com o quadro copiado) e a cadeia de shaders bastam.
+    if (hardwareAccelerated) {
+        CoreGLState coreState;
+        updateProgram();
+        renderer->prepareFrame();
+        drawFrame();
+    } else {
+        drawFrame();
+    }
+}
+
 void Video::drawFrame() {
     glDisable(GL_DEPTH_TEST);
 
@@ -416,6 +432,7 @@ void Video::onNewFrame(const void *data, unsigned width, unsigned height, size_t
     if (data != nullptr) {
         renderer->onNewFrame(data, width, height, pitch);
         isDirty = true;
+        hasFrame = true;
     }
 }
 

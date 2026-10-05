@@ -27,6 +27,7 @@
 #include <EGL/egl.h>
 #include <unordered_map>
 #include <array>
+#include <atomic>
 
 #include "../../libretro-common/include/libretro.h"
 #include "log.h"
@@ -98,6 +99,26 @@ public:
     /** O núcleo recebeu o contexto de vídeo que pediu (GLES ou Vulkan). */
     bool isHwContextAccepted() const;
     const retro_frame_time_callback& getFrameTimeCallback() const { return frameTimeCallback; }
+
+    /** Medidor da fila de áudio pedido pelo núcleo (callback nulo se não pediu). */
+    const retro_audio_buffer_status_callback& getAudioBufferStatusCallback() const { return audioBufferStatusCallback; }
+    /** Latência mínima de áudio pedida pelo núcleo, em ms (0 = a padrão). */
+    unsigned getMinimumAudioLatency() const { return minimumAudioLatencyMs; }
+
+    /** Taxa de atualização da tela (GET_TARGET_REFRESH_RATE). */
+    void setTargetRefreshRate(float rate) { targetRefreshRate = rate; }
+    /** Estado que o LibretroDroid publica antes de cada retro_run (GET_FASTFORWARDING, GET_THROTTLE_STATE). */
+    void setFastForwarding(bool value) { fastForwarding = value; }
+    void setThrottleState(unsigned mode, float rate) { throttleMode = mode; throttleRate = rate; }
+    /** Falso nos quadros intermediários do avanço rápido (GET_AUDIO_VIDEO_ENABLE, bit de vídeo). */
+    void setVideoEnabled(bool value) { videoEnabled = value; }
+    bool isVideoEnabled() const { return videoEnabled; }
+
+    /** SET_SYSTEM_AV_INFO trouxe um timing novo (fps e taxa de amostragem); lido pela thread de emulação. */
+    bool isAvTimingUpdated() const { return avTimingUpdated; }
+    void clearAvTimingUpdated() { avTimingUpdated = false; }
+    double getAvTimingFps() const { return avTimingFps; }
+    double getAvTimingSampleRate() const { return avTimingSampleRate; }
     bool isUseStencil() const;
     bool isBottomLeftOrigin() const;
 
@@ -147,6 +168,17 @@ private:
     bool useVulkan = false;
     bool relaxedGlesVersion = false;
     retro_frame_time_callback frameTimeCallback {};
+    retro_audio_buffer_status_callback audioBufferStatusCallback {};
+    unsigned minimumAudioLatencyMs = 0;
+    // Lidos dentro do retro_run, que alguns núcleos (Dolphin, PPSSPP) rodam em threads próprias.
+    std::atomic<float> targetRefreshRate {60.0f};
+    std::atomic<bool> fastForwarding {false};
+    std::atomic<unsigned> throttleMode {RETRO_THROTTLE_NONE};
+    std::atomic<float> throttleRate {60.0f};
+    std::atomic<bool> videoEnabled {true};
+    std::atomic<bool> avTimingUpdated {false};
+    std::atomic<double> avTimingFps {0.0};
+    std::atomic<double> avTimingSampleRate {0.0};
     bool useStencil = false;
     bool bottomLeftOrigin = false;
 

@@ -41,11 +41,18 @@ private:
     const AudioLatencySettings LOW_LATENCY_SETTINGS { 4, true };
 
 public:
-    Audio(int32_t sampleRate, double refreshRate, bool preferLowLatencyAudio);
+    Audio(int32_t sampleRate, double refreshRate, bool preferLowLatencyAudio, unsigned minimumLatencyMs = 0);
     ~Audio() override = default;
 
     void start();
     void stop();
+    bool isStartRequested() const { return startRequested; }
+
+    /**
+     * Quanto da fila de áudio está ocupado, de 0 a 100, sem lock (só lê contadores atômicos). -1 sem saída
+     * aberta ou enquanto o Oboe ainda não pediu nenhuma amostra: a fila começa vazia e isso não é falta de áudio.
+     */
+    int bufferOccupancy() const;
 
     oboe::DataCallbackResult onAudioReady(
         oboe::AudioStream *oboeStream,
@@ -88,6 +95,8 @@ private:
         int32_t temporaryAudioBufferSize = 0;
         std::unique_ptr<oboe::LatencyTuner> latencyTuner;
         double baseConversionFactor = 1.0;
+        // O Oboe já está consumindo a fila (volta a falso no stop()).
+        std::atomic<bool> consuming {false};
     };
     std::shared_ptr<Pipeline> pipeline;
 
@@ -98,6 +107,8 @@ private:
     std::atomic<bool> startRequested {false};
     int32_t inputSampleRate;
     double contentRefreshRate = 60.0;
+    // Pedido do núcleo (SET_MINIMUM_AUDIO_LATENCY): a fila nunca é menor que isso.
+    unsigned minimumLatencyMs = 0;
 
     double framesToSubmit = 0.0;
     double errorIntegral = 0.0;

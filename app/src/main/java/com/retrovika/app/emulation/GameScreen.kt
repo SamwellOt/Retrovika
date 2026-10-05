@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import com.retrovika.app.R
 import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -75,6 +76,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -112,7 +114,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -134,7 +138,17 @@ fun GameScreen(
     onDismissToast: () -> Unit,
     /** Esperando o núcleo (o estado sai antes do menu abrir): um indicador mostra que o toque chegou. */
     busy: Boolean = false,
+    /**
+     * O menu já aparece, mas o estado do jogo ainda está sendo capturado na thread de emulação (que segue rodando
+     * até ele sair): o que depende do estado (gravar num slot, traduzir, hospedar partida) fica desligado.
+     */
+    menuPending: Boolean = false,
+    /** Carregando o jogo (do GLRetroView criado até o primeiro quadro): cobre a tela preta do núcleo. */
+    loading: LoadingUi? = null,
+    /** Contador de desempenho: lido só dentro dele, uma vez por segundo, sem recompor a tela do jogo; nulo = escondido. */
+    perfStats: () -> PerfStats? = { null },
 ) {
+    val menuShown = menuOpen || menuPending
     CompositionLocalProvider(LocalContentColor provides Palette.TextPrimary) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (state) {
@@ -184,18 +198,32 @@ fun GameScreen(
                 (menu.netplay().ui as? NetplayUi.Playing)?.let {
                     NetplayBadge(it, Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing).padding(10.dp))
                 }
+                PerfHud(perfStats, Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.End)).padding(6.dp))
                 // Sobre o vídeo, no mesmo lugar dele: as caixas traduzidas batem com o texto da captura.
                 menu.translation()?.let { TranslationOverlay(it, onClose = menu::closeTranslation, modifier = videoModifier) }
+                // Por cima de tudo (controle e botões incluídos): a vista do núcleo tem de existir já, é ela que cria a
+                // superfície onde o jogo carrega, mas até o primeiro quadro ela é só um quadrado preto. Opaco e
+                // consumindo os toques: nada chega ao controle nem ao jogo por baixo. Sai com um fade.
+                var lastLoading by remember { mutableStateOf<LoadingUi?>(null) }
+                if (loading != null) lastLoading = loading
+                AnimatedVisibility(visible = loading != null, enter = EnterTransition.None, exit = fadeOut(tween(250))) {
+                    lastLoading?.let {
+                        PreparingView(
+                            EmulationUi.Preparing(it.message, null), game, system, it.backdrop,
+                            Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
+                        )
+                    }
+                }
             }
         }
 
         // A aba fica aqui: o menu sai da composição enquanto o editor do controle está aberto e, ao voltar,
         // precisa continuar em Controle. Cada nova abertura do menu começa em Estados.
         var menuTab by remember { mutableStateOf(MenuTab.STATES) }
-        LaunchedEffect(menuOpen) { if (!menuOpen) menuTab = MenuTab.STATES }
+        LaunchedEffect(menuShown) { if (!menuShown) menuTab = MenuTab.STATES }
 
-        AnimatedVisibility(visible = menuOpen && !padEditing, enter = fadeIn(), exit = fadeOut()) {
-            PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab) { menuTab = it }
+        AnimatedVisibility(visible = menuShown && !padEditing, enter = fadeIn(), exit = fadeOut()) {
+            PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab, ready = !menuPending, capturing = menuPending && busy) { menuTab = it }
         }
 
         if (menuOpen) menu.sharing()?.let { ShareStateSheet(it, menu) }
@@ -211,7 +239,8 @@ fun GameScreen(
             )
         }
 
-        if (busy && !menuOpen) {
+        // Com o menu na tela quem avisa é o próprio menu ([PauseMenu], "capturing").
+        if (busy && !menuShown) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Palette.Neon, strokeWidth = 3.dp, modifier = Modifier.size(44.dp))
             }
@@ -271,6 +300,18 @@ private fun Hud(
     else Row(m, horizontalArrangement = Arrangement.spacedBy(2.dp)) { content() }
 }
 
+/** Velocidade (% da do console) e quadros novos por segundo, num canto: pequeno, sem tocar no jogo. */
+@Composable
+private fun PerfHud(stats: () -> PerfStats?, modifier: Modifier) {
+    val s = stats() ?: return
+    Text(
+        stringResource(R.string.game_perf_hud, s.speedPercent, s.fps),
+        color = Color.White.copy(alpha = 0.85f),
+        style = MaterialTheme.typography.labelSmall,
+        modifier = modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
 @Composable
 private fun HudButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, active: Boolean, onClick: () -> Unit) {
     Box(
@@ -286,9 +327,19 @@ private fun HudButton(icon: androidx.compose.ui.graphics.vector.ImageVector, des
 }
 
 @Composable
-private fun PreparingView(state: EmulationUi.Preparing, game: Game?, system: GameSystem?) {
+private fun PreparingView(
+    state: EmulationUi.Preparing, game: Game?, system: GameSystem?,
+    /** Última tela do jogo (miniatura do salvamento automático), esmaecida atrás do texto. */
+    backdrop: Bitmap? = null,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.fillMaxSize().background(Palette.Ink)) {
+        backdrop?.let {
+            val image = remember(it) { it.asImageBitmap() }
+            Image(image, null, contentScale = ContentScale.Crop, alpha = 0.22f, modifier = Modifier.fillMaxSize())
+        }
     Column(
-        Modifier.fillMaxSize().background(Palette.Ink).ambientGlow(primary = system?.let { Color(it.accent) } ?: Palette.Neon).padding(32.dp),
+        Modifier.fillMaxSize().ambientGlow(primary = system?.let { Color(it.accent) } ?: Palette.Neon).padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -310,6 +361,7 @@ private fun PreparingView(state: EmulationUi.Preparing, game: Game?, system: Gam
         else LinearProgressIndicator(modifier = bar, color = Palette.Neon, trackColor = Palette.SurfaceHighest)
         Spacer(Modifier.height(12.dp))
         Text(state.message, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
+    }
     }
 }
 
@@ -355,6 +407,10 @@ private fun PauseMenu(
     settings: AppSettings,
     padProfile: PadProfile,
     tab: MenuTab,
+    /** Falso enquanto o estado do jogo ainda está sendo capturado: o que depende dele fica desligado. */
+    ready: Boolean,
+    /** Captura demorando (passou do instante em que só piscaria): um aviso discreto no pé do menu. */
+    capturing: Boolean,
     onTab: (MenuTab) -> Unit,
 ) {
     var refresh by remember { mutableIntStateOf(0) }
@@ -406,12 +462,20 @@ private fun PauseMenu(
             Spacer(Modifier.height(16.dp))
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    MenuTab.STATES -> if (compact) StatesList(menu, refresh) { refresh++ } else StatesTab(menu, refresh) { refresh++ }
-                    MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader)
+                    MenuTab.STATES -> if (compact) StatesList(menu, refresh, ready) { refresh++ } else StatesTab(menu, refresh, ready) { refresh++ }
+                    MenuTab.OPTIONS -> OptionsTab(menu, fastForward, settings.shader, ready)
                     MenuTab.CONTROLS -> ControlsTab(menu, padProfile, settings, system?.name.orEmpty(), hasPad = system != null)
                     MenuTab.CORE -> CoreTab(menu)
                     MenuTab.CHEATS -> menu.cheats()?.let { CheatsTab(it) }
                     MenuTab.REMOTE -> RemoteTab()
+                }
+            }
+            if (capturing) {
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.align(Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(color = Palette.Neon, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.game_menu_capturing), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
                 }
             }
         }
@@ -425,19 +489,38 @@ private fun slotTitle(slot: SaveSlot) =
 private fun slotTime(slot: SaveSlot) =
     slot.timestamp?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)) } ?: "—"
 
+/**
+ * Miniatura do slot, decodificada fora da thread principal (um PNG por slot, cinco slots, na primeira composição
+ * do menu). Até chegar a caixa fica vazia, sem o "Vazio" que piscaria; numa atualização ([refresh]) a imagem antiga
+ * segue na tela até a nova ficar pronta.
+ */
 @Composable
 private fun SlotThumb(menu: MenuActions, slot: SaveSlot, refresh: Int, modifier: Modifier) {
-    val thumb = remember(refresh, slot.index) { menu.thumbnail(slot.index) }
-    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Palette.Ink), contentAlignment = Alignment.Center) {
-        if (thumb != null) Image(thumb.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        else Text(stringResource(if (slot.exists) R.string.game_slot_no_image else R.string.game_slot_empty), color = Palette.TextMuted, style = MaterialTheme.typography.labelMedium)
+    val loaded by produceState<Pair<Boolean, Bitmap?>>(false to null, refresh, slot.index) {
+        value = true to withContext(Dispatchers.IO) { menu.thumbnail(slot.index) }
     }
+    val thumb = loaded.second
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Palette.Ink), contentAlignment = Alignment.Center) {
+        if (thumb != null) {
+            val image = remember(thumb) { thumb.asImageBitmap() }
+            Image(image, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else if (loaded.first) {
+            Text(stringResource(if (slot.exists) R.string.game_slot_no_image else R.string.game_slot_empty), color = Palette.TextMuted, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/** Os slots (um stat por arquivo) lidos fora da thread principal; nulo até a primeira leitura. */
+@Composable
+private fun slotsState(menu: MenuActions, refresh: Int): List<SaveSlot>? {
+    val slots by produceState<List<SaveSlot>?>(null, refresh) { value = withContext(Dispatchers.IO) { menu.slots() } }
+    return slots
 }
 
 /** Retrato: um estado por linha, miniatura à esquerda e botões empilhados à direita. */
 @Composable
-private fun StatesList(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
-    val slots = remember(refresh) { menu.slots() }
+private fun StatesList(menu: MenuActions, refresh: Int, ready: Boolean, onChanged: () -> Unit) {
+    val slots = slotsState(menu, refresh) ?: return
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
         items(slots, key = { it.index }) { slot ->
             Row(
@@ -455,7 +538,7 @@ private fun StatesList(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
                     Text(slotTitle(slot), style = MaterialTheme.typography.titleSmall)
                     Text(slotTime(slot), style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1)
                     Spacer(Modifier.height(8.dp))
-                    SlotButtons(menu, slot, onChanged, stacked = true)
+                    SlotButtons(menu, slot, ready, onChanged, stacked = true)
                 }
             }
         }
@@ -463,9 +546,10 @@ private fun StatesList(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
 }
 
 @Composable
-private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit, stacked: Boolean) {
+private fun SlotButtons(menu: MenuActions, slot: SaveSlot, ready: Boolean, onChanged: () -> Unit, stacked: Boolean) {
     val save: @Composable (Modifier) -> Unit = { m ->
-        FilledTonalButton(onClick = { menu.save(slot.index, onChanged) }, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+        // Gravar usa o estado capturado ao abrir o menu: só depois que ele ficou pronto.
+        FilledTonalButton(onClick = { menu.save(slot.index, onChanged) }, enabled = ready, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
             Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_save), maxLines = 1)
         }
     }
@@ -502,8 +586,8 @@ private fun SlotButtons(menu: MenuActions, slot: SaveSlot, onChanged: () -> Unit
 
 /** Paisagem: cartões lado a lado; a miniatura encolhe para os botões continuarem visíveis. */
 @Composable
-private fun StatesTab(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
-    val slots = remember(refresh) { menu.slots() }
+private fun StatesTab(menu: MenuActions, refresh: Int, ready: Boolean, onChanged: () -> Unit) {
+    val slots = slotsState(menu, refresh) ?: return
     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         items(slots, key = { it.index }) { slot ->
             Column(
@@ -519,14 +603,14 @@ private fun StatesTab(menu: MenuActions, refresh: Int, onChanged: () -> Unit) {
                 Text(slotTitle(slot), style = MaterialTheme.typography.titleSmall)
                 Text(slotTime(slot), style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary)
                 Spacer(Modifier.height(8.dp))
-                SlotButtons(menu, slot, onChanged, stacked = false)
+                SlotButtons(menu, slot, ready, onChanged, stacked = false)
             }
         }
     }
 }
 
 @Composable
-private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOption) {
+private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOption, ready: Boolean) {
     var currentShader by remember { mutableStateOf(shader) }
     var disks by remember { mutableStateOf(menu.disks()) }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -568,7 +652,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!net.playing) {
-                        OutlinedButton(onClick = menu::hostNetplay) {
+                        OutlinedButton(onClick = menu::hostNetplay, enabled = ready) {
                             Icon(Icons.Rounded.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.netplay_host))
                         }
                     } else {
@@ -579,7 +663,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
             }
         }
         item {
-            OutlinedButton(onClick = { menu.close(); menu.translate() }) {
+            OutlinedButton(onClick = { menu.close(); menu.translate() }, enabled = ready) {
                 Icon(Icons.Rounded.Translate, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.translate_screen))
             }
         }

@@ -303,6 +303,8 @@ fun SettingsScreen(onAddFolder: () -> Unit, onOpenCores: () -> Unit, onOpenBios:
             RowDivider()
             SwitchRow(Icons.Rounded.Speed, Palette.Sun, stringResource(R.string.settings_auto_benchmark), stringResource(R.string.settings_auto_benchmark_subtitle), s.autoBenchmark) { scope.launch { repo.setAutoBenchmark(it) } }
             RowDivider()
+            SwitchRow(Icons.Rounded.Speed, Palette.Cyan, stringResource(R.string.settings_show_performance), stringResource(R.string.settings_show_performance_subtitle), s.showPerformance) { scope.launch { repo.setShowPerformance(it) } }
+            RowDivider()
             // O que o app sabe deste aparelho e que decide o ajuste inicial de cada núcleo.
             val device by produceState<DeviceProfile?>(null) { value = app.deviceProfile.await() }
             device?.let { d ->

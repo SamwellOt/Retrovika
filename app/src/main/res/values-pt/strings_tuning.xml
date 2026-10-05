@@ -8,6 +8,8 @@
     <string name="tune_chosen">Qualidade %1$s escolhida para este aparelho (%2$d%% da velocidade)</string>
     <string name="tune_slowdown">Este jogo está abaixo da velocidade total. Da próxima vez ele abre em \"%1$s\".</string>
     <string name="tune_slowdown_user">Este jogo está abaixo da velocidade total em \"%1$s\". Uma qualidade menor na página do console pode ajudar.</string>
+    <string name="thermal_hot">O celular está quente, então o jogo pode ficar lento.</string>
+    <string name="thermal_slowdown">O celular está quente e deixando o jogo lento. A qualidade não foi mudada; deixe esfriar.</string>
     <string name="tune_crash_lowered">Da última vez este jogo fechou sozinho. Agora ele abre em \"%1$s\", que usa menos memória.</string>
     <string name="tune_failed">Não deu para medir este jogo: ele não rodou em nenhum nível de qualidade. Continua valendo o ajuste anterior.</string>
 

@@ -95,3 +95,29 @@ mesmo submódulo do LibretroDroid 0.13.2.
   (renderizador, programas de shader, captura), o conteúdo do jogo, o caminho e os códigos de trapaça vivem até o
   `destroy()` em vez de vazar, e as opções e controles de um núcleo não passam mais para o seguinte.
 - `#include <functional>` em `rumble.h` e `utils/javautils.h`, exigido pelos NDKs atuais.
+
+### Desempenho (0.6.5)
+
+- **Medidor da fila de áudio** (`environment.cpp`, `Audio::bufferOccupancy`): `SET_AUDIO_BUFFER_STATUS_CALLBACK` é chamado
+  antes de cada `retro_run` com a ocupação da fila (abaixo de 25% = `underrun_likely`). Fica inativo com som desligado,
+  sem saída de áudio, em avanço rápido e em partida em rede (o teste de núcleos roda mudo e nunca pula quadros). É o que
+  faz funcionar o frameskip "auto" dos núcleos.
+- **Latência mínima de áudio**: `SET_MINIMUM_AUDIO_LATENCY` é atendida (até 512 ms); quando o núcleo pede dentro do
+  `retro_run` (PCSX ReARMed, mGBA), o Audio é recriado no fim do `step()`.
+- **Dicas de avanço rápido** (`GLRetroView.fastForwardHints`): alimentam `GET_FASTFORWARDING` e `GET_THROTTLE_STATE`, e
+  `GET_AUDIO_VIDEO_ENABLE` desliga o vídeo nos quadros intermediários, só em núcleos de software (o
+  `handleVideoRefresh` também ignora o quadro). `GET_TARGET_REFRESH_RATE` devolve o refresh da tela.
+- **`SET_SYSTEM_AV_INFO` com timing**: fps e taxa de amostragem novos refazem o FPSSync e o Audio na thread de emulação
+  (`audioLock`/`replaceAudio`, mantendo velocidade e estado iniciado).
+- **`GET_PERF_INTERFACE`** implementada (relógio, `cpu_features` fixos pela ABI, contadores sem efeito); alguns núcleos
+  a chamam sem conferir.
+- **Idioma**: `ja` (o Android não usa "jp") e mais idiomas mapeados.
+- **Ritmo do quadro** (`fpssync.*`, `libretrodroid.cpp`): a espera acontece antes de rodar o quadro e fora do
+  `coreLock` (`pacingLock`): o quadro pronto é apresentado logo, e a thread principal não fica presa até um quadro.
+- **Telas múltiplas do conteúdo** (`FPSSync`, `Video::representFrame`): com a tela a 2–4× o fps do jogo (60 fps em
+  120 Hz), roda um quadro a cada n vsyncs; nos outros o último é redesenhado, sem contar como quadro novo na captura.
+- **Taxa da tela em tempo real** (`setScreenRefreshRate`): um `DisplayListener` acompanha a taxa; o pedido ao sistema vai
+  por `Surface.setFrameRate(fps, FIXED_SOURCE)` com `ONLY_IF_SEAMLESS`, retirado na pausa.
+- **ADPF** (API 31+): sessão de dicas de desempenho para a thread GL; `step()` devolve os ns de trabalho, sem a espera.
+- **Eventos e entrada** (`GLRetroView`): `FrameRendered` sai uma vez por `tryEmit`, e teclas e movimento vão direto ao
+  nativo (protegido pelo `inputLock`), sem `queueEvent`. `videoFrameCount()` conta os quadros novos entregues pelo núcleo.

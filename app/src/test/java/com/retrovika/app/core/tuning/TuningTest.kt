@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TuningTest {
@@ -179,6 +180,15 @@ class TuningTest {
         (1..seconds).map { sample((fps * speed).toLong(), 1_000, fps) }
 
     @Test
+    fun `autoFrameskipOn so vale com valor ligado do proprio nucleo`() {
+        assertTrue(Tuning.autoFrameskipOn("mgba", mapOf("mgba_frameskip" to "auto")))
+        assertFalse(Tuning.autoFrameskipOn("mgba", mapOf("mgba_frameskip" to "disabled")))
+        assertFalse(Tuning.autoFrameskipOn("mgba", emptyMap()))
+        assertFalse(Tuning.autoFrameskipOn("snes9x", mapOf("mgba_frameskip" to "auto")))
+        assertTrue(Tuning.autoFrameskipOn("ppsspp", mapOf("ppsspp_auto_frameskip" to "enabled")))
+    }
+
+    @Test
     fun `lentidao continua avisa uma vez depois da carencia e da janela`() {
         val watch = SpeedWatch()
         val fired = watch.feed(40, 0.5)
@@ -213,6 +223,78 @@ class TuningTest {
         assertEquals(1, watch.feed(60, 0.5).count { it })
         watch.reset()
         assertEquals(1, watch.feed(60, 0.5).count { it })
+    }
+
+    /** [seconds] intervalos de 1 s a 60 fps a 100% de velocidade em que o núcleo entrega [shown] dos quadros rodados. */
+    private fun SpeedWatch.feedShown(seconds: Int, shown: Double, watchSkips: Boolean = true): List<Boolean> =
+        (1..seconds).map { sample(60, 1_000, 60.0, (60 * shown).toLong(), watchSkips) }
+
+    @Test
+    fun `pulo constante de quadros nunca avisa`() {
+        // Frameskip fixo de um preset, ou jogo de 30 fps que repete quadros: sempre 50%, a base acompanha.
+        assertFalse(SpeedWatch().feedShown(180, 0.5).any { it })
+        assertFalse(SpeedWatch().feedShown(180, 0.0 + 1.0 / 3).any { it })
+    }
+
+    @Test
+    fun `jogo normal com variacao pequena de quadros nunca avisa`() {
+        val watch = SpeedWatch()
+        val fired = (1..180).map { i -> watch.sample(60, 1_000, 60.0, if (i % 3 == 0) 56 else 60, true) }
+        assertFalse(fired.any { it })
+    }
+
+    @Test
+    fun `frameskip automatico escondendo lentidao avisa mesmo com os quadros rodados a 100 por cento`() {
+        val watch = SpeedWatch()
+        assertFalse(watch.feedShown(30, 1.0).any { it })
+        val fired = watch.feedShown(30, 0.5)
+        assertEquals(1, fired.count { it })
+        // A janela de 10 s enche a 80% de tempo lento: perto do 10º segundo do pulo.
+        assertTrue(fired.indexOf(true) + 1 in 8..12)
+    }
+
+    @Test
+    fun `sem frameskip automatico ligado o pulo de quadros nao conta`() {
+        val watch = SpeedWatch()
+        assertFalse(watch.feedShown(30, 1.0, watchSkips = false).any { it })
+        assertFalse(watch.feedShown(60, 0.4, watchSkips = false).any { it })
+    }
+
+    @Test
+    fun `pulo repentino curto nao avisa`() {
+        val watch = SpeedWatch()
+        assertFalse(watch.feedShown(40, 1.0).any { it })
+        assertFalse(watch.feedShown(5, 0.4).any { it })
+        assertFalse(watch.feedShown(40, 1.0).any { it })
+    }
+
+    @Test
+    fun `tela parada com quase tudo repetido nao conta como lenta nem entra na base`() {
+        val watch = SpeedWatch()
+        assertFalse(watch.feedShown(30, 1.0).any { it })
+        // Menu parado por 40 s: o núcleo repete tudo.
+        assertFalse(watch.feedShown(40, 0.0).any { it })
+        assertEquals(0.0, watch.skipBaseline()!!, 0.001)
+    }
+
+    @Test
+    fun `base do pulo vem do percentil baixo e some no reset`() {
+        val watch = SpeedWatch()
+        assertNull(watch.skipBaseline())
+        watch.feedShown(5, 0.5)
+        assertNull(watch.skipBaseline())
+        watch.feedShown(30, 0.5)
+        assertEquals(0.5, watch.skipBaseline()!!, 0.001)
+        watch.reset()
+        assertNull(watch.skipBaseline())
+    }
+
+    @Test
+    fun `velocidade baixa continua avisando junto do sinal de quadros`() {
+        val watch = SpeedWatch()
+        // 50% de velocidade e todos os quadros rodados entregues: só o primeiro sinal vale.
+        val fired = (1..40).map { watch.sample(30, 1_000, 60.0, 30, true) }
+        assertEquals(1, fired.count { it })
     }
 
     @Test

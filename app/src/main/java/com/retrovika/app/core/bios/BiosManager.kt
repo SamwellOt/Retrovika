@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.retrovika.app.core.storage.StoragePaths
 import com.retrovika.app.core.systems.BiosFile
+import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import kotlinx.coroutines.CancellationException
@@ -50,6 +51,12 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
      */
     fun missingOptional(system: GameSystem): List<BiosFile> =
         system.bios.filter { !it.required && !usable(it) }
+
+    /**
+     * O núcleo tem o que precisa de BIOS para abrir jogos: os que não exigem ([com.retrovika.app.core.systems.CoreInfo.needsBios])
+     * sempre; os que exigem, só com ao menos uma das BIOS do console presente e válida. Lê o disco: chame fora da thread principal.
+     */
+    fun canRun(core: CoreInfo, system: GameSystem): Boolean = canRun(core, system.bios, ::usable)
 
     /** Presente e, quando há formato conhecido, com o conteúdo certo (só lê o diretório da ROM). */
     private fun usable(bios: BiosFile): Boolean {
@@ -105,6 +112,9 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
         }
 
     companion object {
+        /** [CoreInfo.needsBios] pede ao menos uma BIOS do console presente; sem a exigência o núcleo roda sempre. */
+        fun canRun(core: CoreInfo, bios: List<BiosFile>, present: (BiosFile) -> Boolean): Boolean = !core.needsBios || bios.any(present)
+
         /** Exigências não atendidas: BIOS obrigatórias ausentes e grupos sem nenhuma alternativa presente. */
         fun unsatisfied(bios: List<BiosFile>, present: (BiosFile) -> Boolean): List<List<BiosFile>> {
             val required = bios.filter { it.required }

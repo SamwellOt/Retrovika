@@ -82,6 +82,12 @@ public:
 
     void renderFrame();
 
+    /**
+     * Redesenha o último quadro sem tratá-lo como novo (não mexe em isDirty nem em frameRendered, então a captura
+     * não recebe duplicata). Para os vsyncs entre dois quadros do núcleo, quando a tela é um múltiplo do conteúdo.
+     */
+    void representFrame();
+
     /** Houve quadro novo na janela desde a última chamada (o repetido não é redesenhado). */
     bool takeFrameRendered();
 
@@ -129,6 +135,8 @@ private:
 
     bool isDirty = false;
     bool frameRendered = false;
+    // O núcleo já entregou algum quadro: antes disso não há textura para reapresentar.
+    bool hasFrame = false;
 
     GLuint captureFramebuffer = 0;
     GLuint captureTexture = 0;

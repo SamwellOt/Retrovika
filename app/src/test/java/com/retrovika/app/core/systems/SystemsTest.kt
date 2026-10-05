@@ -105,4 +105,26 @@ class SystemsTest {
         // O estado do Play! sai com a máquina rodando: carregá-lo corrompia o jogo.
         assertTrue(!cores.getValue("play").saveStates)
     }
+
+    @Test
+    fun `nucleo que exige BIOS esta num console que declara BIOS`() {
+        val needing = Systems.all.flatMap { sys -> sys.cores.filter { it.needsBios }.map { sys to it } }
+        // Sem nenhuma BIOS declarada o núcleo nunca poderia rodar: o teste o pularia para sempre.
+        needing.forEach { (sys, core) -> assertTrue("${sys.id}/${core.id}: needsBios sem BIOS no console", sys.bios.isNotEmpty()) }
+        // E o primeiro (o padrão do console) nunca depende dela: o que o teste pula precisa ter um reserva.
+        needing.forEach { (sys, core) -> assertTrue("${sys.id}: o núcleo padrão não pode exigir BIOS", sys.defaultCore.id != core.id || sys.cores.size == 1) }
+        assertEquals(setOf("swanstation", "pcsx2"), needing.map { it.second.id }.toSet())
+    }
+
+    @Test
+    fun `consoles leves nao tem nucleo experimental nem Vulkan`() {
+        val light = Systems.all.filter { it.lightweight }
+        assertTrue(light.isNotEmpty())
+        light.forEach { sys ->
+            assertTrue("${sys.id}: console experimental não é leve", !sys.experimental)
+            sys.cores.forEach { assertTrue("${sys.id}/${it.id}", !it.experimental && !it.vulkan) }
+        }
+        // Os que pesam de verdade sempre testam.
+        listOf("n64", "psx", "psp", "nds", "dreamcast", "saturn", "arcade", "ps2", "gc", "wii", "3ds").forEach { assertTrue(it, !Systems.byId(it)!!.lightweight) }
+    }
 }

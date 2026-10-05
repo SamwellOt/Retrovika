@@ -1,6 +1,7 @@
 package com.retrovika.app.core.bios
 
 import com.retrovika.app.core.systems.BiosFile
+import com.retrovika.app.core.systems.CoreInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,5 +22,17 @@ class BiosManagerTest {
     fun `lista ausencias individuais e o grupo inteiro`() {
         val missing = BiosManager.unsatisfied(all) { false }
         assertEquals(listOf(listOf(lo), listOf(front, top)), missing)
+    }
+
+    @Test
+    fun `nucleo que exige BIOS so roda com alguma do console presente`() {
+        val hle = CoreInfo("hle", "HLE", 0)
+        val real = CoreInfo("real", "Real", 0, needsBios = true)
+        val bios = listOf(BiosFile("a.bin", 0, required = false), BiosFile("b.bin", 0, required = false))
+        assertTrue(BiosManager.canRun(hle, bios) { false })
+        assertTrue(!BiosManager.canRun(real, bios) { false })
+        assertTrue(BiosManager.canRun(real, bios) { it.fileName == "b.bin" })
+        // Console sem BIOS declarada: não há como satisfazer a exigência.
+        assertTrue(!BiosManager.canRun(real, emptyList()) { true })
     }
 }

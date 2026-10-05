@@ -1,0 +1,58 @@
+{
+"yabasanshiro_addon_cart": [
+"4M_extended_ram",
+"1M_extended_ram"
+],
+"yabasanshiro_force_hle_bios": [
+"disabled",
+"enabled"
+],
+"yabasanshiro_frameskip": [
+"enabled",
+"disabled"
+],
+"yabasanshiro_multitap_port1": [
+"disabled",
+"enabled"
+],
+"yabasanshiro_multitap_port2": [
+"disabled",
+"enabled"
+],
+"yabasanshiro_polygon_mode": [
+"perspective_correction",
+"gpu_tesselation",
+"cpu_tesselation"
+],
+"yabasanshiro_rbg_resolution_mode": [
+"original",
+"2x",
+"720p",
+"1080p",
+"Fit_to_emulation"
+],
+"yabasanshiro_rbg_use_compute_shader": [
+"disabled",
+"enabled"
+],
+"yabasanshiro_resolution_mode": [
+"original",
+"2x",
+"4x",
+"720p",
+"1080p",
+"4k"
+],
+"yabasanshiro_sh2coretype": [
+"dynarec",
+"interpreter"
+],
+"yabasanshiro_system_language": [
+"english",
+"deutsch",
+"french",
+"spanish",
+"italian",
+"japanese"
+]
+}

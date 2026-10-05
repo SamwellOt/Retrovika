@@ -32,15 +32,30 @@ public:
     ~FPSSync() { }
 
     void reset();
+    /**
+     * Quando o próximo quadro deve começar, no modo de espera. A thread dorme até aí ANTES de rodar o quadro
+     * (e fora de qualquer lock), para o desenho terminado ser apresentado logo. TimePoint::min() se pode rodar já.
+     */
+    TimePoint nextStart() const { return useVSync ? MIN_TIME : lastFrame; }
+    /** Quantos quadros do núcleo rodar neste desenho. 0 = só reapresentar o último (tela múltipla do conteúdo). */
     unsigned advanceFrames();
-    void wait();
-    double getTimeStretchFactor();
+    double getTimeStretchFactor() const;
+    bool isUsingVSync() const { return useVSync; }
+    /** Roda um quadro a cada [n] vsyncs (n > 1: tela a 120 Hz com conteúdo de 60). 1 no vsync simples. */
+    unsigned getVsyncDivisor() const { return vsyncDivisor; }
+    double getScreenRefreshRate() const { return screenRefreshRate; }
+    /** Quadros por segundo em que o núcleo realmente roda: o vsync dividido, ou o do conteúdo no modo de espera. */
+    double getFrameRate() const { return useVSync ? screenRefreshRate / vsyncDivisor : contentRefreshRate; }
 private:
 
     double screenRefreshRate;
     double contentRefreshRate;
     bool useVSync;
+    unsigned vsyncDivisor = 1;
+    // Posição do desenho dentro do ciclo de [vsyncDivisor] vsyncs.
+    unsigned vsyncCycle = 0;
     const double FPS_TOLERANCE = 5;
+    static constexpr unsigned MAX_VSYNC_DIVISOR = 4;
 
     const TimePoint MIN_TIME = TimePoint::min();
     void start();

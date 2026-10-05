@@ -1,6 +1,7 @@
 package com.retrovika.app.core.systems
 
 import com.retrovika.app.R
+import com.retrovika.app.core.tuning.DeviceProfile
 import com.retrovika.app.core.tuning.DeviceTier
 import com.retrovika.app.emulation.input.PadLayouts
 
@@ -19,6 +20,35 @@ object Systems {
     /** Machines/ e Databases/ do blueMSX (inclui o C-BIOS livre). */
     private val BLUEMSX_ASSETS = SystemAsset("blueMSX", "$ASSETS/blueMSX.zip")
 
+    /**
+     * Frameskip "auto" dos núcleos leves: ele pula quadros só quando o frontend avisa que o buffer de áudio está para
+     * esvaziar (SET_AUDIO_BUFFER_STATUS_CALLBACK), então não custa nada onde o aparelho dá conta. O núcleo pede mais latência
+     * de áudio enquanto está ligado, por isso só nas classes básica e média, as que podem engasgar; fora delas o valor
+     * do núcleo (sem pular) fica. O usuário muda nas opções do núcleo (as escolhas dele valem por cima).
+     */
+    private fun autoFrameskip(key: String, value: String = "auto"): (DeviceProfile) -> Map<String, String> =
+        { d -> if (d.tier <= DeviceTier.MID) mapOf(key to value) else emptyMap() }
+
+    private val GPGX_FRAMESKIP = autoFrameskip("genesis_plus_gx_frameskip")
+    private val PICODRIVE_FRAMESKIP = autoFrameskip("picodrive_frameskip")
+
+    /**
+     * O mGBA toca a animação da BIOS oficial se houver gba_bios.bin (ou gb_bios.bin etc.) em system/: pular a
+     * abertura vale para quem a colocou; sem BIOS a opção é ignorada pelo núcleo. Os valores são "ON"/"OFF".
+     */
+    private val MGBA_DEFAULTS = mapOf("mgba_skip_bios" to "ON")
+
+    /**
+     * Dolphin: a resolução interna (`dolphin_efb_scale`, múltiplo de 640x528) e a compilação de shaders. A síncrona
+     * trava o jogo a cada shader novo; a assíncrona com ubershaders ("2") desenha com um shader genérico enquanto o
+     * específico compila, e a que pula o desenho ("3") é a mais leve, com objetos faltando por instantes.
+     */
+    private val DOLPHIN_PRESETS = mapOf(
+        Preset.PERFORMANCE to mapOf("dolphin_efb_scale" to "1", "dolphin_shader_compilation_mode" to "3"),
+        Preset.BALANCED to mapOf("dolphin_efb_scale" to "2", "dolphin_shader_compilation_mode" to "2"),
+        Preset.QUALITY to mapOf("dolphin_efb_scale" to "3", "dolphin_shader_compilation_mode" to "2"),
+    )
+
     val all: List<GameSystem> = listOf(
         GameSystem(
             id = "nes", name = "Nintendo Entertainment System", shortName = "NES",
@@ -30,7 +60,7 @@ object Systems {
                 CoreInfo("mesen", "Mesen", R.string.core_mesen, needsRealPath = true),
             ),
             layout = PadLayouts.NES, accent = 0xFFE53935,
-            libretroDbName = "Nintendo - Nintendo Entertainment System",
+            libretroDbName = "Nintendo - Nintendo Entertainment System", lightweight = true,
             bios = listOf(BiosFile("disksys.rom", R.string.bios_disksys_rom, "ca30b50f880eb660a320674ed365ef7a", required = false)),
             homebrewPlatform = "NES",
         ),
@@ -40,11 +70,11 @@ object Systems {
             extensions = setOf("smc", "sfc", "swc", "fig", "bs"),
             cores = listOf(
                 CoreInfo("snes9x", "Snes9x", R.string.core_snes9x),
-                CoreInfo("snes9x2010", "Snes9x 2010", R.string.core_snes9x2010),
+                CoreInfo("snes9x2010", "Snes9x 2010", R.string.core_snes9x2010, deviceOptions = autoFrameskip("snes9x_2010_frameskip")),
                 CoreInfo("bsnes", "bsnes", R.string.core_bsnes, needsRealPath = true),
             ),
             layout = PadLayouts.SNES, accent = 0xFF7E57C2,
-            libretroDbName = "Nintendo - Super Nintendo Entertainment System",
+            libretroDbName = "Nintendo - Super Nintendo Entertainment System", lightweight = true,
         ),
         GameSystem(
             id = "n64", name = "Nintendo 64", shortName = "N64",
@@ -61,7 +91,13 @@ object Systems {
                         "mupen64plus-43screensize" to "640x480",
                     ),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("mupen64plus-43screensize" to "320x240", "mupen64plus-EnableFBEmulation" to "False"),
+                        // Sem o buffer de quadro (EnableFBEmulation) o GLideN64 deixa de desenhar telas de pausa e efeitos em
+                        // muitos jogos: fica ligado em todos os níveis. A economia daqui vem da resolução, do cálculo de LOD
+                        // por pixel (ligado no núcleo) e do filtro "híbrido" de escala, que o próprio núcleo avisa ser lento em
+                        // GPU fraca. A cópia da cor para a RDRAM fica no "Async" do núcleo (desligar quebra efeitos).
+                        Preset.PERFORMANCE to mapOf(
+                            "mupen64plus-43screensize" to "320x240", "mupen64plus-EnableLODEmulation" to "False", "mupen64plus-HybridFilter" to "False",
+                        ),
                         Preset.BALANCED to mapOf("mupen64plus-43screensize" to "640x480"),
                         Preset.QUALITY to mapOf("mupen64plus-43screensize" to "1280x960", "mupen64plus-MultiSampling" to "4"),
                     ),
@@ -78,10 +114,10 @@ object Systems {
             cores = listOf(
                 CoreInfo("gambatte", "Gambatte", R.string.core_gambatte, defaults = mapOf("gambatte_gb_colorization" to "auto")),
                 CoreInfo("sameboy", "SameBoy", R.string.core_sameboy),
-                CoreInfo("mgba", "mGBA", R.string.core_mgba_gb),
+                CoreInfo("mgba", "mGBA", R.string.core_mgba_gb, defaults = MGBA_DEFAULTS),
             ),
             layout = PadLayouts.GAMEBOY, accent = 0xFF8BC34A, orientation = Orientation.PORTRAIT,
-            libretroDbName = "Nintendo - Game Boy", homebrewPlatform = "GB",
+            libretroDbName = "Nintendo - Game Boy", lightweight = true, homebrewPlatform = "GB",
         ),
         GameSystem(
             id = "gbc", name = "Game Boy Color", shortName = "GBC",
@@ -92,19 +128,19 @@ object Systems {
                 CoreInfo("sameboy", "SameBoy", R.string.core_sameboy),
             ),
             layout = PadLayouts.GAMEBOY, accent = 0xFFFFB300, orientation = Orientation.PORTRAIT,
-            libretroDbName = "Nintendo - Game Boy Color", homebrewPlatform = "GBC",
+            libretroDbName = "Nintendo - Game Boy Color", lightweight = true, homebrewPlatform = "GBC",
         ),
         GameSystem(
             id = "gba", name = "Game Boy Advance", shortName = "GBA",
             manufacturer = "Nintendo", year = 2001,
             extensions = setOf("gba"),
             cores = listOf(
-                CoreInfo("mgba", "mGBA", R.string.core_mgba_gba),
-                CoreInfo("gpsp", "gpSP", R.string.core_gpsp),
+                CoreInfo("mgba", "mGBA", R.string.core_mgba_gba, defaults = MGBA_DEFAULTS, deviceOptions = autoFrameskip("mgba_frameskip")),
+                CoreInfo("gpsp", "gpSP", R.string.core_gpsp, deviceOptions = autoFrameskip("gpsp_frameskip")),
                 CoreInfo("vba_next", "VBA Next", R.string.core_vba_next),
             ),
             layout = PadLayouts.GBA, accent = 0xFF5C6BC0,
-            libretroDbName = "Nintendo - Game Boy Advance",
+            libretroDbName = "Nintendo - Game Boy Advance", lightweight = true,
             bios = listOf(BiosFile("gba_bios.bin", R.string.bios_gba_bios_bin, "a860e8c0b6d573d191e4ec7db1b1e4f6", required = false)),
             homebrewPlatform = "GBA",
         ),
@@ -117,10 +153,7 @@ object Systems {
                     "melondsds", "melonDS DS", R.string.core_melondsds,
                     defaults = mapOf("melonds_render_mode" to "software", "melonds_console_mode" to "ds"),
                 ),
-                CoreInfo(
-                    "desmume", "DeSmuME", R.string.core_desmume,
-                    defaults = mapOf("desmume_frameskip" to "0"),
-                ),
+                CoreInfo("desmume", "DeSmuME", R.string.core_desmume),
             ),
             layout = PadLayouts.NDS, accent = 0xFF90A4AE, orientation = Orientation.PORTRAIT,
             libretroDbName = "Nintendo - Nintendo DS",
@@ -140,6 +173,12 @@ object Systems {
                     // O toque na tela só aperta com citra_touch_touchscreen, que vem desligado. O modo "mouse" (ligado
                     // por padrão) move o cursor com o dedo mas só aperta com o botão do mouse, que o Android não manda.
                     defaults = mapOf("citra_touch_touchscreen" to "enabled", "citra_mouse_touchscreen" to "disabled"),
+                    // Resolução interna (1x = 400x240 por tela). Valores da lista do próprio núcleo ("1x (Native)|2x|3x…").
+                    presets = mapOf(
+                        Preset.PERFORMANCE to mapOf("citra_resolution_factor" to "1x (Native)"),
+                        Preset.BALANCED to mapOf("citra_resolution_factor" to "2x"),
+                        Preset.QUALITY to mapOf("citra_resolution_factor" to "4x"),
+                    ),
                 ),
                 CoreInfo("panda3ds", "Panda3DS", R.string.core_panda3ds, experimental = true, needsRealPath = true),
             ),
@@ -152,7 +191,7 @@ object Systems {
             id = "gc", name = "GameCube", shortName = "GC",
             manufacturer = "Nintendo", year = 2001,
             extensions = setOf("iso", "gcm", "rvz", "ciso", "gcz"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD)),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_gc, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS)),
             layout = PadLayouts.GAMECUBE, accent = 0xFF6A1B9A,
             libretroDbName = "Nintendo - GameCube", experimental = true,
         ),
@@ -160,7 +199,7 @@ object Systems {
             id = "wii", name = "Nintendo Wii", shortName = "WII",
             manufacturer = "Nintendo", year = 2006,
             extensions = setOf("wbfs", "rvz", "wia", "iso", "gcz", "ciso", "wad"),
-            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD)),
+            cores = listOf(CoreInfo("dolphin", "Dolphin", R.string.core_dolphin_wii, experimental = true, systemAssets = listOf(DOLPHIN_ASSETS), portDevice = RETRO_DEVICE_JOYPAD, presets = DOLPHIN_PRESETS)),
             layout = PadLayouts.WII, accent = 0xFF90CAF9,
             libretroDbName = "Nintendo - Wii", experimental = true,
             // .wad também é o pacote de dados do Doom (e de outros jogos de PC): só dentro de uma pasta "wii".
@@ -179,7 +218,12 @@ object Systems {
                         "pcsx_rearmed_frameskip_type" to "disabled",
                     ),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("pcsx_rearmed_frameskip_type" to "auto"),
+                        // Frameskip pelo buffer de áudio (só pula quando vai falhar), sem a reverberação da SPU nem o dithering
+                        // da GPU, os dois itens que o próprio núcleo marca como custo de desempenho. O equilibrado fica sem
+                        // mexer em nada: os "speed hacks" do núcleo (GTE, stalls) avisam que causam erros de imagem.
+                        Preset.PERFORMANCE to mapOf(
+                            "pcsx_rearmed_frameskip_type" to "auto", "pcsx_rearmed_spu_reverb" to "disabled", "pcsx_rearmed_dithering" to "disabled",
+                        ),
                         Preset.BALANCED to emptyMap(),
                         Preset.QUALITY to mapOf("pcsx_rearmed_neon_enhancement_enable" to "enabled"),
                     ),
@@ -188,7 +232,12 @@ object Systems {
                 ),
                 CoreInfo(
                     "swanstation", "SwanStation", R.string.core_swanstation,
-                    defaults = mapOf("swanstation_GPU_ResolutionScale" to "2", "swanstation_GPU_Renderer" to "OpenGL"),
+                    needsBios = true,
+                    defaults = mapOf(
+                        "swanstation_GPU_ResolutionScale" to "2", "swanstation_GPU_Renderer" to "OpenGL",
+                        // Pula a animação da BIOS ao abrir o jogo.
+                        "swanstation_BIOS_PatchFastBoot" to "true",
+                    ),
                     presets = mapOf(
                         Preset.PERFORMANCE to mapOf("swanstation_GPU_ResolutionScale" to "1"),
                         Preset.BALANCED to mapOf("swanstation_GPU_ResolutionScale" to "2"),
@@ -228,6 +277,7 @@ object Systems {
                 ),
                 CoreInfo(
                     "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
+                    needsBios = true,
                     // Lê o disco com o próprio I/O (não chama filestream_vfs_init): o caminho virtual do SAF não abre.
                     needsRealPath = true,
                     // Vulkan pela ponte do LibretroDroid (o quadro vai por um AHardwareBuffer para o GLES): é o renderizador
@@ -284,7 +334,14 @@ object Systems {
                     deviceOptions = { d -> mapOf("ppsspp_backend" to if (d.vulkan) "vulkan" else "opengl") },
                     defaults = mapOf("ppsspp_internal_resolution" to "960x544", "ppsspp_frameskip" to "disabled"),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("ppsspp_internal_resolution" to "480x272", "ppsspp_frameskip" to "1"),
+                        // O auto frameskip do PPSSPP só vale com ppsspp_frameskip > 0 (com 0 ele nem entra no cálculo) e
+                        // pula quando o jogo atrasa em relação ao relógio, sem depender do áudio. As três opções de "hacks"
+                        // são as que o núcleo dá como aceleração: leitura da GPU de volta e cache preguiçoso de texturas
+                        // quebram texto/efeitos em poucos jogos, por isso ficam só no nível mais leve.
+                        Preset.PERFORMANCE to mapOf(
+                            "ppsspp_internal_resolution" to "480x272", "ppsspp_frameskip" to "1", "ppsspp_auto_frameskip" to "enabled",
+                            "ppsspp_skip_gpu_readbacks" to "enabled", "ppsspp_lazy_texture_caching" to "enabled",
+                        ),
                         Preset.BALANCED to mapOf("ppsspp_internal_resolution" to "960x544"),
                         Preset.QUALITY to mapOf("ppsspp_internal_resolution" to "1920x1088", "ppsspp_texture_anisotropic_filtering" to "16x"),
                     ),
@@ -299,11 +356,11 @@ object Systems {
             manufacturer = "Sega", year = 1988,
             extensions = setOf("md", "gen", "smd", "bin", "68k", "sgd"),
             cores = listOf(
-                CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_genesis),
-                CoreInfo("picodrive", "PicoDrive", R.string.core_picodrive_genesis),
+                CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_genesis, deviceOptions = GPGX_FRAMESKIP),
+                CoreInfo("picodrive", "PicoDrive", R.string.core_picodrive_genesis, deviceOptions = PICODRIVE_FRAMESKIP),
             ),
             layout = PadLayouts.GENESIS, accent = 0xFF212121,
-            libretroDbName = "Sega - Mega Drive - Genesis",
+            libretroDbName = "Sega - Mega Drive - Genesis", lightweight = true,
             // .md é o Markdown de qualquer README: só dentro de uma pasta "megadrive"/"genesis".
             folderOnlyExtensions = setOf("md"),
         ),
@@ -311,7 +368,7 @@ object Systems {
             id = "segacd", name = "Mega CD / Sega CD", shortName = "SCD",
             manufacturer = "Sega", year = 1991,
             extensions = setOf("cue", "chd", "iso", "m3u"),
-            cores = listOf(CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_segacd)),
+            cores = listOf(CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_segacd, deviceOptions = GPGX_FRAMESKIP)),
             layout = PadLayouts.GENESIS, accent = 0xFF37474F,
             libretroDbName = "Sega - Mega-CD - Sega CD",
             bios = listOf(
@@ -325,7 +382,7 @@ object Systems {
             id = "32x", name = "Sega 32X", shortName = "32X",
             manufacturer = "Sega", year = 1994,
             extensions = setOf("32x"),
-            cores = listOf(CoreInfo("picodrive", "PicoDrive", R.string.core_picodrive_32x)),
+            cores = listOf(CoreInfo("picodrive", "PicoDrive", R.string.core_picodrive_32x, deviceOptions = PICODRIVE_FRAMESKIP)),
             layout = PadLayouts.GENESIS, accent = 0xFFC62828,
             libretroDbName = "Sega - 32X",
         ),
@@ -335,7 +392,7 @@ object Systems {
             extensions = setOf("sms"),
             cores = listOf(CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_sms), CoreInfo("gearsystem", "Gearsystem", R.string.core_gearsystem)),
             layout = PadLayouts.MASTER_SYSTEM, accent = 0xFF0D47A1,
-            libretroDbName = "Sega - Master System - Mark III",
+            libretroDbName = "Sega - Master System - Mark III", lightweight = true,
         ),
         GameSystem(
             id = "gg", name = "Game Gear", shortName = "GG",
@@ -343,14 +400,23 @@ object Systems {
             extensions = setOf("gg"),
             cores = listOf(CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_gg), CoreInfo("gearsystem", "Gearsystem", R.string.core_gearsystem)),
             layout = PadLayouts.MASTER_SYSTEM, accent = 0xFF00838F,
-            libretroDbName = "Sega - Game Gear",
+            libretroDbName = "Sega - Game Gear", lightweight = true,
         ),
         GameSystem(
             id = "saturn", name = "Sega Saturn", shortName = "SAT",
             manufacturer = "Sega", year = 1994,
             extensions = setOf("cue", "chd", "ccd", "m3u", "iso", "mds"),
             cores = listOf(
-                CoreInfo("yabasanshiro", "YabaSanshiro", R.string.core_yabasanshiro, defaults = mapOf("yabasanshiro_resolution_mode" to "2x")),
+                CoreInfo(
+                    "yabasanshiro", "YabaSanshiro", R.string.core_yabasanshiro,
+                    defaults = mapOf("yabasanshiro_resolution_mode" to "2x"),
+                    // Resolução (vale no próximo início: a opção do núcleo diz "restart"). Valores da lista do núcleo.
+                    presets = mapOf(
+                        Preset.PERFORMANCE to mapOf("yabasanshiro_resolution_mode" to "original"),
+                        Preset.BALANCED to mapOf("yabasanshiro_resolution_mode" to "2x"),
+                        Preset.QUALITY to mapOf("yabasanshiro_resolution_mode" to "4x"),
+                    ),
+                ),
                 CoreInfo("mednafen_saturn", "Beetle Saturn", R.string.core_mednafen_saturn, experimental = true),
             ),
             layout = PadLayouts.SATURN, accent = 0xFF455A64,
@@ -371,10 +437,21 @@ object Systems {
                     "flycast", "Flycast", R.string.core_flycast,
                     // Renderização em thread separada deixa a tela preta em frontends sem contexto GL compartilhado
                     // (caso do LibretroDroid); desligada, o Flycast desenha no mesmo thread do retro_run.
-                    defaults = mapOf("reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "disabled"),
+                    defaults = mapOf(
+                        "reicast_internal_resolution" to "1280x960", "reicast_threaded_rendering" to "disabled",
+                        // Os valores "normais" do núcleo, fixados para o que os níveis mudam valer igual em qualquer compilação.
+                        "reicast_alpha_sorting" to "per-triangle (normal)", "reicast_enable_dsp" to "enabled", "reicast_gdrom_fast_loading" to "disabled",
+                    ),
                     presets = mapOf(
-                        Preset.PERFORMANCE to mapOf("reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "1"),
-                        Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960"),
+                        // reicast_auto_skip_frame só age com a renderização em thread (desligada acima), então o salto de
+                        // quadros segue fixo no nível leve. A classificação de transparências por faixa, o DSP desligado e o
+                        // carregamento rápido do GD-ROM são os padrões da compilação "LOW_END" do próprio núcleo.
+                        Preset.PERFORMANCE to mapOf(
+                            "reicast_internal_resolution" to "640x480", "reicast_frame_skipping" to "1",
+                            "reicast_alpha_sorting" to "per-strip (fast, least accurate)", "reicast_enable_dsp" to "disabled",
+                            "reicast_gdrom_fast_loading" to "enabled",
+                        ),
+                        Preset.BALANCED to mapOf("reicast_internal_resolution" to "1280x960", "reicast_gdrom_fast_loading" to "enabled"),
                         Preset.QUALITY to mapOf("reicast_internal_resolution" to "1920x1440", "reicast_anisotropic_filtering" to "4"),
                     ),
                     portDevice = RETRO_DEVICE_JOYPAD,
@@ -406,7 +483,7 @@ object Systems {
             extensions = setOf("pce", "sgx", "cue", "ccd", "chd", "toc"),
             cores = listOf(CoreInfo("mednafen_pce_fast", "Beetle PCE Fast", R.string.core_mednafen_pce_fast), CoreInfo("geargrafx", "Geargrafx", R.string.core_geargrafx)),
             layout = PadLayouts.PC_ENGINE, accent = 0xFFEF6C00,
-            libretroDbName = "NEC - PC Engine - TurboGrafx 16",
+            libretroDbName = "NEC - PC Engine - TurboGrafx 16", lightweight = true,
             bios = listOf(BiosFile("syscard3.pce", R.string.bios_syscard3_pce, "38179df8f4ac870017db21ebcbf53114", required = false)),
         ),
         GameSystem(
@@ -415,7 +492,7 @@ object Systems {
             extensions = setOf("a26", "bin"),
             cores = listOf(CoreInfo("stella2014", "Stella 2014", R.string.core_stella2014), CoreInfo("stella", "Stella", R.string.core_stella)),
             layout = PadLayouts.ATARI, accent = 0xFF6D4C41,
-            libretroDbName = "Atari - 2600",
+            libretroDbName = "Atari - 2600", lightweight = true,
         ),
         GameSystem(
             id = "atari7800", name = "Atari 7800", shortName = "7800",
@@ -502,7 +579,7 @@ object Systems {
             extensions = setOf("sg"),
             cores = listOf(CoreInfo("genesis_plus_gx", "Genesis Plus GX", R.string.core_genesis_plus_gx_sg1000), CoreInfo("gearsystem", "Gearsystem", R.string.core_gearsystem)),
             layout = PadLayouts.MASTER_SYSTEM, accent = 0xFF1565C0,
-            libretroDbName = "Sega - SG-1000",
+            libretroDbName = "Sega - SG-1000", lightweight = true,
         ),
 
         // ---- Atari ----
@@ -512,7 +589,7 @@ object Systems {
             extensions = setOf("a52"),
             cores = listOf(CoreInfo("a5200", "a5200", R.string.core_a5200), CoreInfo("atari800", "Atari800", R.string.core_atari800_a5200)),
             layout = PadLayouts.ATARI_5200, accent = 0xFF795548,
-            libretroDbName = "Atari - 5200",
+            libretroDbName = "Atari - 5200", lightweight = true,
             bios = listOf(BiosFile("5200.rom", R.string.bios_5200_rom, "281f20ea4320404ec820fb7ec0693b38")),
         ),
         GameSystem(

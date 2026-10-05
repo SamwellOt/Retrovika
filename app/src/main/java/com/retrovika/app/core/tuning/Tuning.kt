@@ -36,7 +36,40 @@ enum class TuneSource { USER, GAME, MEASURED, ESTIMATED }
 /** O que roda de fato e por quê (a tela mostra a origem). */
 data class EffectivePreset(val preset: Preset, val source: TuneSource, val speed: Float? = null, val slowdown: Boolean = false, val crashed: Boolean = false)
 
+/**
+ * Uma opção de frameskip automático de um núcleo: [on] são os valores que pulam quadros sozinhos (por áudio ou pelo
+ * relógio) e [off] o valor que não pula nenhum. As chaves e valores estão em `core-options/<coreId>.json`.
+ */
+data class AutoFrameskip(val coreId: String, val key: String, val on: Set<String>, val off: String)
+
 object Tuning {
+    /**
+     * Frameskip automático por núcleo. Na medição de velocidade ele infla o resultado: o núcleo pula quadros para
+     * "alcançar" o tempo real e a conta de quadros emulados por segundo sobe sem o jogo ter ficado mais rápido. O que
+     * decide pelo buffer de áudio já é anulado no nativo durante o teste (sem som, o frontend o informa como inativo),
+     * mas fica aqui também por garantia; o do PPSSPP usa o relógio e só esta lista o segura. Frameskip fixo (o nível
+     * de um preset, como `ppsspp_frameskip = 1`) não entra: ele vale no jogo de verdade, então a medição o inclui.
+     */
+    val AUTO_FRAMESKIP: List<AutoFrameskip> = listOf(
+        AutoFrameskip("genesis_plus_gx", "genesis_plus_gx_frameskip", setOf("auto", "manual"), "disabled"),
+        AutoFrameskip("picodrive", "picodrive_frameskip", setOf("auto", "manual"), "disabled"),
+        AutoFrameskip("snes9x2010", "snes9x_2010_frameskip", setOf("auto", "manual"), "disabled"),
+        AutoFrameskip("mgba", "mgba_frameskip", setOf("auto", "auto_threshold"), "disabled"),
+        AutoFrameskip("gpsp", "gpsp_frameskip", setOf("auto", "auto_threshold"), "disabled"),
+        AutoFrameskip("pcsx_rearmed", "pcsx_rearmed_frameskip_type", setOf("auto", "auto_threshold"), "disabled"),
+        AutoFrameskip("ppsspp", "ppsspp_auto_frameskip", setOf("enabled"), "disabled"),
+    )
+
+    /** [options] de [coreId] para medir: o frameskip automático (do preset, do aparelho ou do usuário) desligado. */
+    fun withoutAutoFrameskip(coreId: String, options: Map<String, String>): Map<String, String> {
+        val off = AUTO_FRAMESKIP.filter { it.coreId == coreId && options[it.key] in it.on }
+        return if (off.isEmpty()) options else options + off.associate { it.key to it.off }
+    }
+
+    /** Algum frameskip automático de [coreId] está ligado nestas [options] (já com o preset, o aparelho e o usuário). */
+    fun autoFrameskipOn(coreId: String, options: Map<String, String>): Boolean =
+        AUTO_FRAMESKIP.any { it.coreId == coreId && options[it.key] in it.on }
+
     /** Pouca folga não deixa tentar o degrau acima: ele custa mais que o atual. */
     const val UP_PROBE = 1.6f
 
@@ -112,6 +145,17 @@ object Tuning {
  * e engasga em qualquer aparelho). Conta o tempo lento, não a média: uma tela de carregamento ou uma
  * troca de cena que trava por alguns segundos não é um jogo lento. Quem chama alimenta só intervalos em
  * que o jogo rodou de verdade (sem menu, avanço rápido ou segundo plano).
+ *
+ * Dois sinais de lentidão. O primeiro é a velocidade: quadros rodados (`retro_run`) por segundo contra os do
+ * jogo. O segundo existe por causa do frameskip automático: o núcleo pula o desenho para "alcançar" o tempo real,
+ * então os `retro_run` seguem em 100% enquanto o jogador vê só uma parte dos quadros. Ele compara os quadros
+ * entregues com os rodados e só vale com o frameskip automático ligado (`watchSkips`). Pular quadros não é lento
+ * por si: frameskip fixo de um preset, jogo de 30 fps que repete quadros e menu parado pulam sempre ou em trechos.
+ * Por isso o que conta é o pulo bem acima do habitual da sessão ([SKIP_MARGIN] acima da linha de base), e a linha de
+ * base é um percentil baixo dos pulos já vistos ([BASELINE_PERCENTILE]): o jogo que pula 50% o tempo todo tem base
+ * de 50% e nunca avisa; o que pulava 0% e passa a pular 50% avisa. Limite assumido: um jogo que roda a maior parte
+ * da sessão sem pular e depois passa mais de 10 s numa cena de 30 fps repetida parece lento (só com frameskip
+ * automático ligado, e o efeito é baixar um nível de qualidade deste jogo com aviso).
  */
 class SpeedWatch(
     private val threshold: Float = 0.85f,
@@ -123,23 +167,64 @@ class SpeedWatch(
 
     private var activeMs = 0L
     private val window = ArrayDeque<Sample>()
+    private val skips = ArrayDeque<Double>()
     private var fired = false
 
     /** Recomeça: jogo novo, estado carregado ou núcleo trocado. */
-    fun reset() { activeMs = 0; window.clear(); fired = false }
+    fun reset() { activeMs = 0; window.clear(); skips.clear(); fired = false }
 
-    /** Verdadeiro uma vez, quando a lentidão se confirma. */
-    fun sample(frames: Long, millis: Long, contentFps: Double): Boolean {
+    /** A linha de base do pulo de quadros (0 a 1) ou nulo enquanto há poucas amostras; aberto para os testes. */
+    fun skipBaseline(): Double? {
+        if (skips.size < MIN_BASELINE_SAMPLES) return null
+        val sorted = skips.sorted()
+        return sorted[((sorted.size - 1) * BASELINE_PERCENTILE).toInt()]
+    }
+
+    /**
+     * Verdadeiro uma vez, quando a lentidão se confirma. [frames] são os `retro_run` do intervalo e [delivered] os
+     * quadros novos que o núcleo entregou nele; [watchSkips] liga o segundo sinal (frameskip automático ativo).
+     */
+    fun sample(frames: Long, millis: Long, contentFps: Double, delivered: Long = frames, watchSkips: Boolean = false): Boolean {
         val speed = CoreBenchmark.speed(frames, millis, contentFps) ?: return false
         activeMs += millis
+        var slow = speed < threshold
+        if (frames >= MIN_FRAMES) {
+            val skip = 1.0 - delivered.coerceIn(0, frames).toDouble() / frames
+            // Quase tudo repetido: tela parada ou carregando, o que não diz nada do jogo. Fora da conta e da base.
+            if (skip <= MAX_SKIP) {
+                if (watchSkips) skipBaseline()?.let { if (skip > it + SKIP_MARGIN) slow = true }
+                skips.addLast(skip)
+                if (skips.size > BASELINE_SAMPLES) skips.removeFirst()
+            }
+        }
         if (activeMs <= graceMs || fired) return false
-        window.addLast(Sample(millis, speed < threshold))
+        window.addLast(Sample(millis, slow))
         var span = window.sumOf { it.millis }
         while (window.size > 1 && span - window.first().millis >= windowMs) span -= window.removeFirst().millis
         if (span < windowMs) return false
-        val slow = window.filter { it.slow }.sumOf { it.millis }
-        if (slow < span * slowShare) return false
+        val slowTime = window.filter { it.slow }.sumOf { it.millis }
+        if (slowTime < span * slowShare) return false
         fired = true
         return true
+    }
+
+    companion object {
+        /**
+         * Quanto o pulo precisa passar da base. Um intervalo de 1 s a 60 fps erra uns 3 quadros (5%) só pela medida
+         * (o atraso do relógio e o quadro na fronteira), e a base é um percentil, não a média, então trechos
+         * normais de pulo maior também aparecem. 20 pontos são ~4 vezes o ruído e da mesma ordem dos 15% do limite de
+         * velocidade, um pouco mais exigente porque a repetição de quadros varia de cena para cena.
+         */
+        const val SKIP_MARGIN = 0.20
+        /** Percentil da base: 0,2 = o pulo que só 20% das amostras ficam abaixo. */
+        const val BASELINE_PERCENTILE = 0.2
+        /** Amostras (~1 s cada) lembradas para a base: cerca de 5 minutos. */
+        const val BASELINE_SAMPLES = 300
+        /** Sem base não há comparação: a carência de 15 s já junta essas amostras. */
+        const val MIN_BASELINE_SAMPLES = 10
+        /** Menos quadros que isso no intervalo e a fração de pulos é só ruído. */
+        const val MIN_FRAMES = 20L
+        /** Pulo acima disto é tela parada, não frameskip. */
+        const val MAX_SKIP = 0.9
     }
 }

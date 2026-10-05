@@ -56,6 +56,12 @@ data class CoreInfo(
      * software usa conforme os núcleos rápidos da CPU. Valem por cima do preset e abaixo das escolhas do usuário.
      */
     val deviceOptions: ((DeviceProfile) -> Map<String, String>)? = null,
+    /**
+     * O núcleo não abre jogo nenhum sem uma BIOS real: precisa de pelo menos uma das [GameSystem.bios] do console
+     * presente (o SwanStation não tem HLE; o PCSX ReARMed tem). O teste de núcleos pula quem não teria como rodar,
+     * em vez de baixar e medir um núcleo que falha.
+     */
+    val needsBios: Boolean = false,
 )
 
 /** RETRO_DEVICE_JOYPAD do libretro.h (o RetroPad). */
@@ -122,6 +128,12 @@ data class GameSystem(
      * WonderSwan monocromáticos ao lado dos Color), pela extensão do arquivo; as demais usam [libretroDbName].
      */
     val libretroDbByExtension: Map<String, String> = emptyMap(),
+    /**
+     * Console em que todo núcleo roda muitas vezes acima do tempo real em qualquer aparelho que não seja da classe
+     * básica (8/16 bits e portáteis simples): o teste de núcleos custa segundos e não muda a escolha, então fica o
+     * núcleo padrão. Só classe básica (ENTRY) testa. Ver [com.retrovika.app.core.cores.CoreBenchmark.skipForLightweight].
+     */
+    val lightweight: Boolean = false,
 ) {
     val defaultCore: CoreInfo get() = cores.first()
 

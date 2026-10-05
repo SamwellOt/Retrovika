@@ -12,7 +12,9 @@ import com.retrovika.app.core.storage.Zip
 import com.retrovika.app.core.systems.CoreInfo
 import com.retrovika.app.core.systems.SystemAsset
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +24,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 sealed interface CoreState {
     data object NotInstalled : CoreState
@@ -216,7 +221,7 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
      * LRPS2, por exemplo) recebem correções de quedas quase todo dia, e o que foi baixado na primeira vez ficava para
      * sempre. Verdadeiro se uma versão nova ficou pronta.
      */
-    suspend fun stageUpdate(core: CoreInfo): Boolean = withContext(Dispatchers.IO) {
+    suspend fun stageUpdate(core: CoreInfo): Boolean = withContext(backgroundDispatcher) {
         val installed = downloadedFile(core.id)
         if (bundled(core.id) || !installed.exists() || metered()) return@withContext false
         val checked = checkedFile(core.id)
@@ -273,6 +278,22 @@ class CoreManager(private val context: Context, private val paths: StoragePaths)
             refresh()
             true
         }
+    }
+
+    /**
+     * Thread própria em prioridade de fundo (THREAD_PRIORITY_BACKGROUND, bem abaixo da do jogo) para a atualização de
+     * núcleos experimentais: ela roda logo depois do primeiro quadro, e descompactar dezenas de MB de .so numa thread
+     * comum do Dispatchers.IO disputava a CPU com o jogo recém-aberto. A parte de rede (Http) volta a Dispatchers.IO por
+     * dentro e não muda de prioridade, mas gasta pouca CPU; o que pesa (extrair o zip e conferir o ELF) fica aqui.
+     * Sem thread parada: ela some depois de 30 s ociosa.
+     */
+    private val backgroundDispatcher: CoroutineDispatcher by lazy {
+        ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS, LinkedBlockingQueue()) { task ->
+            Thread({
+                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
+                task.run()
+            }, "core-update").apply { isDaemon = true }
+        }.apply { allowCoreThreadTimeOut(true) }.asCoroutineDispatcher()
     }
 
     private fun metered(): Boolean = runCatching {

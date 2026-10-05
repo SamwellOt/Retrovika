@@ -84,6 +84,8 @@ data class AppSettings(
     val geminiModel: String = GeminiText.DEFAULT_MODEL,
     /** Na primeira vez que um console roda, testa os núcleos dele e escolhe o ideal para o aparelho. */
     val autoBenchmark: Boolean = true,
+    /** Contador de velocidade e quadros por segundo no canto da tela do jogo. */
+    val showPerformance: Boolean = false,
     /** Procura uma versão nova do app ao abrir. */
     val checkUpdates: Boolean = true,
     /** Versão cujo aviso o usuário fechou na tela inicial: só volta a aparecer para uma mais nova. */
@@ -113,6 +115,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         val geminiKey = stringPreferencesKey("gemini_key")
         val geminiModel = stringPreferencesKey("gemini_model")
         val autoBenchmark = booleanPreferencesKey("auto_benchmark")
+        val showPerformance = booleanPreferencesKey("show_performance")
         fun benchmark(systemId: String) = stringPreferencesKey("$BENCH_PREFIX$systemId")
         val checkUpdates = booleanPreferencesKey("check_updates")
         val dismissedUpdate = stringPreferencesKey("dismissed_update")
@@ -177,6 +180,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
             geminiKey = (secretKey ?: p[Keys.geminiKey])?.takeIf { it.isNotBlank() },
             geminiModel = p[Keys.geminiModel]?.takeIf { it.isNotBlank() } ?: GeminiText.DEFAULT_MODEL,
             autoBenchmark = p[Keys.autoBenchmark] ?: true,
+            showPerformance = p[Keys.showPerformance] ?: false,
             checkUpdates = p[Keys.checkUpdates] ?: true,
             dismissedUpdate = p[Keys.dismissedUpdate],
         )
@@ -229,6 +233,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         if (value.isEmpty()) p.remove(Keys.geminiModel) else p[Keys.geminiModel] = value
     }
     suspend fun setAutoBenchmark(v: Boolean) = set(Keys.autoBenchmark, v)
+    suspend fun setShowPerformance(v: Boolean) = set(Keys.showPerformance, v)
     suspend fun setCheckUpdates(v: Boolean) = set(Keys.checkUpdates, v)
     suspend fun setDismissedUpdate(version: String) = set(Keys.dismissedUpdate, version)
 
@@ -237,7 +242,7 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         listOf(
             Keys.shader, Keys.padOpacity, Keys.padScale, Keys.haptics, Keys.autoSave, Keys.autoLoad, Keys.ffSpeed, Keys.lowLatency, Keys.hidePad,
             Keys.maxDownloads, Keys.reduceMotion, Keys.coverSize, Keys.gameSort, Keys.translateEverywhere, Keys.autoBenchmark,
-            Keys.checkUpdates,
+            Keys.showPerformance, Keys.checkUpdates,
         ).forEach { p.remove(it) }
     }
 

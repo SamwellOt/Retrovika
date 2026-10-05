@@ -31,12 +31,103 @@ class CoreOptionsTest {
 
     private val cores = Systems.all.flatMap { it.cores }.distinctBy { it.id }
 
+    /** Todas as declarações, sem juntar as do mesmo núcleo: o mGBA e o Dolphin têm uma por console, cada uma com o seu mapa. */
+    private val everyCore = Systems.all.flatMap { it.cores }
+
+    private val entry = profile(8, 8, mhz = 1_800, gpu = "Mali-G52 MC2")
+    private val mid = profile(8, 6, mhz = 2_300)
+    private val high = profile(8, 6, mhz = 2_800)
+    private val top = profile(8, 6)
+
     @Test
-    fun `defaults, niveis e fixos usam chaves e valores do nucleo`() {
-        cores.forEach { core ->
+    fun `defaults, niveis, fixos e opcoes do aparelho usam chaves e valores do nucleo`() {
+        everyCore.forEach { core ->
             check(core, core.defaults, "defaults")
             core.presets.forEach { (level, options) -> check(core, options, "preset $level") }
             check(core, core.fixed, "fixed")
+            // O Vulkan tem teste próprio (os valores dependem do aparelho ter a ponte).
+            if (!core.vulkan) listOf(entry, mid, high, top).forEach { d -> core.deviceOptions?.let { check(core, it(d), "deviceOptions ${d.tier}") } }
+        }
+    }
+
+    @Test
+    fun `os nucleos que tem JSON de opcoes sao os que o catalogo mexe`() {
+        // Um JSON de núcleo que o catálogo não usa mais é lixo que engana quem o consulta.
+        val ids = cores.map { it.id }.toSet()
+        listOf(
+            "pcsx2", "play", "mupen64plus_next_gles3", "pcsx_rearmed", "swanstation", "ppsspp", "flycast", "genesis_plus_gx", "picodrive",
+            "mgba", "snes9x2010", "gpsp", "handy", "desmume", "dolphin", "citra", "yabasanshiro",
+        ).forEach { id ->
+            assertTrue("$id: sem JSON de opções", declared(id) != null)
+            assertTrue("$id: JSON de um núcleo que o catálogo não tem", id in ids)
+        }
+    }
+
+    @Test
+    fun `niveis de um nucleo mudam o que roda e nenhum fica igual a outro`() {
+        everyCore.filter { it.presets.size > 1 }.forEach { core ->
+            val effective = core.presets.mapValues { (_, options) -> core.defaults + options }
+            assertEquals("${core.id}: níveis iguais", effective.size, effective.values.toSet().size)
+        }
+    }
+
+    @Test
+    fun `os nucleos com escada de resolucao`() {
+        listOf("dolphin" to "dolphin_efb_scale", "citra" to "citra_resolution_factor", "yabasanshiro" to "yabasanshiro_resolution_mode").forEach { (id, key) ->
+            val cores = everyCore.filter { it.id == id }
+            assertTrue("$id sem declaração", cores.isNotEmpty())
+            cores.forEach { core ->
+                assertEquals("$id: três níveis", Preset.entries.toSet(), core.presets.keys)
+                assertEquals("$id: a resolução tem de mudar em cada nível", 3, core.presets.values.map { it[key] }.toSet().size)
+            }
+        }
+    }
+
+    @Test
+    fun `N64 mantem o buffer de quadro em todos os niveis e nao liga o renderizador em thread`() {
+        val n64 = Systems.byId("n64")!!.core("mupen64plus_next_gles3")
+        assertEquals("True", n64.defaults["mupen64plus-EnableFBEmulation"])
+        n64.presets.forEach { (level, options) ->
+            assertTrue("N64 $level desliga o buffer de quadro", options["mupen64plus-EnableFBEmulation"] != "False")
+            assertTrue("N64 $level liga o renderizador em thread", options["mupen64plus-ThreadedRenderer"] != "True")
+        }
+        assertTrue(n64.defaults["mupen64plus-ThreadedRenderer"] != "True")
+    }
+
+    @Test
+    fun `frameskip automatico so nas classes basica e media e so no valor guiado pelo audio`() {
+        val auto = mapOf(
+            "genesis" to ("genesis_plus_gx" to "genesis_plus_gx_frameskip"), "segacd" to ("genesis_plus_gx" to "genesis_plus_gx_frameskip"),
+            "32x" to ("picodrive" to "picodrive_frameskip"), "gba" to ("mgba" to "mgba_frameskip"), "snes" to ("snes9x2010" to "snes9x_2010_frameskip"),
+        )
+        auto.forEach { (system, pair) ->
+            val (id, key) = pair
+            val core = Systems.byId(system)!!.core(id)
+            listOf(entry, mid).forEach { assertEquals("$system/$id ${it.tier}", mapOf(key to "auto"), core.deviceOptions!!(it)) }
+            listOf(high, top).forEach { assertEquals("$system/$id ${it.tier}", emptyMap<String, String>(), core.deviceOptions!!(it)) }
+        }
+        assertEquals("auto", Systems.byId("gba")!!.core("gpsp").deviceOptions!!(entry)["gpsp_frameskip"])
+        // O "auto" desses núcleos não é um valor qualquer: no mGBA, no gpSP e no PCSX ReARMed há também "auto_threshold" e "fixed_interval".
+        assertTrue("auto" in declared("mgba")!!.getValue("mgba_frameskip"))
+        // PCSX ReARMed: o frameskip está só no nível leve (o equilibrado e o de qualidade rodam todos os quadros).
+        val psx = Systems.byId("psx")!!.core("pcsx_rearmed")
+        assertEquals("auto", psx.presets[Preset.PERFORMANCE]!!["pcsx_rearmed_frameskip_type"])
+        assertTrue(psx.presets.filterKeys { it != Preset.PERFORMANCE }.values.none { it["pcsx_rearmed_frameskip_type"] == "auto" })
+    }
+
+    @Test
+    fun `Flycast nao conta com o auto skip que so vale com renderizacao em thread`() {
+        val dc = Systems.byId("dreamcast")!!.core("flycast")
+        assertEquals("disabled", dc.defaults["reicast_threaded_rendering"])
+        assertTrue(dc.presets.values.none { "reicast_auto_skip_frame" in it } && "reicast_auto_skip_frame" !in dc.defaults)
+    }
+
+    @Test
+    fun `PPSSPP so liga o auto frameskip junto do frameskip maior que zero`() {
+        val psp = Systems.byId("psp")!!.core("ppsspp")
+        psp.presets.forEach { (level, options) ->
+            val merged = psp.defaults + options
+            if (merged["ppsspp_auto_frameskip"] == "enabled") assertTrue("PPSSPP $level: auto frameskip com frameskip 0 não faz nada", merged["ppsspp_frameskip"] != "disabled")
         }
     }
 

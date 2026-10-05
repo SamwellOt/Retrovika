@@ -22,7 +22,11 @@
 namespace libretrodroid {
 
 unsigned FPSSync::advanceFrames() {
-    if (useVSync) return 1;
+    if (useVSync) {
+        // Tela múltipla do conteúdo: roda no primeiro vsync do ciclo e nos outros só reapresenta o quadro.
+        if (vsyncDivisor <= 1) return 1;
+        return (vsyncCycle++ % vsyncDivisor) == 0 ? 1 : 0;
+    }
 
     if (lastFrame == MIN_TIME) {
         start();
@@ -38,27 +42,34 @@ unsigned FPSSync::advanceFrames() {
 FPSSync::FPSSync(double contentRefreshRate, double screenRefreshRate) {
     this->contentRefreshRate = contentRefreshRate;
     this->screenRefreshRate = screenRefreshRate;
-    this->useVSync = std::abs(contentRefreshRate - screenRefreshRate) < FPS_TOLERANCE;
+    // A mesma tolerância sobre a taxa efetiva (tela / n): 120 Hz com 60 fps roda um quadro a cada 2 vsyncs, em vez
+    // de cair na espera por sleep (trepidação e CPU acordando a 120 Hz). O menor n que serve vence.
+    this->useVSync = false;
+    for (unsigned n = 1; n <= MAX_VSYNC_DIVISOR && contentRefreshRate > 0; n++) {
+        if (std::abs(screenRefreshRate / n - contentRefreshRate) < FPS_TOLERANCE) {
+            this->useVSync = true;
+            this->vsyncDivisor = n;
+            break;
+        }
+    }
     this->sampleInterval = std::chrono::microseconds((long) ((1000000L / contentRefreshRate)));
+    LOGI("Content fps %f on a screen with refresh rate %f: vsync %d (one frame every %u vsyncs)",
+         contentRefreshRate, screenRefreshRate, useVSync, vsyncDivisor);
     reset();
 }
 
 void FPSSync::start() {
-    LOGI("Starting game with fps %f on a screen with refresh rate %f. Using vsync: %d", contentRefreshRate, screenRefreshRate, useVSync);
     lastFrame = std::chrono::steady_clock::now();
 }
 
 void FPSSync::reset() {
     lastFrame = MIN_TIME;
+    vsyncCycle = 0;
 }
 
-double FPSSync::getTimeStretchFactor() {
-    return useVSync ? contentRefreshRate / screenRefreshRate : 1.0;
-}
-
-void FPSSync::wait() {
-    if (useVSync) return;
-    std::this_thread::sleep_until(lastFrame);
+double FPSSync::getTimeStretchFactor() const {
+    // Com n > 1 o núcleo roda na taxa da tela dividida por n: é com ela que o conteúdo é comparado.
+    return useVSync ? contentRefreshRate / getFrameRate() : 1.0;
 }
 
 } //namespace libretrodroid

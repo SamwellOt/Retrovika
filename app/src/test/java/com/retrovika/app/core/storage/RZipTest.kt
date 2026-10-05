@@ -50,6 +50,47 @@ class RZipTest {
     }
 
     @Test
+    fun `estado grande (12 MB) volta igual pelo arquivo`() {
+        // Tamanho de estado de GameCube/PS2: muitos blocos, as áreas de trabalho das threads reaproveitadas várias vezes.
+        val state = fakeState(12_345_678, seed = 99)
+        val f = tmp.newFile("big.state")
+        RZip.write(f, state)
+        assertTrue(f.length() < state.size)
+        assertEquals(state.size.toLong(), RZip.originalSize(f))
+        assertArrayEquals(state, RZip.read(f))
+        // Uma segunda compactação, na mesma thread, não herda nada da anterior.
+        assertArrayEquals(RZip.compress(state, parallel = false), RZip.compress(state, parallel = false))
+    }
+
+    @Test
+    fun `saida identica a de um deflate simples bloco a bloco`() {
+        // O formato não pode mudar com a reutilização dos buffers: cada bloco é o zlib nível 1 do bloco, como antes.
+        val state = fakeState(3 * RZip.CHUNK + 777, seed = 5)
+        val ref = ByteArrayOutputStream()
+        ref.write("#RZIPv".toByteArray()); ref.write(1); ref.write('#'.code)
+        ref.write(leBytes(RZip.CHUNK.toLong(), 4)); ref.write(leBytes(state.size.toLong(), 8))
+        var off = 0
+        while (off < state.size) {
+            val len = minOf(RZip.CHUNK, state.size - off)
+            val d = Deflater(Deflater.BEST_SPEED).apply { setInput(state, off, len); finish() }
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(1000)
+            while (!d.finished()) out.write(buf, 0, d.deflate(buf))
+            ref.write(leBytes(out.size().toLong(), 4)); ref.write(out.toByteArray())
+            off += len
+        }
+        assertArrayEquals(ref.toByteArray(), RZip.compress(state))
+    }
+
+    @Test
+    fun `tamanho original sem descompactar`() {
+        val raw = tmp.newFile("raw.state").apply { writeBytes(fakeState(10_000)) }
+        assertEquals(10_000, RZip.originalSize(raw))
+        val packed = tmp.newFile("packed.state").apply { writeBytes(RZip.compress(ByteArray(300_000))) }
+        assertEquals(300_000, RZip.originalSize(packed))
+    }
+
+    @Test
     fun `estado cru antigo e lido como esta`() {
         val raw = fakeState(10_000)
         assertSame(raw, RZip.decompress(raw))

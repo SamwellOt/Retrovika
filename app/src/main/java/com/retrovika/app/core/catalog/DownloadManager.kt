@@ -395,7 +395,7 @@ class DownloadManager(
         private const val PARALLEL_CONNECTIONS = 4
         /**
          * Fontes cujos servidores de arquivo bloqueiam o IP por minutos (até uma hora) com pedidos demais: o
-         * RomsFun (ver CLAUDE.md). Nelas o arquivo vem por uma conexão só, como antes.
+         * RomsFun (ver docs/catalog.md). Nelas o arquivo vem por uma conexão só, como antes.
          */
         private val SINGLE_CONNECTION_SOURCES = setOf("romsfun")
         /** Recusas que um link novo resolve: sessão/verificação vencida (403) ou link expirado. */

@@ -21,12 +21,21 @@ import android.app.ActivityManager
 import android.content.Context
 import android.graphics.PointF
 import android.graphics.RectF
+import android.hardware.display.DisplayManager
 import android.opengl.GLSurfaceView
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PerformanceHintManager
+import android.os.Process
 import android.util.Log
+import android.view.Display
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.WindowManager
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -39,6 +48,7 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.properties.Delegates
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
@@ -54,6 +64,14 @@ class GLRetroView(
 
     var frameSpeed: Int by Delegates.observable(1) { _, _, value ->
         LibretroDroid.setFrameSpeed(value)
+    }
+
+    /**
+     * Avisa o núcleo do avanço rápido do usuário (ele pode pular vídeo nos quadros intermediários). Fica
+     * desligado no teste de desempenho, que usa frameSpeed > 1 mas precisa de todos os quadros.
+     */
+    var fastForwardHints: Boolean by Delegates.observable(false) { _, _, value ->
+        LibretroDroid.setFastForwardHints(value)
     }
 
     var shader: ShaderConfig by Delegates.observable(data.shader) { _, _, value ->
@@ -83,12 +101,34 @@ class GLRetroView(
      */
     val isLoading: Boolean get() = loadRunning
 
-    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
+    // Nunca suspende nem descarta o último evento para quem chega tarde: os eventos saem da própria thread GL com
+    // tryEmit (na ordem em que acontecem), sem uma corrotina por quadro.
+    private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(
+        replay = 1,
+        extraBufferCapacity = 2,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
     private val retroGLIssuesErrors = MutableSharedFlow<Int>(1)
 
     private val rumbleEventsSubject = MutableSharedFlow<RumbleEvent>()
 
     private var lifecycle: Lifecycle? = null
+
+    /** Só a thread GL mexe: o próximo quadro desenhado ainda precisa virar um [GLRetroEvents.FrameRendered]. */
+    private var firstFramePending = true
+
+    // Taxa da tela: o app pede ao sistema a taxa do jogo (setFrameRate) e acompanha a que a tela realmente usa.
+    private var displayListener: DisplayManager.DisplayListener? = null
+    private var lastScreenRate = 0f
+    @Volatile private var appliedFrameRate = 0f
+    private var drawCount = 0
+
+    // ADPF (API 31+): a sessão de dicas de desempenho da thread GL. Tudo sob o hintLock, porque o close() vem da
+    // thread principal e usar uma sessão fechada pode derrubar o processo nas versões mais antigas do sistema.
+    private val hintLock = Any()
+    private var hintSession: HintSession? = null
+    // A thread GL em que a criação já foi tentada: aparelho sem suporte (sessão nula) não repete a tentativa a cada superfície.
+    private var hintTriedTid = 0
 
     init {
         openGLESVersion = getGLESVersion(context)
@@ -125,6 +165,7 @@ class GLRetroView(
 
     @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
     fun onDestroy() {
+        unregisterDisplayListener()
         // Antes de tudo: a partir daqui a thread GL não começa mais a carregar o jogo.
         synchronized(loadLock) {
             isDestroyed = true
@@ -133,6 +174,8 @@ class GLRetroView(
                 data.gameVirtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
             }
         }
+        // Depois do isDestroyed: a thread GL não cria outra sessão em seguida.
+        closeHintSession()
         // Fora do catchExceptions: depois de um erro (isAborted) ele ignora tudo, e o núcleo carregado ficava vivo
         // até o próximo create(), que o descarregava sem o retro_unload_game (um núcleo com threads, como o
         // PPSSPP, aborta o processo no dlclose). O destroy() aguenta qualquer estado, até o de um carregamento que falhou.
@@ -146,16 +189,174 @@ class GLRetroView(
 
     private fun getDeviceLanguage() = Locale.getDefault().language
 
-    private fun getDefaultRefreshRate(): Float {
-        return (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.refreshRate
+    /** A tela em que a view está (a do contexto, antes de ela entrar na janela). Nulo se não der para saber. */
+    private fun currentDisplay(): Display? {
+        display?.let { return it }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) runCatching { context.display }.getOrNull() else null
     }
 
+    @Suppress("DEPRECATION")
+    private fun getDefaultRefreshRate(): Float {
+        return currentDisplay()?.refreshRate
+            ?: (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.refreshRate
+    }
+
+    // Direto da thread de quem chama, sem o queueEvent (que esperava a thread GL e custava até um quadro de
+    // latência): o lado nativo já guarda o Input com um lock, e o pause() só o descarta.
     fun sendKeyEvent(action: Int, keyCode: Int, port: Int = 0) {
-        queueEvent { LibretroDroid.onKeyEvent(port, action, keyCode) }
+        LibretroDroid.onKeyEvent(port, action, keyCode)
     }
 
     fun sendMotionEvent(source: Int, xAxis: Float, yAxis: Float, port: Int = 0) {
-        queueEvent { LibretroDroid.onMotionEvent(port, source, xAxis, yAxis) }
+        LibretroDroid.onMotionEvent(port, source, xAxis, yAxis)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        registerDisplayListener()
+    }
+
+    override fun onDetachedFromWindow() {
+        unregisterDisplayListener()
+        super.onDetachedFromWindow()
+    }
+
+    private fun registerDisplayListener() {
+        if (displayListener != null) return
+        val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) {
+                if (display?.displayId == displayId) pushScreenRate()
+            }
+        }
+        displayListener = listener
+        runCatching { manager.registerDisplayListener(listener, Handler(Looper.getMainLooper())) }
+        // A taxa do create pode já ter mudado (o sistema ajusta o modo ao abrir a janela).
+        pushScreenRate()
+    }
+
+    private fun unregisterDisplayListener() {
+        val listener = displayListener ?: return
+        displayListener = null
+        val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        runCatching { manager.unregisterDisplayListener(listener) }
+    }
+
+    /** Passa a taxa atual da tela ao lado nativo, que refaz o ritmo (vsync, múltiplo ou espera) e o áudio. */
+    private fun pushScreenRate() {
+        val rate = display?.refreshRate ?: return
+        if (!(rate > 1f) || kotlin.math.abs(rate - lastScreenRate) < 0.01f) return
+        lastScreenRate = rate
+        runCatching { LibretroDroid.setScreenRefreshRate(rate) }
+    }
+
+    /**
+     * Diz ao sistema a taxa do jogo, para a tela rodar nela (ou num múltiplo) em vez de ficar sempre no máximo.
+     * Só se for sem corte: ONLY_IF_SEAMLESS. Trocar de modo sem emenda é imperceptível; o CHANGE_FRAME_RATE_ALWAYS
+     * pode piscar a tela por um segundo em painéis sem essa troca e ignora a escolha do usuário de manter a taxa
+     * alta. Quando o sistema fica no múltiplo (120 Hz para 60 fps), o FPSSync nativo roda um quadro a cada 2 vsyncs.
+     */
+    private fun applyFrameRateHint() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || !isGameLoaded) return
+        val fps = LibretroDroid.getContentFps().toFloat()
+        if (!(fps > 0f)) return
+        setSurfaceFrameRate(fps)
+    }
+
+    /** Sem jogo rodando (menu aberto, segundo plano) a superfície não tem taxa a pedir: a interface volta ao normal. */
+    private fun clearFrameRateHint() {
+        setSurfaceFrameRate(0f)
+    }
+
+    private fun setSurfaceFrameRate(fps: Float) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val surface = holder.surface
+        if (surface == null || !surface.isValid) return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+            } else {
+                surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+            }
+        }
+        appliedFrameRate = fps
+    }
+
+    /** O tempo, em ns, em que o trabalho de um desenho deve terminar: o intervalo do quadro do jogo. */
+    private fun targetWorkNanos(): Long {
+        val fps = LibretroDroid.getContentFps().takeIf { it > 1.0 } ?: 60.0
+        return (1_000_000_000.0 / fps).toLong()
+    }
+
+    /** Thread GL. Cria a sessão ADPF (ou a refaz, se a thread GL mudou) com o jogo já carregado. */
+    private fun ensureHintSession() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !isGameLoaded) return
+        val tid = Process.myTid()
+        synchronized(hintLock) {
+            if (isDestroyed || hintTriedTid == tid) return
+            hintSession?.close()
+            hintSession = null
+            hintTriedTid = tid
+            runCatching {
+                hintSession = HintSession.create(context, tid, targetWorkNanos())
+            }.onFailure { Log.w(TAG_LOG, "No performance hint session", it) }
+        }
+    }
+
+    private fun closeHintSession() {
+        synchronized(hintLock) {
+            hintSession?.close()
+            hintSession = null
+        }
+    }
+
+    /** Thread GL, depois de cada desenho. [workNanos] é 0 quando só reapresentou o quadro (nada a informar). */
+    private fun afterDraw(workNanos: Long) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        // O fps do núcleo pode mudar durante o jogo (SET_SYSTEM_AV_INFO): confere de vez em quando.
+        if (++drawCount % CONTENT_FPS_CHECK_DRAWS == 0 && isEmulationReady) {
+            val fps = LibretroDroid.getContentFps().toFloat()
+            if (fps > 0f && kotlin.math.abs(fps - appliedFrameRate) > 0.01f) {
+                setSurfaceFrameRate(fps)
+                synchronized(hintLock) { hintSession?.updateTarget(targetWorkNanos()) }
+            }
+        }
+        if (workNanos > 0) {
+            synchronized(hintLock) { hintSession?.report(workNanos) }
+        }
+    }
+
+    /** Embrulha a sessão ADPF para a classe do sistema só ser carregada na API 31+. */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private class HintSession(
+        private val session: PerformanceHintManager.Session,
+        val tid: Int,
+        private var targetNanos: Long
+    ) {
+        fun report(workNanos: Long) {
+            runCatching { session.reportActualWorkDuration(workNanos) }
+        }
+
+        fun updateTarget(nanos: Long) {
+            if (nanos <= 0 || nanos == targetNanos) return
+            targetNanos = nanos
+            runCatching { session.updateTargetWorkDuration(nanos) }
+        }
+
+        fun close() {
+            runCatching { session.close() }
+        }
+
+        companion object {
+            fun create(context: Context, tid: Int, targetNanos: Long): HintSession? {
+                val manager = context.getSystemService(PerformanceHintManager::class.java) ?: return null
+                // Alguns aparelhos devolvem nulo (sem suporte a dicas).
+                val session = manager.createHintSession(intArrayOf(tid), targetNanos) ?: return null
+                return HintSession(session, tid, targetNanos)
+            }
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
@@ -321,6 +522,9 @@ class GLRetroView(
     /** Quadros emulados desde que o jogo carregou (teste de desempenho). */
     fun runCount(): Long = LibretroDroid.getRunCount()
 
+    /** Quadros novos que o núcleo entregou (sem os repetidos): abaixo do runCount, ele está pulando quadros. */
+    fun videoFrameCount(): Long = LibretroDroid.getVideoFrameCount()
+
     /** Quadros por segundo nativos do jogo (60 no NTSC, 50 no PAL…). */
     fun contentFps(): Double = LibretroDroid.getContentFps()
 
@@ -403,11 +607,13 @@ class GLRetroView(
             LibretroDroid.resume()
             onResume()
             isEmulationReady = true
+            applyFrameRateHint()
         }
 
         @OnLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         private fun pause() = catchExceptions {
             isEmulationReady = false
+            clearFrameRateHint()
             onPause()
             LibretroDroid.pause()
         }
@@ -416,25 +622,34 @@ class GLRetroView(
     inner class Renderer : GLSurfaceView.Renderer {
         override fun onDrawFrame(gl: GL10) = catchExceptions {
             if (isEmulationReady) {
-                LibretroDroid.step(this@GLRetroView)
-                lifecycle?.coroutineScope?.launch {
-                    retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+                val workNanos = LibretroDroid.step(this@GLRetroView)
+                // Só o primeiro quadro: quem espera usa first(), e a corrotina por quadro acordava a thread principal.
+                // O flow guarda o último evento, então quem se inscreve depois também recebe. Se não coube (um
+                // inscrito lento), tenta de novo no quadro seguinte.
+                if (firstFramePending && retroGLEventsSubject.tryEmit(GLRetroEvents.FrameRendered)) {
+                    firstFramePending = false
                 }
+                afterDraw(workNanos)
             }
         }
 
         override fun onSurfaceChanged(gl: GL10, width: Int, height: Int) = catchExceptions {
             Thread.currentThread().priority = Thread.MAX_PRIORITY
             LibretroDroid.onSurfaceChanged(width, height)
+            // Superfície nova (voltou do segundo plano): a taxa pedida ao sistema é por superfície.
+            if (isEmulationReady) applyFrameRateHint()
+            ensureHintSession()
         }
 
 
         override fun onSurfaceCreated(gl: GL10, config: EGLConfig) = catchExceptions {
             Thread.currentThread().priority = Thread.MAX_PRIORITY
             initializeCore()
-            lifecycle?.coroutineScope?.launch {
-                retroGLEventsSubject.emit(GLRetroEvents.SurfaceCreated)
-            }
+            // Contexto novo: o primeiro quadro dele também conta. Emitido daqui, antes de qualquer quadro, para o
+            // último evento guardado nunca ser o SurfaceCreated depois de um FrameRendered.
+            firstFramePending = true
+            retroGLEventsSubject.tryEmit(GLRetroEvents.SurfaceCreated)
+            ensureHintSession()
         }
     }
 
@@ -647,6 +862,9 @@ class GLRetroView(
 
     companion object {
         private val TAG_LOG = GLRetroView::class.java.simpleName
+
+        /** De quantos em quantos desenhos conferir se o fps do núcleo mudou. */
+        private const val CONTENT_FPS_CHECK_DRAWS = 64
 
         /** Espera máxima por um pedido na thread de emulação (estados grandes de PS2/GameCube levam segundos). */
         private const val EMULATION_THREAD_TIMEOUT_MS = 20_000L

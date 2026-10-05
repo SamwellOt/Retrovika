@@ -727,12 +727,20 @@ class RemotePlay(private val context: Context) : RemoteServer.Handler {
     }
 
     private fun applyHostAudio() {
-        val s = state.value
         val v = synchronized(lock) { view } ?: return
+        val enabled = hostAudioEnabled()
+        if (v.audioEnabled != enabled) v.audioEnabled = enabled
+    }
+
+    /**
+     * Se o celular deve tocar o som do jogo agora. Quem silencia a vista por um instante (a captura do estado no
+     * GameActivity) volta a este valor, e não a "ligado": transmitindo com o celular mudo, ele continua mudo.
+     */
+    fun hostAudioEnabled(): Boolean {
+        val s = state.value
         // O som sai na TV: no celular ficaria dobrado, e um pouco adiantado.
         // Sem encoder (o aparelho recusou) a TV não recebe som nem imagem: o celular não pode ficar mudo.
-        val enabled = !(s.muteHost && s.running && s.screenCount > 0 && s.streamSupported && encoder != null)
-        if (v.audioEnabled != enabled) v.audioEnabled = enabled
+        return !(s.muteHost && s.running && s.screenCount > 0 && s.streamSupported && encoder != null)
     }
 
     // endregion

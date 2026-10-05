@@ -97,7 +97,11 @@ public:
         const std::string& language
     );
     void resume();
-    void step();
+    /**
+     * Um desenho: espera a hora do quadro (fora do coreLock), roda os quadros do núcleo e desenha. Devolve os
+     * nanossegundos de trabalho (rodar + desenhar, sem a espera), ou 0 se foi só uma reapresentação do último quadro.
+     */
+    int64_t step();
     void pause();
     void destroy();
 
@@ -123,6 +127,8 @@ public:
 
     // Teste de desempenho dos núcleos (Retrovika): quadros emulados e a taxa nativa do jogo.
     uint64_t getRunCount() const { return runCount.load(); }
+    /** Quadros novos que o núcleo entregou (sem os repetidos, NULL): comparado com o runCount mostra quadros pulados. */
+    uint64_t getVideoFrameCount() const { return videoFrameCount.load(); }
     double getContentFps() const { return contentFps; }
 
     bool requiresVideoRefresh() const;
@@ -146,6 +152,17 @@ public:
     void handleRumbleUpdates(const std::function<void(int, float, float)> &handler);
 
     void setFrameSpeed(unsigned int speed);
+    /**
+     * Taxa de atualização atual da tela (pode mudar com o app aberto: 60/90/120 Hz). Qualquer thread; vale a partir
+     * do próximo desenho, na thread de emulação.
+     */
+    void setScreenRefreshRate(float rate) { pendingScreenRefreshRate = rate; }
+    /**
+     * Liga as dicas de avanço rápido para o núcleo (GET_FASTFORWARDING, GET_THROTTLE_STATE e o vídeo desligado
+     * nos quadros intermediários). Só o avanço rápido do app liga: o teste de desempenho também usa
+     * frameSpeed > 1, mas precisa de todos os quadros desenhados.
+     */
+    void setFastForwardHints(bool enabled);
 
     void setAudioEnabled(bool enabled);
 
@@ -176,6 +193,18 @@ public:
 
 private:
     void updateAudioSampleRateMultiplier();
+    void replaceAudio(std::unique_ptr<Audio> newAudio, bool inheritStart = false);
+    void publishRuntimeHints(unsigned speed);
+    void reportAudioBufferStatus(unsigned speed);
+    void applyAvTimingChange();
+    void applyScreenRefreshChange();
+    /** Reajusta a taxa do áudio ao ajuste de refresh do FPSSync atual (time stretch). */
+    void updateAudioForPacing();
+    void replaceFpsSync(std::unique_ptr<FPSSync> newFpsSync);
+    /** Dorme até a hora do quadro, sem o coreLock, e diz quantos quadros do núcleo rodar (0 = reapresentar). */
+    unsigned paceNextDraw();
+    void runFrames(unsigned requestedFrames);
+    void recreateAudio();
     void replaceVideo(std::unique_ptr<Video> newVideo);
     float findDefaultAspectRatio(const retro_system_av_info &system_av_info);
     void afterGameLoad();
@@ -193,7 +222,8 @@ protected:
     static void callback_retro_set_input_poll();
 
 private:
-    unsigned int frameSpeed = 1;
+    std::atomic<unsigned int> frameSpeed {1};
+    std::atomic<bool> fastForwardHints {false};
     bool audioEnabled = true;
     bool preferLowLatencyAudio = false;
     bool rumbleEnabled = false;
@@ -223,8 +253,16 @@ private:
     std::string gamePathStorage;
     std::list<std::string> cheatCodes;
     std::unique_ptr<Audio> audio;
+    // Protege a troca do [audio] (recriado no step quando o núcleo muda a taxa de amostragem) para quem o usa
+    // na thread principal (pause/resume/setFrameSpeed). Ordem: coreLock antes deste; nunca o contrário.
+    std::mutex audioLock;
     std::unique_ptr<Video> video;
     std::unique_ptr<FPSSync> fpsSync;
+    // Protege o ponteiro e o estado do [fpsSync]. A espera do quadro roda sem o coreLock (senão a thread principal
+    // ficaria presa até um quadro inteiro em leituras de SRAM, viewport, destroy…), então o destroy() e as trocas do
+    // FPSSync pegam este lock também. Ordem: coreLock antes deste; quem dorme nunca o segura.
+    std::mutex pacingLock;
+    std::atomic<float> pendingScreenRefreshRate {0.0F};
     std::unique_ptr<Input> input;
     // Protege [input]: pause/resume o trocam na thread principal enquanto eventos chegam pela thread GL.
     // Também protege a troca de [video] para quem a lê fora da thread GL (toque, shader).
@@ -232,10 +270,15 @@ private:
     std::unique_ptr<Rumble> rumble;
     std::unique_ptr<Netplay> netplay;
     std::atomic<uint64_t> runCount {0};
+    std::atomic<uint64_t> videoFrameCount {0};
     // Lidos de outras threads sem o coreLock (a emulação o segura durante todo o quadro).
     std::atomic<int64_t> netplayState {-1};
     std::atomic<uint32_t> netplayFrameCount {0};
     double contentFps = 60.0;
+    // Taxa de amostragem que o núcleo informou (antes do ajuste ao refresh da tela), para notar quando muda.
+    double contentSampleRate = 0.0;
+    // Latência mínima (SET_MINIMUM_AUDIO_LATENCY) com que o Audio atual foi criado.
+    unsigned appliedMinimumLatencyMs = 0;
 
     Capture capture;
     int audioSampleRate = 0;

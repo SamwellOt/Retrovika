@@ -283,13 +283,16 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                         }
                     }
                     bench?.let { b ->
+                        // Núcleos de trás do primeiro com folga: o teste parou antes deles ("não testado", e não "não rodou").
+                        val untested = b.untested(system.cores.filter { !it.experimental }.map { it.id })
                         Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 if (b.skipped) stringResource(R.string.bench_system_skipped)
-                                else stringResource(
-                                    R.string.bench_system_result, system.core(b.chosen).displayName,
-                                    ((b.speedOf(b.chosen) ?: 0f) * 100).toInt(),
-                                ) + if (selectedCore?.isNotEmpty() == true) " " + stringResource(R.string.bench_system_overridden) else "",
+                                else (b.speedOf(b.chosen)?.let { speed ->
+                                    stringResource(R.string.bench_system_result, system.core(b.chosen).displayName, (speed * 100).toInt())
+                                } ?: stringResource(R.string.bench_system_chosen, system.core(b.chosen).displayName)) +
+                                    (if (untested.isNotEmpty()) " " + stringResource(R.string.bench_system_untested, untested.joinToString { system.core(it).displayName }) else "") +
+                                    (if (selectedCore?.isNotEmpty() == true) " " + stringResource(R.string.bench_system_overridden) else ""),
                                 style = MaterialTheme.typography.labelSmall, color = Palette.Cyan, modifier = Modifier.weight(1f),
                             )
                             androidx.compose.material3.TextButton(onClick = { scope.launch { app.settings.setBenchmark(system.id, null); app.settings.clearTuning(system.id, all.map { it.id }) } }) {

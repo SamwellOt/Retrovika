@@ -27,6 +27,7 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <unordered_map>
+#include <chrono>
 
 #include "../../libretro-common/include/libretro.h"
 #include "log.h"
@@ -61,6 +62,16 @@ void Environment::deinitialize() {
     useVulkan = false;
     relaxedGlesVersion = false;
     frameTimeCallback = {};
+    audioBufferStatusCallback = {};
+    minimumAudioLatencyMs = 0;
+    targetRefreshRate = 60.0f;
+    fastForwarding = false;
+    throttleMode = RETRO_THROTTLE_NONE;
+    throttleRate = 60.0f;
+    videoEnabled = true;
+    avTimingUpdated = false;
+    avTimingFps = 0.0;
+    avTimingSampleRate = 0.0;
     useDepth = false;
     useStencil = false;
     bottomLeftOrigin = false;
@@ -291,6 +302,48 @@ bool Environment::environment_handle_get_microphone_interface(struct retro_micro
     return true;
 }
 
+namespace {
+
+retro_time_t perfGetTimeUsec() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()
+    ).count();
+}
+
+retro_perf_tick_t perfGetCounter() {
+    return (retro_perf_tick_t) std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()
+    ).count();
+}
+
+// Só o que a ABI garante, sem olhar o CPU: um núcleo que achasse AVX e executasse a instrução em um aparelho
+// sem ela cairia com SIGILL. No x86_64 do Android o piso é SSE até SSSE3 (SSE4 e POPCNT não entram, por cautela).
+uint64_t perfGetCpuFeatures() {
+    uint64_t features = 0;
+#if defined(__aarch64__)
+    features |= RETRO_SIMD_NEON | RETRO_SIMD_ASIMD;
+#elif defined(__ARM_NEON)
+    features |= RETRO_SIMD_NEON;
+#endif
+#if defined(__x86_64__)
+    features |= RETRO_SIMD_MMX | RETRO_SIMD_SSE | RETRO_SIMD_SSE2 | RETRO_SIMD_SSE3 | RETRO_SIMD_SSSE3;
+#elif defined(__i386__)
+    features |= RETRO_SIMD_MMX | RETRO_SIMD_SSE | RETRO_SIMD_SSE2;
+#endif
+    return features;
+}
+
+// Os contadores de desempenho do núcleo não são usados: registrar, medir e listar não fazem nada.
+void perfRegister(struct retro_perf_counter* counter) {
+    if (counter != nullptr) counter->registered = true;
+}
+
+void perfStartStop(struct retro_perf_counter*) {}
+
+void perfLog() {}
+
+} // namespace
+
 void Environment::callback_retro_log(enum retro_log_level level, const char *fmt, ...) {
     va_list argptr;
     va_start(argptr, fmt);
@@ -457,14 +510,34 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
             return true;
         }
 
-        case RETRO_ENVIRONMENT_GET_PERF_INTERFACE:
+        case RETRO_ENVIRONMENT_GET_PERF_INTERFACE: {
             LOGD("Called RETRO_ENVIRONMENT_GET_PERF_INTERFACE");
-            return false;
+            // Alguns núcleos chamam os ponteiros sem conferir, então todos precisam existir.
+            static const struct retro_perf_callback perfCallback {
+                &perfGetTimeUsec,
+                &perfGetCpuFeatures,
+                &perfGetCounter,
+                &perfRegister,
+                &perfStartStop,
+                &perfStartStop,
+                &perfLog
+            };
+            if (data == nullptr) return false;
+            *static_cast<struct retro_perf_callback*>(data) = perfCallback;
+            return true;
+        }
 
-            // TODO... RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO can also change frame-rate
         case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
         case RETRO_ENVIRONMENT_SET_GEOMETRY: {
             struct retro_game_geometry *geometry = static_cast<struct retro_game_geometry *>(data);
+            if (cmd == RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO) {
+                // O timing (fps e taxa de amostragem) fica a cargo do LibretroDroid::step, que recria o
+                // FPSSync e o áudio na thread de emulação.
+                auto* avInfo = static_cast<struct retro_system_av_info *>(data);
+                avTimingFps = avInfo->timing.fps;
+                avTimingSampleRate = avInfo->timing.sample_rate;
+                avTimingUpdated = true;
+            }
             gameGeometryHeight = geometry->base_height;
             gameGeometryWidth = geometry->base_width;
             // max_* is only meaningful in SET_SYSTEM_AV_INFO: SET_GEOMETRY must not change it.
@@ -483,7 +556,48 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
 
         case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
             LOGD("Called RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE");
-            return false;
+            // Bit 0 vídeo, bit 1 áudio. O áudio fica sempre ligado (a captura da transmissão e o mudo dependem
+            // dele); o vídeo só cai nos quadros intermediários do avanço rápido.
+            if (data != nullptr) {
+                *static_cast<int*>(data) = (videoEnabled ? 1 : 0) | 2;
+            }
+            return true;
+
+        case RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK: {
+            LOGD("Called RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK");
+            // Nulo (a estrutura ou o callback) desliga o medidor.
+            auto* callback = static_cast<const struct retro_audio_buffer_status_callback*>(data);
+            audioBufferStatusCallback = callback != nullptr ? *callback : retro_audio_buffer_status_callback {};
+            return true;
+        }
+
+        case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY: {
+            LOGD("Called RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY");
+            if (data == nullptr) return false;
+            // A API manda atender até 512 ms. Quem aplica é o LibretroDroid: na criação do Audio (pedido feito
+            // no retro_load_game) ou, se vier dentro do retro_run, recriando o Audio no fim do step.
+            minimumAudioLatencyMs = std::min(*static_cast<const unsigned*>(data), 512u);
+            return true;
+        }
+
+        // Como no RetroArch: um núcleo que só sonda o suporte passa NULL, e isso não pode derrubar o processo.
+        case RETRO_ENVIRONMENT_GET_FASTFORWARDING:
+            if (data == nullptr) return false;
+            *static_cast<bool*>(data) = fastForwarding;
+            return true;
+
+        case RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE:
+            if (data == nullptr) return false;
+            *static_cast<float*>(data) = targetRefreshRate;
+            return true;
+
+        case RETRO_ENVIRONMENT_GET_THROTTLE_STATE: {
+            if (data == nullptr) return false;
+            auto* state = static_cast<struct retro_throttle_state*>(data);
+            state->mode = throttleMode;
+            state->rate = throttleRate;
+            return true;
+        }
 
         case RETRO_ENVIRONMENT_GET_LANGUAGE:
             LOGD("Called RETRO_ENVIRONMENT_GET_LANGUAGE");
@@ -507,7 +621,7 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
 void Environment::setLanguage(const std::string& androidLanguage) {
     std::unordered_map<std::string, unsigned> languages {
             { "en", RETRO_LANGUAGE_ENGLISH },
-            { "jp", RETRO_LANGUAGE_JAPANESE },
+            { "ja", RETRO_LANGUAGE_JAPANESE },
             { "fr", RETRO_LANGUAGE_FRENCH },
             { "es", RETRO_LANGUAGE_SPANISH },
             { "de", RETRO_LANGUAGE_GERMAN },
@@ -522,7 +636,20 @@ void Environment::setLanguage(const std::string& androidLanguage) {
             { "vi", RETRO_LANGUAGE_VIETNAMESE },
             { "ar", RETRO_LANGUAGE_ARABIC },
             { "el", RETRO_LANGUAGE_GREEK },
-            { "tr", RETRO_LANGUAGE_TURKISH }
+            { "tr", RETRO_LANGUAGE_TURKISH },
+            { "sv", RETRO_LANGUAGE_SWEDISH },
+            { "fi", RETRO_LANGUAGE_FINNISH },
+            { "cs", RETRO_LANGUAGE_CZECH },
+            { "uk", RETRO_LANGUAGE_UKRAINIAN },
+            { "hu", RETRO_LANGUAGE_HUNGARIAN },
+            { "he", RETRO_LANGUAGE_HEBREW },
+            { "iw", RETRO_LANGUAGE_HEBREW },
+            { "id", RETRO_LANGUAGE_INDONESIAN },
+            { "in", RETRO_LANGUAGE_INDONESIAN },
+            { "fa", RETRO_LANGUAGE_PERSIAN },
+            { "sk", RETRO_LANGUAGE_SLOVAK },
+            { "ca", RETRO_LANGUAGE_CATALAN },
+            { "be", RETRO_LANGUAGE_BELARUSIAN }
     };
 
     if (languages.find(androidLanguage) != languages.end()) {

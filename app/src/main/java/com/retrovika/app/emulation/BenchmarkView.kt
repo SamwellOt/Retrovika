@@ -88,14 +88,30 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
             contentAlignment = Alignment.Center,
         ) {
             val view = state.view
+            val download = state.download
             if (view != null) key(view) { AndroidView(factory = { view }, modifier = Modifier.fillMaxSize()) }
+            else if (download != null) {
+                // Núcleo ainda não instalado: o download é o que o teste espera agora.
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
+                    if (download.progress > 0f) CircularProgressIndicator({ download.progress }, Modifier.size(32.dp), strokeWidth = 3.dp, color = Palette.Cyan)
+                    else CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp, color = Palette.Cyan)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        stringResource(R.string.bench_downloading, download.coreName, (download.progress * 100).toInt()),
+                        style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, textAlign = TextAlign.Center,
+                    )
+                }
+            }
             else CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp, color = Palette.Cyan)
         }
         Spacer(Modifier.height(18.dp))
+        // Núcleos de trás do primeiro com folga: o teste nem chega a eles. "Não testado" é outra coisa que "não rodou".
+        val untested = if (state.kind == BenchKind.CORES) CoreBenchmark.untested(state.items.map { it.id }, state.results) else emptyList()
         Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             state.items.forEachIndexed { i, item ->
                 val result = state.results.firstOrNull { it.coreId == item.id }
                 val done = result != null
+                val skipped = item.id in untested
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh)
                         .border(1.dp, if (i == state.current && !done) Palette.Cyan else Palette.Outline, RoundedCornerShape(14.dp))
@@ -105,6 +121,7 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
                     when {
                         done && result?.speed == null -> Icon(Icons.Rounded.ErrorOutline, null, tint = Palette.Coral, modifier = Modifier.size(18.dp))
                         done -> Icon(Icons.Rounded.CheckCircle, null, tint = Palette.Success, modifier = Modifier.size(18.dp))
+                        skipped -> Icon(Icons.Rounded.SkipNext, null, tint = Palette.TextMuted, modifier = Modifier.size(18.dp))
                         i == state.current -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Palette.Cyan)
                         else -> Icon(Icons.Rounded.HourglassEmpty, null, tint = Palette.TextMuted, modifier = Modifier.size(18.dp))
                     }
@@ -126,6 +143,7 @@ internal fun BenchmarkView(state: EmulationUi.Benchmarking, system: GameSystem?,
                     Spacer(Modifier.width(10.dp))
                     Text(
                         when {
+                            skipped -> stringResource(R.string.bench_not_tested)
                             result == null -> ""
                             result.speed == null -> stringResource(R.string.bench_failed)
                             else -> stringResource(R.string.bench_speed, (result.speed * 100).toInt())

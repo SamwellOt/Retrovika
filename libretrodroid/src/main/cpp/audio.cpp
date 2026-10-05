@@ -24,11 +24,12 @@
 
 namespace libretrodroid {
 
-Audio::Audio(int32_t sampleRate, double refreshRate, bool preferLowLatencyAudio) {
+Audio::Audio(int32_t sampleRate, double refreshRate, bool preferLowLatencyAudio, unsigned minimumLatencyMs) {
     LOGI("Audio initialization has been called with input sample rate %d", sampleRate);
 
     contentRefreshRate = refreshRate;
     inputSampleRate = sampleRate;
+    this->minimumLatencyMs = minimumLatencyMs;
     audioLatencySettings = findBestLatencySettings(preferLowLatencyAudio);
     initializeStream();
 }
@@ -97,7 +98,8 @@ int32_t Audio::computeAudioBufferSize() {
 
 double Audio::computeMaximumLatency() const {
     double maxLatency = (audioLatencySettings->bufferSizeInVideoFrames / contentRefreshRate) * 1000;
-    return std::max(maxLatency, 32.0);
+    // O núcleo pode pedir mais (SET_MINIMUM_AUDIO_LATENCY) para aguentar quadros pesados sem estalar.
+    return std::max({maxLatency, 32.0, (double) minimumLatencyMs});
 }
 
 void Audio::start() {
@@ -112,6 +114,17 @@ void Audio::stop() {
     startRequested = false;
     if (stream != nullptr)
         stream->requestStop();
+    std::shared_ptr<Pipeline> current = std::atomic_load(&pipeline);
+    if (current != nullptr) current->consuming = false;
+}
+
+int Audio::bufferOccupancy() const {
+    std::shared_ptr<Pipeline> current = std::atomic_load(&pipeline);
+    if (current == nullptr || !current->consuming) return -1;
+    int32_t capacity = current->fifoBuffer->getBufferCapacityInFrames();
+    if (capacity <= 0) return -1;
+    int64_t used = current->fifoBuffer->getFullFramesAvailable();
+    return (int) std::clamp<int64_t>(used * 100 / capacity, 0, 100);
 }
 
 void Audio::write(const int16_t *data, size_t frames) {
@@ -132,6 +145,8 @@ oboe::DataCallbackResult Audio::onAudioReady(oboe::AudioStream *oboeStream, void
         if (numFrames > 0) std::fill(outputArray, outputArray + numFrames * 2, 0);
         return oboe::DataCallbackResult::Continue;
     }
+
+    current->consuming = true;
 
     double dynamicBufferFactor = computeDynamicBufferConversionFactor(*current, 0.001 * numFrames);
     double finalConversionFactor = current->baseConversionFactor * dynamicBufferFactor * playbackSpeed;

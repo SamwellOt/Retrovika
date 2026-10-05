@@ -31,7 +31,8 @@ class VulkanHealth(private val store: Store) {
         override fun put(key: String, value: Int, sync: Boolean) { prefs.edit().putInt(key, value).let { if (sync) it.commit() else it.apply() } }
         // commit(): o valor "running" precisa estar no disco se o teste derrubar o processo.
         override fun put(key: String, value: String) { prefs.edit().putString(key, value).commit() }
-        override fun remove(key: String) { prefs.edit().remove(key).commit() }
+        // apply(): esquecer as falhas (o usuário pediu para tentar de novo) não precisa chegar ao disco antes de nada.
+        override fun remove(key: String) { prefs.edit().remove(key).apply() }
         override fun clear() { prefs.edit().clear().apply() }
     })
 
@@ -84,7 +85,11 @@ class VulkanHealth(private val store: Store) {
         store.put(crashes(coreId), 0)
     }
 
-    /** Antes de abrir com Vulkan; gravado de forma síncrona: o processo pode cair logo em seguida. */
+    /**
+     * Antes de abrir com Vulkan; gravado de forma síncrona (commit): o processo pode cair logo em seguida e a próxima
+     * abertura precisa achar a tentativa no disco. Por ser síncrona (fsync), quem chama fora de teste deve usar uma
+     * thread de fundo e esperar o retorno antes de criar o contexto do jogo.
+     */
     fun attemptStarted(coreId: String) {
         store.put(strikes(coreId), store.int(strikes(coreId)) + 1, sync = true)
     }

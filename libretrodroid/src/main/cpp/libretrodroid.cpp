@@ -86,18 +86,39 @@ int16_t LibretroDroid::callback_set_input_state(
 }
 
 void LibretroDroid::updateAudioSampleRateMultiplier() {
+    // Chamado da thread principal (setFrameSpeed) enquanto o step pode estar trocando o Audio.
+    std::lock_guard<std::mutex> lock(audioLock);
     if (audio) {
-        audio->setPlaybackSpeed(frameSpeed);
+        audio->setPlaybackSpeed(frameSpeed.load());
     }
+}
+
+void LibretroDroid::replaceAudio(std::unique_ptr<Audio> newAudio, bool inheritStart) {
+    std::unique_ptr<Audio> oldAudio;
+    {
+        // A troca, a velocidade e o start/stop andam juntos sob o audioLock: o pause()/resume() da thread
+        // principal então enxergam sempre o Audio atual, e um pause() que chegue no meio não deixa o novo tocando.
+        // O antigo é destruído fora do lock, porque fechar o stream pode demorar.
+        std::lock_guard<std::mutex> lock(audioLock);
+        bool wasStarted = audio && audio->isStartRequested();
+        if (newAudio) {
+            newAudio->setPlaybackSpeed(frameSpeed.load());
+        }
+        oldAudio = std::move(audio);
+        audio = std::move(newAudio);
+        if (oldAudio && wasStarted) oldAudio->stop();
+        if (audio && inheritStart && wasStarted) audio->start();
+    }
+    oldAudio = nullptr;
 }
 
 // TODO... Do we really need this?
 void LibretroDroid::resetGlobalVariables() {
     core = nullptr;
     gameLoaded = false;
-    audio = nullptr;
+    replaceAudio(nullptr);
     replaceVideo(nullptr);
-    fpsSync = nullptr;
+    replaceFpsSync(nullptr);
     {
         std::lock_guard<std::mutex> lock(inputLock);
         input = nullptr;
@@ -318,14 +339,18 @@ void LibretroDroid::create(
     Environment::getInstance().setLanguage(language);
     Environment::getInstance().setEnableVirtualFileSystem(enableVirtualFileSystem);
     Environment::getInstance().setEnableMicrophone(enableMicrophone);
+    Environment::getInstance().setTargetRefreshRate(refreshRate);
 
     openglESVersion = GLESVersion;
     screenRefreshRate = refreshRate;
+    // O create já traz a taxa lida agora: um aviso anterior de outro jogo não vale mais.
+    pendingScreenRefreshRate = 0.0F;
     skipDuplicateFrames = duplicateFrames;
     immersiveModeEnabled = GLESVersion >= 3 && immersiveModeConfig.has_value();
     this->immersiveModeConfig = immersiveModeConfig.value_or(ImmersiveMode::Config{});
     audioEnabled = true;
     frameSpeed = 1;
+    fastForwardHints = false;
 
     core = std::make_unique<Core>(soFilePath);
 
@@ -537,8 +562,9 @@ void LibretroDroid::destroy() {
     rumble = nullptr;
     netplay = nullptr;
     netplayState = -1;
-    fpsSync = nullptr;
-    audio = nullptr;
+    // Um step dormindo (sem o coreLock) acorda, acha o FPSSync nulo e depois o núcleo nulo, e volta.
+    replaceFpsSync(nullptr);
+    replaceAudio(nullptr);
 
     Environment::getInstance().deinitialize();
     VFS::getInstance().deinitialize();
@@ -554,37 +580,108 @@ void LibretroDroid::resume() {
         input = std::make_unique<Input>();
     }
 
-    if (fpsSync) fpsSync->reset();
-    if (audio) audio->start();
+    {
+        // O step pode recriar o FPSSync (mudança de fps do núcleo) e a espera usa o estado dele sem o coreLock.
+        std::lock_guard<std::mutex> lock(pacingLock);
+        if (fpsSync) fpsSync->reset();
+    }
+    {
+        std::lock_guard<std::mutex> lock(audioLock);
+        if (audio) audio->start();
+    }
     refreshAspectRatio();
 }
 
 void LibretroDroid::pause() {
     LOGD("Performing libretrodroid pause");
-    if (audio) audio->stop();
+    {
+        std::lock_guard<std::mutex> lock(audioLock);
+        if (audio) audio->stop();
+    }
 
     std::lock_guard<std::mutex> lock(inputLock);
     input = nullptr;
 }
 
-void LibretroDroid::step() {
+void LibretroDroid::replaceFpsSync(std::unique_ptr<FPSSync> newFpsSync) {
+    std::lock_guard<std::mutex> lock(pacingLock);
+    fpsSync = std::move(newFpsSync);
+}
+
+unsigned LibretroDroid::paceNextDraw() {
+    // Dorme ANTES de rodar o quadro, até a hora marcada: o quadro pronto é apresentado assim que o step volta (antes
+    // ele esperava a sobra do intervalo depois de pronto, e a imagem chegava à tela um quadro mais tarde). Sem o
+    // coreLock, para a thread principal não ficar presa na espera.
+    TimePoint wakeAt = TimePoint::min();
+    {
+        std::lock_guard<std::mutex> lock(pacingLock);
+        if (fpsSync) wakeAt = fpsSync->nextStart();
+    }
+    if (wakeAt != TimePoint::min()) {
+        std::this_thread::sleep_until(wakeAt);
+    }
+
+    std::lock_guard<std::mutex> lock(pacingLock);
+    return fpsSync ? fpsSync->advanceFrames() : 1;
+}
+
+int64_t LibretroDroid::step() {
+    const unsigned requestedFrames = paceNextDraw();
+
     std::lock_guard<std::mutex> lock(coreLock);
 
     // Um desenho atrasado depois do destroy() não tem núcleo para rodar.
-    if (!core) return;
+    if (!core) return 0;
 
-    LOGD("Stepping into retro_run()");
+    const auto workStart = std::chrono::steady_clock::now();
 
-    unsigned frames = 1;
-    if (fpsSync) {
-        unsigned requestedFrames = fpsSync->advanceFrames();
-
-        // If the application runs too slow it's better to just skip those frames.
-        frames = std::min(requestedFrames, 2u);
+    if (requestedFrames == 0) {
+        // Tela múltipla do conteúdo (120 Hz com 60 fps): o GLSurfaceView troca os buffers depois de todo desenho e o
+        // conteúdo do buffer novo é indefinido, então os vsyncs sem quadro novo redesenham o último. Não conta como
+        // quadro novo: sem captura, sem skipDuplicateFrames e sem tempo de trabalho para o governador de energia.
+        if (video) {
+            video->representFrame();
+        }
+        applyScreenRefreshChange();
+        return 0;
     }
 
+    runFrames(requestedFrames);
+
+    // Por último: o quadro que trouxe o timing novo já foi marcado com o antigo.
+    if (Environment::getInstance().isAvTimingUpdated()) {
+        applyAvTimingChange();
+    }
+    applyScreenRefreshChange();
+
+    // Núcleos como o PCSX ReARMed pedem a latência mínima já dentro do retro_run (com o frameskip automático).
+    // A API prevê a reinicialização do áudio nesse caso; o valor só difere do aplicado quando muda de verdade.
+    if (Environment::getInstance().getMinimumAudioLatency() != appliedMinimumLatencyMs) {
+        recreateAudio();
+    }
+
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - workStart).count();
+}
+
+void LibretroDroid::runFrames(unsigned requestedFrames) {
+    LOGD("Stepping into retro_run()");
+
+    // Uma leitura só: o setFrameSpeed vem da thread principal e o quadro inteiro precisa da mesma velocidade.
+    const unsigned speed = frameSpeed.load();
+    auto& environment = Environment::getInstance();
+    publishRuntimeHints(speed);
+
+    // Nos quadros intermediários do avanço rápido o núcleo pode nem gerar vídeo (o resto é descartado de qualquer
+    // jeito). Só núcleos de software: pular o desenho de um núcleo de GPU nunca foi testado aqui.
+    const bool dropIntermediateVideo = fastForwardHints && speed > 1 && !netplay &&
+        !environment.isUseHwAcceleration() && !environment.isUseVulkan();
+
+    // If the application runs too slow it's better to just skip those frames.
+    const unsigned frames = std::min(requestedFrames, 2u);
+
     auto& frameTime = Environment::getInstance().getFrameTimeCallback();
-    for (size_t i = 0; i < frames * frameSpeed; i++) {
+    const size_t totalRuns = (size_t) frames * speed;
+    for (size_t i = 0; i < totalRuns; i++) {
         // Em rede, o quadro só roda com a entrada dos dois lados; sem a do outro, fica para o próximo desenho.
         if (netplay) {
             Netplay::Pad localPad;
@@ -597,6 +694,8 @@ void LibretroDroid::step() {
                 break;
             }
         }
+        environment.setVideoEnabled(!dropIntermediateVideo || i + 1 == totalRuns);
+        reportAudioBufferStatus(speed);
         // Each retro_run is one frame of emulated time, so the reference duration is the right delta
         // (fast-forward runs more frames, not longer ones).
         if (frameTime.callback != nullptr) {
@@ -608,6 +707,7 @@ void LibretroDroid::step() {
             netplay->frameDone();
         }
     }
+    environment.setVideoEnabled(true);
 
     if (netplay) {
         netplayState = netplay->isBroken() ? -2 : netplay->stalledMillis();
@@ -620,10 +720,6 @@ void LibretroDroid::step() {
 
     if (video && video->takeFrameRendered()) {
         capture.onFrameRendered(*video);
-    }
-
-    if (fpsSync) {
-        fpsSync->wait();
     }
 
     if (rumble && rumbleEnabled) {
@@ -646,6 +742,100 @@ void LibretroDroid::step() {
         Environment::getInstance().clearScreenRotationUpdated();
 
         video->updateRotation(Environment::getInstance().getScreenRotation());
+    }
+}
+
+void LibretroDroid::recreateAudio() {
+    auto& environment = Environment::getInstance();
+    appliedMinimumLatencyMs = environment.getMinimumAudioLatency();
+    replaceAudio(
+        std::make_unique<Audio>(audioSampleRate, contentFps, preferLowLatencyAudio, appliedMinimumLatencyMs),
+        true
+    );
+}
+
+void LibretroDroid::publishRuntimeHints(unsigned speed) {
+    auto& environment = Environment::getInstance();
+    bool fastForwarding = fastForwardHints && speed > 1;
+    environment.setFastForwarding(fastForwarding);
+
+    if (fastForwarding) {
+        environment.setThrottleState(RETRO_THROTTLE_FAST_FORWARD, (float) (contentFps * speed));
+    } else if (fpsSync && fpsSync->isUsingVSync()) {
+        // O FPSSync não espera nada: quem marca o ritmo é o vsync da tela (dividido, se o núcleo roda a cada n vsyncs).
+        environment.setThrottleState(RETRO_THROTTLE_VSYNC, (float) fpsSync->getFrameRate());
+    } else {
+        environment.setThrottleState(RETRO_THROTTLE_NONE, (float) contentFps);
+    }
+}
+
+void LibretroDroid::reportAudioBufferStatus(unsigned speed) {
+    auto& callback = Environment::getInstance().getAudioBufferStatusCallback();
+    if (callback.callback == nullptr) return;
+
+    // Os núcleos pulam quadros quando a fila está baixa. Sem sentido (e prejudicial) se a fila não é consumida de
+    // verdade: som desligado (o teste de desempenho roda mudo e a fila esvazia, o que inflaria a medição), sem
+    // saída de áudio, avanço rápido (a fila esvazia por definição) e partida em rede (cada lado tem de rodar
+    // todos os quadros).
+    int occupancy = -1;
+    if (audioEnabled && speed <= 1 && !netplay && audio) {
+        occupancy = audio->bufferOccupancy();
+    }
+
+    if (occupancy < 0) {
+        callback.callback(false, 0, false);
+        return;
+    }
+    // O controle do Audio mira em 50% da fila; abaixo de um quarto ela está na metade do alvo e a próxima
+    // rajada de amostras pode secar o buffer. Mais sensível pularia quadros por flutuações normais.
+    constexpr int UNDERRUN_LIKELY_BELOW = 25;
+    callback.callback(true, (unsigned) occupancy, occupancy < UNDERRUN_LIKELY_BELOW);
+}
+
+void LibretroDroid::applyAvTimingChange() {
+    auto& environment = Environment::getInstance();
+    environment.clearAvTimingUpdated();
+
+    double fps = environment.getAvTimingFps();
+    double sampleRate = environment.getAvTimingSampleRate();
+    if (!(fps > 0) || !(sampleRate > 0)) return;
+
+    // Muitos núcleos repetem o SET_SYSTEM_AV_INFO só para mudar a geometria: sem mudança de timing, nada a refazer.
+    bool fpsChanged = std::abs(fps - contentFps) > 0.001;
+    bool rateChanged = std::abs(sampleRate - contentSampleRate) > 0.5;
+    if (!fpsChanged && !rateChanged) return;
+
+    LOGI("AV timing changed: fps %f -> %f, sample rate %f -> %f", contentFps, fps, contentSampleRate, sampleRate);
+
+    // Estamos na thread de emulação, com o coreLock: só o step e o destroy() trocam o fpsSync.
+    if (fpsChanged) {
+        contentFps = fps;
+        replaceFpsSync(std::make_unique<FPSSync>(contentFps, screenRefreshRate));
+    }
+    contentSampleRate = sampleRate;
+    updateAudioForPacing();
+}
+
+void LibretroDroid::applyScreenRefreshChange() {
+    float pending = pendingScreenRefreshRate.exchange(0.0F);
+    if (!(pending > 0) || std::abs(pending - screenRefreshRate) < 0.01F) return;
+
+    LOGI("Screen refresh rate changed: %f -> %f", screenRefreshRate, pending);
+    screenRefreshRate = pending;
+    Environment::getInstance().setTargetRefreshRate(pending);
+    // Sem jogo carregado o afterGameLoad já usa a taxa nova.
+    if (fpsSync) {
+        replaceFpsSync(std::make_unique<FPSSync>(contentFps, screenRefreshRate));
+        updateAudioForPacing();
+    }
+}
+
+void LibretroDroid::updateAudioForPacing() {
+    // O ajuste ao refresh da tela (time stretch) depende do fps e da tela, então ele também pode mexer na taxa do áudio.
+    int newAudioRate = (int) std::lround(contentSampleRate * fpsSync->getTimeStretchFactor());
+    if (newAudioRate != audioSampleRate) {
+        audioSampleRate = newAudioRate;
+        recreateAudio();
     }
 }
 
@@ -674,6 +864,10 @@ void LibretroDroid::setFrameSpeed(unsigned int speed) {
     updateAudioSampleRateMultiplier();
 }
 
+void LibretroDroid::setFastForwardHints(bool enabled) {
+    fastForwardHints = enabled;
+}
+
 void LibretroDroid::setAudioEnabled(bool enabled) {
     audioEnabled = enabled;
 }
@@ -693,6 +887,14 @@ void LibretroDroid::handleVideoRefresh(
     unsigned int height,
     size_t pitch
 ) {
+    // Quadro intermediário do avanço rápido: o núcleo que ignorou o pedido para não gerar vídeo não paga o
+    // envio da textura nem o desenho (a API manda este callback não fazer nada).
+    if (!Environment::getInstance().isVideoEnabled()) return;
+
+    // Só quadros novos (os repetidos vêm com NULL): é o que mostra, contra o runCount, quadros pulados pelo núcleo.
+    if (data != nullptr) {
+        videoFrameCount++;
+    }
     if (snapshotRequested.load()) {
         copySnapshot(data, width, height, pitch);
     }
@@ -769,7 +971,11 @@ void LibretroDroid::copySnapshot(const void *data, unsigned width, unsigned heig
 size_t LibretroDroid::handleAudioCallback(const int16_t *data, size_t frames) {
     // Antes do "som ligado": transmitindo, o celular pode ficar mudo e a outra tela continuar com som.
     capture.writeAudio(data, frames);
-    if (audio && audioEnabled) {
+    if (!audioEnabled) return frames;
+    // O step agora troca o Audio no meio do jogo (latência mínima, timing ou refresh novos): núcleos que mandam
+    // áudio de uma thread própria não podem escrever num Audio que acabou de ser destruído. A escrita não bloqueia.
+    std::lock_guard<std::mutex> lock(audioLock);
+    if (audio) {
         audio->write(data, frames);
     }
     return frames;
@@ -885,20 +1091,34 @@ void LibretroDroid::afterGameLoad() {
     struct retro_system_av_info system_av_info {};
     core->retro_get_system_av_info(&system_av_info);
 
-    fpsSync = std::make_unique<FPSSync>(system_av_info.timing.fps, screenRefreshRate);
     contentFps = system_av_info.timing.fps > 0 ? system_av_info.timing.fps : 60.0;
+    // Uma mudança de tela anunciada antes do carregamento vale desde o primeiro quadro.
+    float pendingRate = pendingScreenRefreshRate.exchange(0.0F);
+    if (pendingRate > 0) {
+        screenRefreshRate = pendingRate;
+        Environment::getInstance().setTargetRefreshRate(pendingRate);
+    }
+    replaceFpsSync(std::make_unique<FPSSync>(contentFps, screenRefreshRate));
+    contentSampleRate = system_av_info.timing.sample_rate;
     runCount = 0;
+    videoFrameCount = 0;
+    // Um SET_SYSTEM_AV_INFO durante o carregamento já está refletido no get_system_av_info acima.
+    Environment::getInstance().clearAvTimingUpdated();
 
     double inputSampleRate = system_av_info.timing.sample_rate * fpsSync->getTimeStretchFactor();
     audioSampleRate = (int) std::lround(inputSampleRate);
 
-    audio = std::make_unique<Audio>(
+    // O núcleo costuma pedir a latência mínima durante o retro_load_game, antes de chegarmos aqui. Um pedido
+    // feito depois (dentro do retro_run) é tratado no fim do step, que recria o áudio.
+    appliedMinimumLatencyMs = Environment::getInstance().getMinimumAudioLatency();
+    replaceAudio(std::make_unique<Audio>(
         (int32_t) std::lround(inputSampleRate),
         system_av_info.timing.fps,
-        preferLowLatencyAudio
-    );
+        preferLowLatencyAudio,
+        appliedMinimumLatencyMs
+    ));
 
-    updateAudioSampleRateMultiplier();
+    publishRuntimeHints(frameSpeed.load());
 
     defaultAspectRatio = findDefaultAspectRatio(system_av_info);
 }

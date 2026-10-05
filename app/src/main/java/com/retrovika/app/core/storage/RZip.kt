@@ -94,6 +94,20 @@ object RZip {
         return out
     }
 
+    /**
+     * Tamanho do estado de [file] já descompactado, lendo só o cabeçalho (20 bytes): quem decide se vale ler o estado
+     * antes da hora precisa saber quanta memória ele vai pedir. Arquivo cru (versões anteriores) vale o próprio tamanho;
+     * cabeçalho corrompido ou arquivo ilegível, -1.
+     */
+    fun originalSize(file: File): Long = runCatching {
+        val length = file.length()
+        if (length < HEADER) return@runCatching length
+        val head = ByteArray(HEADER)
+        val read = file.inputStream().use { it.read(head) }
+        if (read < HEADER || !isCompressed(head)) return@runCatching length
+        getLe(head, 12, 8).takeIf { it in 0..MAX_SIZE } ?: -1L
+    }.getOrDefault(-1L)
+
     /** Lê um estado gravado por [write] (ou cru, de versões anteriores). */
     fun read(file: File): ByteArray = decompress(file.readBytes())
 
@@ -165,18 +179,30 @@ object RZip {
 
     private const val COMPACTED_MARKER = ".rzip-v1"
 
+    /**
+     * Área de trabalho de cada thread de compressão: o bloco compactado sai nela e só então vira um array do tamanho
+     * exato. Antes cada bloco de 128 KB alocava um ByteArrayOutputStream que crescia por dobras, um buffer de 64 KB e
+     * uma cópia final: dezenas de MB de lixo por salvamento, num estado de 30 MB, no momento em que o jogo mais precisa
+     * do coletor quieto. O deflate de nível 1 de um bloco de 128 KB não passa disto nem sem compressão nenhuma
+     * (o zlib garante len + len/4096 + len/16384 + 13); se algum dia passar, o laço de [deflateChunk] cresce a área.
+     */
+    private val scratch = ThreadLocal.withInitial { ByteArray(CHUNK + CHUNK / 64 + 1024) }
+
     private fun deflateChunk(data: ByteArray, off: Int, len: Int): ByteArray {
         val d = deflaters.get()!!
         d.reset()
         d.setInput(data, off, len)
         d.finish()
-        val out = ByteArrayOutputStream(len / 4 + 64)
-        val buf = ByteArray(minOf(len + 64, 64 * 1024))
+        var buf = scratch.get()!!
+        var n = 0
         while (!d.finished()) {
-            val n = d.deflate(buf)
-            out.write(buf, 0, n)
+            if (n == buf.size) {
+                buf = buf.copyOf(buf.size * 2)
+                scratch.set(buf)
+            }
+            n += d.deflate(buf, n, buf.size - n)
         }
-        return out.toByteArray()
+        return buf.copyOf(n)
     }
 
     private fun inflateChunk(data: ByteArray, off: Int, len: Int, out: ByteArray, outOff: Int, expected: Int) {

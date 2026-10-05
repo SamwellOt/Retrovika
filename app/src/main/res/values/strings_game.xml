@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="game_loading">Loading…</string>
+    <string name="game_perf_hud">%1$d%% · %2$d fps</string>
     <string name="game_not_found">Game not found</string>
     <string name="game_not_found_message">The game was removed from the library.</string>
     <string name="game_unknown_system">Unknown system</string>
@@ -59,4 +60,8 @@
     <string name="game_core_no_options">This core has no configurable options.</string>
     <string name="game_core_options_hint">Tap an option to cycle its value. Some changes only apply after restarting the game.</string>
     <string name="game_refresh_list">Refresh list</string>
+    <string name="game_loading_game">Loading game…</string>
+    <string name="game_restoring_progress">Restoring progress…</string>
+    <string name="game_cancelling">Cancelling…</string>
+    <string name="game_menu_capturing">Capturing the game state…</string>
 </resources>

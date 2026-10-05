@@ -1,0 +1,110 @@
+{
+"snes9x_2010_aspect": [
+"4:3",
+"uncorrected",
+"auto",
+"ntsc",
+"pal"
+],
+"snes9x_2010_audio_interpolation": [
+"gaussian",
+"cubic",
+"sinc"
+],
+"snes9x_2010_blargg": [
+"disabled",
+"monochrome",
+"rf",
+"composite",
+"s-video",
+"rgb"
+],
+"snes9x_2010_block_invalid_vram_access": [
+"enabled",
+"disabled"
+],
+"snes9x_2010_frameskip": [
+"disabled",
+"auto",
+"manual"
+],
+"snes9x_2010_frameskip_threshold": [
+"15",
+"18",
+"21",
+"24",
+"27",
+"30",
+"33",
+"36",
+"39",
+"42",
+"45",
+"48",
+"51",
+"54",
+"57",
+"60"
+],
+"snes9x_2010_mode7_hires": [
+"disabled",
+"2x",
+"4x",
+"2x_hv",
+"4x_hv"
+],
+"snes9x_2010_mode7_hires_bilinear": [
+"disabled",
+"stable",
+"smooth"
+],
+"snes9x_2010_msu1_enhanced_audio": [
+"enabled",
+"disabled"
+],
+"snes9x_2010_overclock": [
+"5 MHz (Underclock)",
+"8 MHz (Underclock)",
+"9 MHz (Underclock)",
+"10 MHz (Default)",
+"11 MHz",
+"12 MHz",
+"13 MHz",
+"14 MHz",
+"15 MHz",
+"20 MHz",
+"30 MHz",
+"40 MHz"
+],
+"snes9x_2010_overclock_cycles": [
+"disabled",
+"light",
+"compatible",
+"max"
+],
+"snes9x_2010_pseudo_hires_blend": [
+"disabled",
+"enabled"
+],
+"snes9x_2010_reduce_sprite_flicker": [
+"disabled",
+"enabled"
+],
+"snes9x_2010_region": [
+"auto",
+"ntsc",
+"pal"
+],
+"snes9x_2010_superfx_cycle_accuracy": [
+"enabled",
+"disabled"
+],
+"snes9x_2010_superfx_timing": [
+"legacy",
+"hardware"
+],
+"snes9x_2010_threaded_ppu": [
+"disabled",
+"enabled"
+]
+}

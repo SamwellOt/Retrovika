@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -70,6 +71,7 @@ import com.retrovika.app.core.tuning.EffectivePreset
 import com.retrovika.app.core.tuning.ExitKind
 import com.retrovika.app.core.tuning.PlaySession
 import com.retrovika.app.core.tuning.SpeedWatch
+import com.retrovika.app.core.tuning.Thermal
 import com.retrovika.app.core.tuning.TuneSource
 import com.retrovika.app.core.tuning.TuneResult
 import com.retrovika.app.core.tuning.Tuning
@@ -83,6 +85,7 @@ import com.swordfish.libretrodroid.GLRetroViewData
 import com.swordfish.libretrodroid.LibretroDroid
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -107,8 +110,27 @@ sealed interface EmulationUi {
      * Teste na primeira vez do console (ou do jogo): [view] é o que está sendo medido (nulo entre um e outro);
      * [items] são os núcleos ou os níveis de qualidade, conforme [kind].
      */
-    data class Benchmarking(val view: GLRetroView?, val kind: BenchKind, val items: List<BenchItem>, val current: Int, val results: List<CoreSpeed>) : EmulationUi
+    data class Benchmarking(
+        val view: GLRetroView?, val kind: BenchKind, val items: List<BenchItem>, val current: Int, val results: List<CoreSpeed>,
+        /** Núcleo sendo baixado para entrar no teste (nulo fora do download). */
+        val download: BenchDownload? = null,
+    ) : EmulationUi
 }
+
+/** Download de um núcleo durante o teste: [progress] de 0 a 1. */
+data class BenchDownload(val coreName: String, val progress: Float)
+
+/**
+ * Cobertura da tela de jogo do GLRetroView criado até o primeiro quadro: a vista tem de estar na tela para o jogo
+ * carregar, mas até lá é só um quadrado preto. [backdrop] é a última tela do jogo (miniatura do salvamento automático).
+ */
+data class LoadingUi(val message: String, val backdrop: Bitmap?)
+
+/**
+ * Contador de desempenho da tela do jogo (Ajustes › "Mostrar desempenho"): [speedPercent] é a velocidade da emulação
+ * (quadros rodados contra os do jogo, 100 = a do console) e [fps] os quadros novos desenhados por segundo.
+ */
+data class PerfStats(val speedPercent: Int, val fps: Int)
 
 enum class BenchKind { CORES, QUALITY, GAME }
 
@@ -138,6 +160,8 @@ class GameActivity : ComponentActivity() {
     /** Ciclo de vida do núcleo em teste: um por núcleo, destruído ao fim da medição. */
     private var benchOwner: EmulationOwner? = null
     @Volatile private var benchSkip = false
+    /** Núcleo -> (opções, velocidade) do teste de núcleos desta abertura: o teste de qualidade não repete uma medição igual. */
+    private val benchRuns = mutableMapOf<String, Pair<Map<String, String>, Float?>>()
 
     private var ui by mutableStateOf<EmulationUi>(EmulationUi.Preparing("", null))
     private var menuOpen by mutableStateOf(false)
@@ -165,10 +189,29 @@ class GameActivity : ComponentActivity() {
     private var padDirty = false
     /** Editor do layout aberto a partir do menu: a emulação segue pausada por baixo. */
     private var padEditing by mutableStateOf(false)
-    /** A tela do jogo em tamanho real, capturada ao abrir o menu: fundo do editor de layout. */
+    /** A tela do jogo em tamanho real, capturada ao abrir o editor de layout (e só então): o fundo dele. */
     private var menuFrame by mutableStateOf<Bitmap?>(null)
     private var menuSnapshot: Bitmap? = null
+    /** Alguém está capturando o estado do jogo (menu ou tradução): bloqueia abrir outro menu por cima. */
     private var menuOpening = false
+    /**
+     * O menu já está na tela, mas o estado do jogo ainda sai da thread de emulação (que segue rodando até ele
+     * chegar): só vale com [menuOpening]. A emulação só pausa, e [menuOpen] só vira verdadeiro, depois da captura.
+     */
+    private var menuPending by mutableStateOf(false)
+    /** Continuar/voltar durante a captura: quando o estado chegar, ele é descartado e o jogo segue sem pausar. */
+    private var menuCancelled = false
+    /**
+     * "Sair" tocado com o estado do menu ainda na thread de emulação: a saída espera a captura chegar. Sair na hora
+     * pediria outro estado pela thread principal, que ficaria presa atrás do primeiro (segundos no PS2, risco de ANR).
+     */
+    private var exitAfterCapture = false
+    /** O som está mudo por causa da captura do estado ([muteForCapture]); volta quando o jogo volta a rodar. */
+    private var audioMuted = false
+    /** Cobertura até o primeiro quadro (e o carregamento do salvamento automático); nula com o jogo já na tela. */
+    private var loading by mutableStateOf<LoadingUi?>(null)
+    /** O Voltar durante o carregamento já pediu para sair: espera o núcleo terminar o retro_load_game. */
+    private var cancellingLoad = false
     /** O estado demora a sair (PS2, GameCube): um indicador na tela mostra que o toque no menu chegou. */
     private var busy by mutableStateOf(false)
     /** Quantas vezes a emulação parou: compara antes e depois de uma operação para saber se ela pausou no meio. */
@@ -180,6 +223,12 @@ class GameActivity : ComponentActivity() {
      * (N64, Dreamcast, GameCube) chamam OpenGL nesse momento e, sem o contexto, fecham o app ou gravam lixo.
      */
     private var frozenState: ByteArray? = null
+    /** Quadros rodados ([GLRetroView.runCount]) quando [frozenState] foi capturado; -1 se não se sabe. */
+    private var frozenAtFrames = -1L
+    /** Quadros rodados quando o salvamento automático foi gravado pela última vez nesta sessão; -1 = nunca/desatualizado. */
+    private var lastAutoFrames = -1L
+    /** O salvamento automático lido antes da hora, enquanto o núcleo carrega (ver [prepare]); nulo se não se aplica. */
+    private var autoRead: Deferred<Result<ByteArray?>?>? = null
 
     private lateinit var game: Game
     private lateinit var system: GameSystem
@@ -214,7 +263,22 @@ class GameActivity : ComponentActivity() {
     /** O GLRetroView ligado ao jogo pela rede; continua aqui depois do "Sair" zerar o [retroView]. */
     private var remoteView: GLRetroView? = null
     private var sessionStart = 0L
+    /** Tempo jogado ainda não gravado no banco: a escrita invalida as listas da biblioteca, então fica para o fim. */
+    private var playedMs = 0L
+    private var playedAny = false
     private var activityResumed = false
+
+    /** Estado térmico do aparelho ([PowerManager.getCurrentThermalStatus], Android 10+); sempre NONE antes disso. */
+    private var thermalStatus = 0
+    /** Quando (elapsedRealtime) o aparelho passou por [Thermal.THROTTLING] ou saiu dele; nulo = nunca nesta sessão. */
+    private var throttledAt: Long? = null
+    /** Um aviso de calor por sessão de cada tipo: o do status severo e o da lentidão que o calor explica. */
+    private var thermalWarned = false
+    private var thermalSlowdownWarned = false
+    /** O [PowerManager.OnThermalStatusChangedListener] (como Any: a classe não existe antes do Android 10). */
+    private var thermalListener: Any? = null
+    /** Velocidade e quadros por segundo do contador de desempenho (Ajustes); nulo = escondido. Mudado uma vez por segundo. */
+    private var perfStats by mutableStateOf<PerfStats?>(null)
 
     /**
      * Só depois do primeiro quadro (e do carregamento automático) o estado do jogo é real. Antes disso,
@@ -259,10 +323,11 @@ class GameActivity : ComponentActivity() {
         emulationOwner.registry.currentState = Lifecycle.State.CREATED
 
         getSystemService(InputManager::class.java).registerInputDeviceListener(inputDeviceListener, Handler(Looper.getMainLooper()))
+        watchThermal()
 
         // Android 16+ (targetSdk 36) entrega o "voltar" só por callback, sem KEYCODE_BACK: sem isto,
         // o gesto fecharia o jogo em vez de abrir o menu de pausa.
-        onBackPressedDispatcher.addCallback(this) { toggleMenu() }
+        onBackPressedDispatcher.addCallback(this) { toggleMenu(fromBack = true) }
 
         setContent {
             RetrovikaTheme(dark = true) {
@@ -279,6 +344,10 @@ class GameActivity : ComponentActivity() {
                     editorBackdrop = menuFrame,
                     toast = toast,
                     busy = busy,
+                    menuPending = menuPending,
+                    loading = loading,
+                    // Lambda: só o contador lê o estado, e a tela do jogo não recompõe a cada segundo por causa dele.
+                    perfStats = { perfStats },
                     padListener = padListener,
                     menu = menuActions,
                     onDismissToast = { toast = null },
@@ -371,7 +440,11 @@ class GameActivity : ComponentActivity() {
         }
 
         // 2. Primeira vez do console neste aparelho, sem núcleo escolhido: testa os núcleos e fica com o ideal.
-        if (userCore == null && !guestSession && settings.autoBenchmark && app.settings.benchmark(system.id).first() == null) {
+        // Console leve em aparelho que não é da classe básica: o núcleo padrão roda com folga, o teste só custaria segundos.
+        // Nada é gravado, então um aparelho de classe básica (ou outro, depois de restaurar o backup) ainda testa.
+        if (userCore == null && !guestSession && settings.autoBenchmark && app.settings.benchmark(system.id).first() == null &&
+            !CoreBenchmark.skipForLightweight(system.lightweight, app.deviceProfile.await().tier)
+        ) {
             benchmarkCandidates().takeIf { it.size > 1 }?.let { candidates ->
                 val chosen = runBenchmark(candidates) ?: return
                 core = system.core(chosen)
@@ -417,13 +490,27 @@ class GameActivity : ComponentActivity() {
         val vulkan = vulkanAllowed(core)
         vulkanLaunch = vulkan
         if (vulkan) {
+            // O marcador de "tentativa em andamento" tem de estar no disco antes de o driver poder derrubar o processo
+            // (commit síncrono, ver VulkanHealth), mas o fsync não precisa ser na thread principal: aqui ele termina antes
+            // de a GLRetroView existir, que é o que importa. Cancelado no meio, desfaz a contagem que chegou a ser feita.
+            var recorded = false
+            try {
+                withContext(Dispatchers.IO) { app.vulkanHealth.attemptStarted(core.id); recorded = true }
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                if (recorded) app.vulkanHealth.attemptAborted(core.id)
+                throw c
+            }
             vulkanAttempt = true
-            app.vulkanHealth.attemptStarted(core.id)
         } else if (core.vulkan && intent.getBooleanExtra(EXTRA_NO_VULKAN, false)) {
             toast = getString(R.string.vulkan_fallback)
         }
 
         ui = EmulationUi.Preparing(getString(R.string.game_starting, game.title), null)
+        // O salvamento automático é lido (e descompactado) agora, enquanto o núcleo carrega o jogo, e não depois do
+        // primeiro quadro, com o jogador esperando. A miniatura dele serve de fundo da tela de carregamento.
+        val preread = startAutoRead()
+        autoRead = preread
+        val backdropJob = if (preread != null) lifecycleScope.async(Dispatchers.IO) { runCatching { states.thumbnail(SaveStates.AUTO_SLOT) }.getOrNull() } else null
         val sram = withContext(Dispatchers.IO) { states.sramFile().takeIf { it.exists() }?.readBytes() }
 
         // Alguns núcleos (Play!) montam a pasta de dados a partir de $EXTERNAL_STORAGE, que aponta para o
@@ -462,6 +549,15 @@ class GameActivity : ComponentActivity() {
         retroView = view
         emulationOwner.registry.addObserver(view)
         observe(view)
+        // Até o primeiro quadro a vista é só um quadrado preto (e leva de 5 a 30 s em PS2, GameCube e PSP): a cobertura
+        // fica por cima dela, que continua na composição porque é dela que sai a superfície onde o jogo carrega.
+        loading = LoadingUi(getString(R.string.game_loading_game), null)
+        backdropJob?.let { job ->
+            lifecycleScope.launch {
+                val image = job.await() ?: return@launch
+                loading?.let { loading = it.copy(backdrop = image) }
+            }
+        }
         ui = EmulationUi.Running(view)
         remoteView = view
         app.remote.attach(view, RemoteGame(game.title, system.name, system.accent, system.layout), ::physicalControllerPorts)
@@ -471,9 +567,29 @@ class GameActivity : ComponentActivity() {
     }
 
     /**
+     * Começa a ler o salvamento automático em segundo plano, se ele vai ser carregado no primeiro quadro (não é partida
+     * de convidado e o núcleo grava estados). Espera antes qualquer gravação dele ainda em andamento, da saída do jogo
+     * anterior ([SaveStates.writeAsync]). Estado grande demais (PS2, GameCube) volta nulo e é lido só no primeiro
+     * quadro, como antes: segurar dezenas de MB a mais enquanto o núcleo aloca a memória dele não compensa.
+     */
+    private fun startAutoRead(): Deferred<Result<ByteArray?>?>? {
+        if (!autoLoadsState()) return null
+        return lifecycleScope.async(Dispatchers.IO) {
+            // Qualquer imprevisto na espera ou no tamanho volta nulo: a leitura de sempre, no primeiro quadro, trata a falha.
+            runCatching {
+                if (states.size(SaveStates.AUTO_SLOT) > AUTOLOAD_PREREAD_MAX_BYTES) null
+                else runCatching { states.read(SaveStates.AUTO_SLOT) }
+            }.getOrNull()
+        }
+    }
+
+    /**
      * Vigia a velocidade durante o jogo: se ela fica abaixo do nativo por vários segundos (a medição da
      * abertura não pegou uma cena pesada), baixa um nível de qualidade só deste jogo, para a próxima vez.
      * Não conta com o menu aberto, avanço rápido, tela transmitida (o encoder divide o aparelho) ou rede.
+     * Com frameskip automático ligado, também olha os quadros entregues (ver [SpeedWatch]): os `retro_run` seguem
+     * em 100% enquanto o jogador vê só uma parte dos quadros. Se o aparelho está quente (ver [Thermal]) a lentidão é
+     * do sistema, não do jogo: nada é gravado e o aviso é outro.
      */
     private fun watchSpeed(view: GLRetroView) {
         if (guestSession || core.presets.size < 2) return
@@ -481,15 +597,35 @@ class GameActivity : ComponentActivity() {
             val watch = SpeedWatch()
             // O estado do próprio emulador, não só o menu: a tradução da tela e o segundo plano também o pausam.
             fun active() = retroView === view && ui is EmulationUi.Running && emulationOwner.registry.currentState == Lifecycle.State.RESUMED &&
-                !fastForward && !netplay.playing && app.remote.state.value.screenCount == 0
+                !fastForward && !netplay.playing && app.remote.state.value.screenCount == 0 &&
+                // Menu na tela com o estado ainda sendo capturado (a emulação segue rodando até ele chegar) e a cobertura de
+                // carregamento (o estado do salvamento automático ainda entra depois do primeiro quadro) não são jogo.
+                !menuPending && loading == null
+            // As opções podem mudar no menu (o jogador liga ou desliga o frameskip): relidas a cada volta ao jogo.
+            var autoSkip = Tuning.autoFrameskipOn(core.id, optionsFor(core))
+            var wasActive = false
             while (retroView === view) {
                 val frames = view.runCount()
+                val isActive = frames != 0L && active()
                 // Antes do primeiro quadro o núcleo ainda carrega o jogo: não é lentidão.
-                if (frames == 0L || !active()) { delay(WATCH_INTERVAL_MS); continue }
+                if (!isActive) { wasActive = false; delay(WATCH_INTERVAL_MS); continue }
+                if (!wasActive) autoSkip = Tuning.autoFrameskipOn(core.id, optionsFor(core))
+                wasActive = true
+                val shown = view.videoFrameCount()
                 val t0 = android.os.SystemClock.elapsedRealtime()
                 delay(WATCH_INTERVAL_MS)
                 if (!active()) continue
-                if (watch.sample(view.runCount() - frames, android.os.SystemClock.elapsedRealtime() - t0, view.contentFps())) lowerQualityForGame()
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (watch.sample(view.runCount() - frames, now - t0, view.contentFps(), view.videoFrameCount() - shown, autoSkip)) {
+                    if (Thermal.explainsSlowdown(thermalStatus, throttledAt, now, THERMAL_LOOKBACK_MS)) {
+                        // O calor limitou o aparelho: o nível do jogo não muda. O vigia recomeça, para pegar uma lentidão
+                        // que continue depois de esfriar (com carência nova, então sem repetir o aviso a cada volta).
+                        warnThermalSlowdown()
+                        watch.reset()
+                    } else {
+                        lowerQualityForGame()
+                    }
+                }
             }
         }
     }
@@ -508,6 +644,51 @@ class GameActivity : ComponentActivity() {
         app.settings.setGameTuning(game.id, TuneResult(core.id, lower.name, null, profile.signature, System.currentTimeMillis(), slowdown = true))
         toast = getString(R.string.tune_slowdown, getString(lower.label))
     }
+
+    // region Calor
+
+    /** Acompanha o estado térmico (Android 10+): avisa o calor forte e impede que o vigia culpe o jogo por ele. */
+    private fun watchThermal() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        thermalStatus = pm.currentThermalStatus
+        if (Thermal.throttling(thermalStatus)) throttledAt = android.os.SystemClock.elapsedRealtime()
+        val listener = PowerManager.OnThermalStatusChangedListener { status -> thermalChanged(status) }
+        thermalListener = listener
+        runCatching { pm.addThermalStatusListener(androidx.core.content.ContextCompat.getMainExecutor(this), listener) }
+    }
+
+    private fun unwatchThermal() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val listener = thermalListener as? PowerManager.OnThermalStatusChangedListener ?: return
+        thermalListener = null
+        runCatching { getSystemService(PowerManager::class.java)?.removeThermalStatusListener(listener) }
+    }
+
+    /** Na thread principal (o executor do registro). */
+    private fun thermalChanged(status: Int) {
+        val before = thermalStatus
+        thermalStatus = status
+        if (Thermal.throttling(before) || Thermal.throttling(status)) throttledAt = android.os.SystemClock.elapsedRealtime()
+        maybeWarnThermal()
+    }
+
+    /** Calor severo com o jogo andando: um aviso por sessão. Chamado também quando o jogo volta a rodar e no primeiro quadro. */
+    private fun maybeWarnThermal() {
+        if (thermalWarned || !Thermal.shouldWarn(thermalStatus)) return
+        if (!gameLoaded || ui !is EmulationUi.Running || !emulationRunning()) return
+        thermalWarned = true
+        toast = getString(R.string.thermal_hot)
+    }
+
+    /** A lentidão do vigia é do calor: avisa uma vez (sem repetir o que o aviso de calor severo já disse). */
+    private fun warnThermalSlowdown() {
+        if (thermalWarned || thermalSlowdownWarned) return
+        thermalSlowdownWarned = true
+        toast = getString(R.string.thermal_slowdown)
+    }
+
+    // endregion
 
     // region Quedas no meio do jogo
 
@@ -663,7 +844,8 @@ class GameActivity : ComponentActivity() {
     /** Núcleos que entram no teste: os estáveis que conseguem abrir este arquivo. */
     private suspend fun benchmarkCandidates(): List<CoreInfo> {
         val realPath = !game.isContentUri || withContext(Dispatchers.IO) { StorageAccess.realFile(this@GameActivity, Uri.parse(game.uri)) } != null
-        return system.cores.filter { !it.experimental && (realPath || !it.needsRealPath) }
+        // Sem a BIOS que o núcleo exige (SwanStation sem BIOS de PS1) ele só falharia, depois de baixado: nem entra.
+        return withContext(Dispatchers.IO) { system.cores.filter { !it.experimental && (realPath || !it.needsRealPath) && app.bios.canRun(it, system) } }
     }
 
     /**
@@ -690,15 +872,24 @@ class GameActivity : ComponentActivity() {
         val crashed = (previous?.crashed.orEmpty() + listOfNotNull(previous?.running)).distinct()
         benchSkip = false
         val items = candidates.map { BenchItem(it.id, it.displayName) }
+        val ordered = candidates.map { it.id }
+        benchRuns.clear()
         var finished = false
         try {
-            for ((i, c) in candidates.withIndex()) {
-                if (benchSkip) break
-                if (results.any { it.coreId == c.id }) continue
+            while (!benchSkip) {
+                // Para no primeiro núcleo da ordem com folga: os de trás não mudam a escolha (ver CoreBenchmark.next) e
+                // ficam sem baixar nem rodar. Eles não entram em results: "não testado" não é "não rodou".
+                val id = CoreBenchmark.next(ordered, results) ?: break
+                val c = candidates.first { it.id == id }
                 writeBenchProgress(marker, BenchProgress(results, c.id, crashed))
-                val speed = measure(c, optionsFor(c), BenchKind.CORES, items, i, results)
+                val options = optionsFor(c)
+                val speed = measure(c, options, BenchKind.CORES, items, ordered.indexOf(id), results)
                 if (isFinishing) return null
-                if (!benchSkip) results += CoreSpeed(c.id, speed)
+                if (!benchSkip) {
+                    results += CoreSpeed(c.id, speed)
+                    // Guarda com que opções foi medido: o teste de qualidade que vem logo depois reaproveita a conta.
+                    benchRuns[c.id] = options to speed
+                }
             }
             finished = true
         } finally {
@@ -769,6 +960,12 @@ class GameActivity : ComponentActivity() {
                 if (benchSkip || isFinishing) return@search null
                 // Nível já medido numa tentativa anterior (que travou o app no seguinte): não repete.
                 results.firstOrNull { it.coreId == level.name }?.let { return@search it.speed }
+                // O teste de núcleos acabou de medir este mesmo núcleo com as mesmas opções (o chute da classe é o nível que ele
+                // usou): a velocidade vale, e medir de novo custaria o aquecimento e a medição de novo.
+                benchRuns[core.id]?.let { (ran, ranSpeed) -> CoreBenchmark.reusable(ran, ranSpeed, optionsFor(core, level)) }?.let { seeded ->
+                    if (!benchSkip && !isFinishing) results += CoreSpeed(level.name, seeded)
+                    return@search seeded
+                }
                 writeBenchProgress(marker, BenchProgress(results, level.name, crashed))
                 val measured = measure(core, optionsFor(core, level), kind, items, ladder.indexOf(level), results)
                 if (!benchSkip && !isFinishing) results += CoreSpeed(level.name, measured)
@@ -800,7 +997,22 @@ class GameActivity : ComponentActivity() {
     private suspend fun measure(core: CoreInfo, options: Map<String, String>, kind: BenchKind, items: List<BenchItem>, index: Int, results: List<CoreSpeed>): Float? {
         ui = EmulationUi.Benchmarking(null, kind, items, index, results.toList())
         val path = try {
-            app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: app.cores.install(core)
+            app.cores.corePath(core.id)?.takeUnless { app.cores.needsInstall(core) } ?: run {
+                // O download aparece na tela do teste, como na preparação do jogo: um núcleo grande leva um tempo.
+                ui = EmulationUi.Benchmarking(null, kind, items, index, results.toList(), BenchDownload(core.displayName, 0f))
+                val progressJob = lifecycleScope.launch {
+                    app.cores.states.collectLatest { map ->
+                        (map[core.id] as? CoreState.Downloading)?.let {
+                            ui = EmulationUi.Benchmarking(null, kind, items, index, results.toList(), BenchDownload(core.displayName, it.progress))
+                        }
+                    }
+                }
+                try {
+                    app.cores.install(core)
+                } finally {
+                    progressJob.cancel()
+                }
+            }
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -810,7 +1022,8 @@ class GameActivity : ComponentActivity() {
         if (setGameSource(data, core) != GameSource.Ok) return null
         val vulkan = vulkanAllowed(core)
         try {
-            configure(data, core, options, vulkan)
+            // Sem frameskip automático: ele faria o núcleo parecer mais rápido do que o jogo realmente roda.
+            configure(data, core, Tuning.withoutAutoFrameskip(core.id, options), vulkan)
         } catch (t: Throwable) {
             // Inclui o cancelamento (Activity fechando): os descritores do SAF já abertos não podem vazar.
             closeVirtualFiles(data)
@@ -863,18 +1076,21 @@ class GameActivity : ComponentActivity() {
             }
             if (outcome?.first != true) return null
             view.audioEnabled = false
+            // Sem fastForwardHints (o padrão de uma vista nova): o teste precisa de todos os quadros desenhados.
             view.frameSpeed = CoreBenchmark.FRAME_SPEED
             delay(BENCH_WARMUP_MS)
             // Mede só o tempo com o app na frente: se ele for para o fundo, a contagem espera.
             var frames = 0L
             var millis = 0L
-            while (millis < BENCH_MEASURE_MS && !benchSkip && !isFinishing) {
+            while (millis < CoreBenchmark.MEASURE_MAX_MS && !benchSkip && !isFinishing) {
                 val r0 = view.runCount()
                 val t0 = android.os.SystemClock.elapsedRealtime()
                 delay(BENCH_SAMPLE_MS)
                 if (activityResumed && benchOwner === owner) {
                     frames += view.runCount() - r0
                     millis += android.os.SystemClock.elapsedRealtime() - t0
+                    // Longe de todos os limites de decisão: o resto do tempo não mudaria o resultado.
+                    if (CoreBenchmark.isDecided(CoreBenchmark.speed(frames, millis, view.contentFps()), millis)) break
                 }
             }
             if (benchSkip) return null
@@ -933,6 +1149,9 @@ class GameActivity : ComponentActivity() {
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
             if (retroView === view) gameLoaded = true
+            // A cobertura segue até o salvamento automático ser aplicado (senão o jogador veria a tela de início e,
+            // de repente, o ponto onde parou); sem carregamento automático nenhum, sai agora.
+            if (!autoLoadsState()) loading = null
             if (vulkanAttempt) { vulkanAttempt = false; app.vulkanHealth.attemptSucceeded(core.id) }
             if (retroView === view) openSession()
             // Núcleo experimental: a versão nova, se houver, é baixada agora (sem atrapalhar o carregamento) e entra na
@@ -955,7 +1174,9 @@ class GameActivity : ComponentActivity() {
                     toast = getString(if (ok) R.string.share_state_opened else R.string.share_state_open_failed)
                 }
             } else if (settings.autoLoad && statesSupported()) {
-                val read = withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) } }
+                // Já lido durante o carregamento do jogo (ver startAutoRead); só os estados grandes demais são lidos aqui.
+                val pre = autoRead?.also { autoRead = null }?.await()
+                val read = pre ?: withContext(Dispatchers.IO) { runCatching { states.read(SaveStates.AUTO_SLOT) } }
                 // O arquivo existe mas não abriu (corrompido): guardado à parte, senão o próximo salvamento
                 // automático o apagaria sem ninguém saber.
                 if (read.isFailure) {
@@ -963,6 +1184,7 @@ class GameActivity : ComponentActivity() {
                     toast = getString(R.string.game_state_load_failed)
                 }
                 val saved = read.getOrNull()
+                if (saved != null) loading?.let { loading = it.copy(message = getString(R.string.game_restoring_progress)) }
                 saved?.let { data ->
                     // Roda na thread de emulação; a espera fica fora da principal (pausar no meio a travaria).
                     // Pausou no meio (menu, segundo plano) ou a thread não respondeu: não prova que o estado é
@@ -983,7 +1205,7 @@ class GameActivity : ComponentActivity() {
                         true -> {
                             // Se a emulação parou no meio (app para o fundo), a cópia de pausa ainda é a da tela
                             // de início: gravá-la no próximo salvamento automático apagaria o progresso restaurado.
-                            if (!emulationRunning()) frozenState = data
+                            if (!emulationRunning()) { frozenState = data; frozenAtFrames = -1L }
                             toast = getString(R.string.game_progress_restored)
                         }
                         // Estado de outro núcleo (ou de uma versão anterior dele): fica guardado à parte,
@@ -1002,13 +1224,19 @@ class GameActivity : ComponentActivity() {
                 }
             }
             autoSaveReady = true
+            loading = null
+            maybeWarnThermal()
             // Trapaças ligadas na última sessão voltam junto com o jogo (menos em rede: o convidado parte do
             // estado do anfitrião, e só um lado com trapaças desencontraria os dois jogos).
             if (retroView === view && cheats?.state?.enabled?.isNotEmpty() == true) {
                 if (cheatsBlocked()) cheats?.dirty = true else applyCheats(view)
             }
+        }.invokeOnCompletion {
+            // Rede de segurança: por qualquer caminho que a espera acabe, a cobertura não fica na frente do jogo.
+            loading = null
         }
         lifecycleScope.launch { watchForBlackScreen(view) }
+        lifecycleScope.launch { watchPerformance(view) }
         lifecycleScope.launch { saveSramPeriodically(view) }
         lifecycleScope.launch {
             val vibrator = rumbleVibrator
@@ -1027,6 +1255,44 @@ class GameActivity : ComponentActivity() {
     }
 
     /**
+     * Alimenta o contador de desempenho uma vez por segundo, só com a opção ligada (Ajustes, vale na hora) e o jogo andando.
+     * Menu, segundo plano e carregamento escondem o contador em vez de mostrar zeros.
+     */
+    private suspend fun watchPerformance(view: GLRetroView) {
+        app.settings.settings.map { it.showPerformance }.distinctUntilChanged().collectLatest { on ->
+            if (!on) { perfStats = null; return@collectLatest }
+            try {
+                var tracking = false
+                var ran = 0L
+                var shown = 0L
+                var t0 = 0L
+                while (retroView === view) {
+                    if (!gameLoaded || loading != null || !emulationRunning()) {
+                        tracking = false
+                        perfStats = null
+                    } else {
+                        val r = view.runCount()
+                        val v = view.videoFrameCount()
+                        val t = android.os.SystemClock.elapsedRealtime()
+                        val fps = view.contentFps()
+                        if (tracking && t > t0 && fps > 0) {
+                            val seconds = (t - t0) / 1000.0
+                            perfStats = PerfStats(
+                                Math.round((r - ran) / seconds / fps * 100).toInt().coerceAtLeast(0),
+                                Math.round((v - shown) / seconds).toInt().coerceAtLeast(0),
+                            )
+                        }
+                        ran = r; shown = v; t0 = t; tracking = true
+                    }
+                    delay(PERF_INTERVAL_MS)
+                }
+            } finally {
+                perfStats = null
+            }
+        }
+    }
+
+    /**
      * Núcleo carregado mas imagem toda preta (jogo incompatível com o núcleo, BIOS faltando…): sem aviso,
      * parece que o app travou. Aberturas escuras são comuns, então só avisa se continuar preto em duas
      * checagens seguidas.
@@ -1037,8 +1303,9 @@ class GameActivity : ComponentActivity() {
         repeat(BLACK_SCREEN_CHECKS) {
             delay(BLACK_SCREEN_INTERVAL_MS)
             // Pausado ou em segundo plano a captura não diz nada sobre o jogo.
-            if (menuOpen || !activityResumed) return@repeat
-            val frame = suspendCancellableCoroutine { cont -> captureFrame(view) { thumb, _ -> if (cont.isActive) cont.resume(thumb) } }
+            if (menuOpen || menuOpening || !activityResumed) return@repeat
+            // Uma cópia minúscula basta (a checagem olha uma grade de 16 x 16 pontos): o PixelCopy já entrega reduzida.
+            val frame = suspendCancellableCoroutine { cont -> captureFrame(view, BLACK_CHECK_WIDTH) { bmp -> if (cont.isActive) cont.resume(bmp) } }
             if (frame == null) return@repeat
             if (!isBlack(frame)) return
             if (++black >= 2) {
@@ -1088,7 +1355,18 @@ class GameActivity : ComponentActivity() {
         super.onPause()
     }
 
+    /**
+     * O tempo jogado só vai para o banco aqui, ao sair do jogo ([MenuActions.exit]) e no [onDestroy]: cada pausa do
+     * emulador (abrir o menu, tradução) gravava no Room, e isso refazia as listas da biblioteca no meio do jogo.
+     * O onStop é a garantia contra o processo morto em segundo plano: depois dele o sistema pode matá-lo sem aviso.
+     */
+    override fun onStop() {
+        flushPlayTime()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        flushPlayTime()
         // Saiu (ou a Activity foi recriada para outro jogo) antes do primeiro quadro: não é prova de que o Vulkan
         // falha. Um driver que derruba o app não chega aqui, e é isso que a tentativa conta.
         if (vulkanAttempt) { vulkanAttempt = false; app.vulkanHealth.attemptAborted(core.id) }
@@ -1098,6 +1376,7 @@ class GameActivity : ComponentActivity() {
         translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
+        unwatchThermal()
         // Descarrega o núcleo (o GLRetroView observa este ciclo de vida) e só então dá a sessão por encerrada.
         emulationOwner.registry.currentState = Lifecycle.State.DESTROYED
         closeSession()
@@ -1143,21 +1422,36 @@ class GameActivity : ComponentActivity() {
         val target = if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED
         if (running && sessionStart == 0L) sessionStart = System.currentTimeMillis()
         // O jogo volta a andar: o estado congelado deixa de ser o atual.
-        if (running) frozenState = null
+        if (running) { frozenState = null; frozenAtFrames = -1L }
         if (!running) {
-            flushPlayTime()
+            accruePlayTime()
             rumbleVibrator?.cancel()
         }
+        // O som mudo da captura do estado volta com o jogo (menu fechado, app de volta).
+        if (running && !menuOpening) restoreAudio()
         if (!running && emulationOwner.registry.currentState == Lifecycle.State.RESUMED) emulationPauses++
         emulationOwner.registry.currentState = target
         if (ui is EmulationUi.Running) app.remote.setPaused(!running)
+        if (running) maybeWarnThermal()
     }
 
-    private fun flushPlayTime() {
-        if (sessionStart == 0L || !::game.isInitialized) return
-        val seconds = (System.currentTimeMillis() - sessionStart) / 1000
+    /** Passa o tempo do trecho que acabou para o acumulado em memória (nada de banco aqui: ver [onStop]). */
+    private fun accruePlayTime() {
+        if (sessionStart == 0L) return
+        playedMs += System.currentTimeMillis() - sessionStart
         sessionStart = 0L
-        app.scope.launch { app.library.recordSession(game.id, seconds) }
+        playedAny = true
+    }
+
+    /** Grava no banco o que foi jogado desde a última vez; o resto de menos de 1 s fica para a próxima. */
+    private fun flushPlayTime() {
+        accruePlayTime()
+        if (!playedAny || !::game.isInitialized) return
+        val seconds = playedMs / 1000
+        playedMs -= seconds * 1000
+        playedAny = false
+        val id = game.id
+        app.scope.launch { app.library.recordSession(id, seconds) }
     }
 
     /** Temporário + renomear: falta de espaço ou o processo morto no meio não zeram o save do cartucho. */
@@ -1189,10 +1483,18 @@ class GameActivity : ComponentActivity() {
     /** Falso para núcleos cujo estado sai corrompido ([CoreInfo.saveStates]): nem se lê nem se grava estado. */
     private fun statesSupported() = ::core.isInitialized && core.saveStates
 
+    /** O salvamento automático entra no primeiro quadro: nem estado recebido, nem partida de convidado ([guestSession]). */
+    private fun autoLoadsState() = !guestSession && settings.autoLoad && statesSupported()
+
     private fun emulationRunning() = emulationOwner.registry.currentState == Lifecycle.State.RESUMED
 
-    /** Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. */
-    private fun persist(auto: Boolean) {
+    /**
+     * Grava a SRAM (e o estado automático) de forma síncrona antes de pausar. Com [async] o estado continua sendo
+     * capturado aqui, na thread de emulação, mas compactar e gravar saem para outra thread ([SaveStates.writeAsync]):
+     * só a saída do jogo usa, onde a gravação não segura a tela. No onPause fica síncrono de propósito: o processo pode
+     * ser morto logo depois de a Activity sair da frente, e uma gravação ainda na fila se perderia com ele.
+     */
+    private fun persist(auto: Boolean, async: Boolean = false) {
         val view = retroView ?: return
         // Partida de outra pessoa: gravar aqui trocaria o progresso de quem joga pelo dela.
         if (guestSession) return
@@ -1206,12 +1508,54 @@ class GameActivity : ComponentActivity() {
             writeSram(view.serializeSRAM(false))
             // O estado inteiro só com o jogo de pé: depois de um erro o núcleo pode estar num estado inválido.
             if (auto && autoSaveReady && ui is EmulationUi.Running && statesSupported()) {
+                // Nenhum quadro rodou desde a última gravação deste estado (menu aberto e fechado, ou app indo e
+                // voltando do fundo): o arquivo já tem exatamente isto, e reescrevê-lo é só trabalho e desgaste.
+                val frames = if (running) view.runCount() else frozenAtFrames
+                if (frames >= 0 && frames == lastAutoFrames) return@runCatching
+                val thumbnail = menuSnapshot
+                // Sem a captura do menu (Home com o jogo rodando, troca de jogo), a miniatura sumia e o salvamento
+                // automático ficava sem imagem, inclusive no fundo do "Carregando". A cópia é pedida agora, antes de o
+                // estado sair, e chega depois da gravação: [attachThumbnail] só a grava se o estado ainda for este.
+                var written = -1L
+                if (thumbnail == null && !async) captureFrame(view, THUMB_WIDTH) { bmp ->
+                    val generation = written
+                    if (bmp != null && generation >= 0) {
+                        val target = states
+                        app.scope.launch(Dispatchers.IO) { runCatching { target.attachThumbnail(SaveStates.AUTO_SLOT, bmp, generation) } }
+                    }
+                }
                 // Rodando, o estado sai da thread de emulação (e fica guardado para depois da pausa);
                 // parado, vale o que foi capturado quando a emulação parou.
-                if (running) frozenState = view.serializeState().takeIf { it.isNotEmpty() }
-                frozenState?.let { states.write(SaveStates.AUTO_SLOT, it, menuSnapshot) }
+                if (running) {
+                    frozenAtFrames = frames
+                    frozenState = view.serializeState().takeIf { it.isNotEmpty() }
+                }
+                val data = frozenState ?: return@runCatching
+                if (async) states.writeAsync(app.scope, SaveStates.AUTO_SLOT, data, thumbnail)
+                else {
+                    states.write(SaveStates.AUTO_SLOT, data, thumbnail)
+                    written = states.generation(SaveStates.AUTO_SLOT)
+                }
+                lastAutoFrames = frames
             }
         }
+    }
+
+    /** O estado do jogo mudou sem rodar quadro nenhum (carregar, reiniciar…): o próximo salvamento automático grava. */
+    private fun autoSaveStale() { lastAutoFrames = -1L }
+
+    /** Deixa o som mudo enquanto o estado sai da thread de emulação: ela para de gerar áudio e o som engasgaria. */
+    private fun muteForCapture(view: GLRetroView) {
+        if (audioMuted) return
+        audioMuted = true
+        view.audioEnabled = false
+    }
+
+    private fun restoreAudio() {
+        if (!audioMuted) return
+        audioMuted = false
+        // Não simplesmente "ligado": transmitindo para a TV com o celular mudo (RemotePlay), o som fica lá.
+        retroView?.audioEnabled = app.remote.hostAudioEnabled()
     }
 
     // endregion
@@ -1221,6 +1565,15 @@ class GameActivity : ComponentActivity() {
     private val menuActions = object : MenuActions {
         override fun open() = openMenu()
         override fun close() {
+            // Ainda capturando o estado: o jogo nunca chegou a pausar. O estado que vier é descartado quando chegar
+            // (a captura não se cancela no meio: está na fila da thread de emulação) e o som volta junto.
+            if (menuPending) {
+                menuCancelled = true
+                menuPending = false
+                // Voltar depois de "Sair" (ainda esperando o estado) desiste da saída também.
+                exitAfterCapture = false
+                return
+            }
             closeShare()
             menuOpen = false
             padEditing = false
@@ -1241,6 +1594,8 @@ class GameActivity : ComponentActivity() {
             if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             // Antes do primeiro quadro o jogo ainda nem carregou: o estado sairia vazio ou inútil.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            // O menu já está na tela, mas o estado ainda não saiu da thread de emulação (o botão fica desligado).
+            if (menuPending) return
             // Com o menu aberto a emulação está parada: o estado é o capturado ao abrir o menu.
             val data = frozenState
             // Núcleo que não gera estado: gravar o vazio apagaria um save bom do slot.
@@ -1295,7 +1650,7 @@ class GameActivity : ComponentActivity() {
             // Em rede os dois lados andam no mesmo ritmo: acelerar só aqui travaria o outro.
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             fastForward = !fastForward
-            retroView?.frameSpeed = if (fastForward) settings.fastForwardSpeed else 1
+            applyFastForward(retroView)
         }
 
         override fun setShader(option: ShaderOption) {
@@ -1322,6 +1677,7 @@ class GameActivity : ComponentActivity() {
             // Trocar o disco só de um lado desencontraria os dois jogos.
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
             retroView?.changeDisk(index, false)
+            autoSaveStale()
             toast = getString(R.string.game_disk_inserted, index + 1)
         }
 
@@ -1332,6 +1688,7 @@ class GameActivity : ComponentActivity() {
             close()
             lifecycleScope.launch {
                 if (!awaitEmulationFrame(view)) return@launch
+                autoSaveStale()
                 withContext(Dispatchers.Default) { runCatching { view.reset() } }
             }
         }
@@ -1394,6 +1751,7 @@ class GameActivity : ComponentActivity() {
 
         override fun hostNetplay() {
             if (!::game.isInitialized || !::core.isInitialized || !autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            if (menuPending) return
             // A partida começa mandando o estado do anfitrião ao convidado.
             if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             val view = retroView ?: return
@@ -1436,13 +1794,31 @@ class GameActivity : ComponentActivity() {
             }
         }
 
-        override fun startPadEditor() { padEditing = true }
+        override fun startPadEditor() {
+            val view = retroView
+            if (view == null) { padEditing = true; return }
+            // O fundo do editor é a tela do jogo em tamanho real, copiada só agora que alguém vai usá-la (antes era
+            // copiada a cada abertura do menu, 10 MB que quase nunca serviam). O jogo já está pausado: se a cópia não
+            // vier, fica a miniatura do menu, esticada, no lugar.
+            captureFrame(view, null) { full ->
+                menuFrame = full ?: menuSnapshot
+                padEditing = true
+            }
+        }
 
         override fun stopPadEditor() { padEditing = false }
 
         override fun exit() {
+            if (menuCaptureInFlight() && retroView != null) {
+                exitAfterCapture = true
+                menuCancelled = false
+                menuPending = true
+                return
+            }
             netplay.end()
-            persist(auto = settings.autoSave)
+            // O estado é capturado aqui, como sempre (a thread de emulação ainda existe); só compactar e gravar saem da
+            // thread principal. Quem abrir o mesmo jogo logo depois espera essa gravação (SaveStates.read).
+            persist(auto = settings.autoSave, async = true)
             // O LibretroDroid é global e o onDestroy desta Activity roda só depois que a próxima tela
             // aparece: abrir outro jogo logo em seguida teria o emulador novo destruído por este.
             // Encerrar aqui, de forma síncrona, fecha essa janela.
@@ -1452,6 +1828,17 @@ class GameActivity : ComponentActivity() {
             closeSession()
             finish()
         }
+    }
+
+    /**
+     * A velocidade do jogo e o aviso de avanço rápido ao núcleo andam juntos: com o aviso, os núcleos de software
+     * deixam de desenhar os quadros intermediários. Só o avanço do jogador liga o aviso; o teste de desempenho
+     * ([measure]) usa o [GLRetroView.frameSpeed] sem ele, porque precisa de todos os quadros desenhados.
+     */
+    private fun applyFastForward(view: GLRetroView?) {
+        view ?: return
+        view.fastForwardHints = fastForward
+        view.frameSpeed = if (fastForward) settings.fastForwardSpeed else 1
     }
 
     /** Partida em rede montada ou em andamento (anfitrião esperando, conectando ou jogando). */
@@ -1464,6 +1851,7 @@ class GameActivity : ComponentActivity() {
     private fun applyCheats(view: GLRetroView) {
         val session = cheats ?: return
         session.dirty = false
+        autoSaveStale()
         val codes = session.state.enabled.map { it.code }
         lifecycleScope.launch(Dispatchers.Default) {
             view.resetCheat()
@@ -1480,7 +1868,7 @@ class GameActivity : ComponentActivity() {
     /** Fecha o menu (e a tradução) e espera a emulação rodar: o núcleo só é tocado na thread de emulação ativa. */
     private suspend fun resumeForNetplay(): Boolean {
         if (translation != null) menuActions.closeTranslation()
-        if (menuOpen) menuActions.close()
+        if (menuOpen || menuPending) menuActions.close()
         repeat(100) {
             if (emulationRunning()) return true
             delay(50)
@@ -1495,25 +1883,40 @@ class GameActivity : ComponentActivity() {
     private fun startTranslation() {
         val view = retroView ?: return
         if (ui !is EmulationUi.Running || menuOpen || menuOpening || translation != null) return
-        if (gameLoaded && !autoSaveReady) return
+        // Carregando o jogo (ou o salvamento automático): não há tela para traduzir nem estado para guardar.
+        if (!gameLoaded || !autoSaveReady) return
         releaseAllInputs(view)
+        muteForCapture(view)
         menuOpening = true
-        // O quadro do núcleo, sem shader nem escala, chega no próximo quadro desenhado (antes da pausa).
-        LibretroDroid.requestFrameSnapshot()
-        captureFrame(view) { _, full ->
-            lifecycleScope.launch {
+        lifecycleScope.launch {
+            // Vindo do menu, a emulação acabou de voltar e a superfície ainda não tem quadro novo: o PixelCopy falhava
+            // com ERROR_SOURCE_NO_DATA. Espera a emulação desenhar e, se a cópia falhar mesmo assim, tenta mais uma vez.
+            var shot: Bitmap? = null
+            for (attempt in 0 until TRANSLATE_CAPTURE_ATTEMPTS) {
+                if (!awaitEmulationFrame(view, frames = 2)) break
+                // O quadro do núcleo, sem shader nem escala, chega no próximo quadro desenhado (antes da pausa).
+                LibretroDroid.requestFrameSnapshot()
+                // A tradução usa a tela em tamanho real (o OCR precisa dos pixels): aqui ela é necessária.
+                shot = suspendCancellableCoroutine { cont -> captureFrame(view, null) { bmp -> if (cont.isActive) cont.resume(bmp) } }
+                if (shot != null) break
+            }
+            val full = shot
+            run {
                 // Como no menu: com o app em segundo plano a thread de emulação parou, e serializar nela sem
                 // contexto GL derruba os núcleos de GPU.
                 if (!emulationRunning()) { menuOpening = false; return@launch }
                 if (full == null) {
                     menuOpening = false
+                    restoreAudio()
                     if (retroView === view) toast = getString(R.string.translate_capture_failed)
                     return@launch
                 }
+                val frames = view.runCount()
                 val state = if (!statesSupported()) null else withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
                 menuOpening = false
                 if (retroView !== view) return@launch
                 frozenState = state?.takeIf { it.isNotEmpty() }
+                frozenAtFrames = frames
                 menuSnapshot = null
                 translation = TranslationUi.Working(full, LiveTranslator.Stage.READING)
                 updateEmulationState()
@@ -1563,45 +1966,118 @@ class GameActivity : ComponentActivity() {
         OcrFrame(Bitmap.createBitmap(d, 6, w, w, h, Bitmap.Config.ARGB_8888), area)
     }
 
-    private fun toggleMenu() {
+    /** [fromBack]: o Voltar (e não o botão Mode do controle) também cancela um jogo que ainda está carregando. */
+    private fun toggleMenu(fromBack: Boolean = false) {
         if (translation != null) { menuActions.closeTranslation(); return }
         // No editor de layout, voltar retorna ao menu (o que foi mexido e não salvo é descartado).
         if (padEditing) { padEditing = false; return }
-        if (menuOpen) menuActions.close() else openMenu()
+        // Menu já na tela, só esperando o estado: voltar cancela a abertura em vez de ser ignorado.
+        if (menuOpen || menuPending) menuActions.close() else openMenu(fromBack)
     }
 
-    private fun openMenu() {
+    private fun openMenu(fromBack: Boolean = false) {
         // Falha e tela de erro primeiro: um menuOpening preso não pode impedir o Voltar de sair.
         val view = retroView
         // Tela de erro: o núcleo já foi criado, então sair passa por exit() (que o destrói na hora);
         // um finish() simples o deixaria para o onDestroy, que poderia destruir o núcleo do próximo jogo.
         if (view == null) { finish(); return }
         if (ui !is EmulationUi.Running) { menuActions.exit(); return }
+        // Menu cancelado com o estado ainda saindo: a thread de emulação está presa serializando (o jogo não andou),
+        // então o estado que vier é o da tela agora. O menu volta a esperar por ele em vez de ignorar o toque.
+        if (menuOpening && menuCancelled) {
+            muteForCapture(view)
+            menuCancelled = false
+            menuPending = true
+            return
+        }
         if (menuOpen || menuOpening) return
+        // O núcleo ainda está no retro_load_game (ou nem começou): a thread dele não atende o pedido de estado
+        // (esperaria até 20 s) e não há o que guardar. O Voltar sai assim que o carregamento deixar.
+        if (!gameLoaded) {
+            if (fromBack) cancelLoading(view)
+            return
+        }
         // Salvamento automático sendo carregado: pausar agora carregaria o estado sem contexto GL
         // e deixaria o menu com a cópia da tela de início. Leva só um instante.
-        if (gameLoaded && !autoSaveReady) return
+        if (!autoSaveReady) return
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)
+        muteForCapture(view)
         menuOpening = true
-        // Captura a tela antes de pausar: vira a miniatura dos save states.
-        captureFrame(view) { bmp, full ->
-            lifecycleScope.launch {
-                // O app foi para segundo plano durante a captura: a thread de emulação já parou, e serializar
-                // nela sem contexto GL derruba os núcleos de GPU. O onPause já guardou o que precisava.
-                if (!emulationRunning()) { menuOpening = false; return@launch }
-                // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
-                // é ele que o menu grava nos slots e no salvamento automático.
-                val state = if (!statesSupported()) null else withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
-                menuOpening = false
-                if (retroView !== view) return@launch
-                frozenState = state?.takeIf { it.isNotEmpty() }
-                menuSnapshot = bmp
-                menuFrame = full
-                menuOpen = true
-                updateEmulationState()
-            }
+        // O menu aparece já, com o que depende do estado desligado: o toque tem resposta na hora. A emulação só
+        // pausa (e [menuOpen] só vale) quando o estado tiver saído da thread dela, em [captureForMenu].
+        menuCancelled = false
+        menuPending = true
+        // Miniatura dos save states, copiada antes de pausar já em 320 px.
+        captureFrame(view, THUMB_WIDTH) { thumb -> lifecycleScope.launch { captureForMenu(view, thumb) } }
+    }
+
+    private suspend fun captureForMenu(view: GLRetroView, thumb: Bitmap?) {
+        // O app foi para segundo plano durante a captura: a thread de emulação já parou, e serializar
+        // nela sem contexto GL derruba os núcleos de GPU. O onPause já guardou o que precisava.
+        if (!emulationRunning() || retroView !== view) {
+            val exit = exitAfterCapture
+            exitAfterCapture = false
+            endMenuCapture()
+            // Em segundo plano o onPause já guardou o estado: a saída pedida usa esse.
+            if (exit && retroView === view) menuActions.exit()
+            return
+        }
+        // O estado também sai antes de pausar, na thread de emulação (a espera fica fora da principal):
+        // é ele que o menu grava nos slots e no salvamento automático.
+        val frames = view.runCount()
+        val pauses = emulationPauses
+        val state = if (!statesSupported()) null else withBusyHint { withContext(Dispatchers.Default) { runCatching { view.serializeState() }.getOrNull() } }
+        val cancelled = menuCancelled
+        val exit = exitAfterCapture
+        exitAfterCapture = false
+        endMenuCapture()
+        if (retroView !== view) return
+        // O app foi para o fundo no meio da captura: o onPause já guardou um estado mais novo que este, e sobrescrevê-lo
+        // faria o salvamento seguinte gravar o mais velho. O menu não abre; o jogo volta como estava.
+        if (pauses != emulationPauses) {
+            if (exit) { menuActions.exit(); return }
+            if (emulationRunning()) restoreAudio()
+            return
+        }
+        if (cancelled) {
+            // O jogador continuou antes de o estado chegar: o jogo seguiu rodando e o estado já é velho.
+            restoreAudio()
+            return
+        }
+        frozenState = state?.takeIf { it.isNotEmpty() }
+        frozenAtFrames = frames
+        menuSnapshot = thumb
+        menuOpen = true
+        updateEmulationState()
+        // Com a emulação já parada, o exit() grava o [frozenState] que acabou de chegar, sem serializar de novo.
+        if (exit) menuActions.exit()
+    }
+
+    /** O estado do menu ainda está saindo da thread de emulação (menu na tela esperando, ou cancelado no meio). */
+    private fun menuCaptureInFlight() = menuOpening && (menuPending || menuCancelled)
+
+    /** Fim da captura do estado para o menu, por qualquer caminho: libera a abertura de outro menu. */
+    private fun endMenuCapture() {
+        menuOpening = false
+        menuPending = false
+        menuCancelled = false
+    }
+
+    /**
+     * Voltar com o jogo ainda carregando: mostra "Cancelando…" e sai assim que o núcleo termina o retro_load_game
+     * (que roda na thread GL e não se interrompe; destruir antes travaria a thread principal esperando por ele).
+     * A saída é o [MenuActions.exit] de sempre, que destrói o núcleo na hora. A espera fica fora da principal.
+     */
+    private fun cancelLoading(view: GLRetroView) {
+        if (cancellingLoad) return
+        cancellingLoad = true
+        loading = LoadingUi(getString(R.string.game_cancelling), loading?.backdrop)
+        lifecycleScope.launch {
+            // Antes da superfície existir o carregamento nem começou (isLoading falso): sair já impede que ele comece.
+            withContext(Dispatchers.Default) { while (view.isLoading && retroView === view) delay(50) }
+            if (retroView === view) menuActions.exit()
         }
     }
 
@@ -1619,19 +2095,20 @@ class GameActivity : ComponentActivity() {
     /**
      * Espera a emulação de [view] voltar a rodar (o menu acabou de fechar) e desenhar um quadro: só então a
      * thread de emulação tem o contexto GL para carregar um estado ou reiniciar. Falso se ela não voltou a
-     * tempo (app para o fundo, menu reaberto) ou a view mudou.
+     * tempo (app para o fundo, menu reaberto) ou a view mudou. [frames] > 1 espera mais quadros (a captura da tela
+     * precisa de um quadro já apresentado, não só emulado).
      */
-    private suspend fun awaitEmulationFrame(view: GLRetroView): Boolean {
+    private suspend fun awaitEmulationFrame(view: GLRetroView, frames: Int = 1): Boolean {
         var waited = 0L
         while (retroView === view && !emulationRunning()) {
             if (waited >= RESUME_WAIT_MS) return false
             delay(50); waited += 50
         }
         if (retroView !== view) return false
-        val frames = view.runCount()
+        val start = view.runCount()
         waited = 0L
-        while (retroView === view && emulationRunning() && view.runCount() == frames && waited < RESUME_WAIT_MS) { delay(16); waited += 16 }
-        return retroView === view && emulationRunning() && view.runCount() != frames
+        while (retroView === view && emulationRunning() && view.runCount() - start < frames && waited < RESUME_WAIT_MS) { delay(16); waited += 16 }
+        return retroView === view && emulationRunning() && view.runCount() - start >= frames
     }
 
     /**
@@ -1641,6 +2118,7 @@ class GameActivity : ComponentActivity() {
      */
     private suspend fun applyState(view: GLRetroView, data: ByteArray): Boolean? {
         val pauses = emulationPauses
+        autoSaveStale()
         val result = withContext(Dispatchers.Default) { runCatching { view.unserializeState(data) } }
         if (result.getOrNull() == true) return true
         val timedOut = (result.exceptionOrNull() as? com.swordfish.libretrodroid.RetroException)?.errorCode == GLRetroView.ERROR_GENERIC
@@ -1648,17 +2126,25 @@ class GameActivity : ComponentActivity() {
         return false
     }
 
-    /** [done] recebe a miniatura dos save states e a captura em tamanho real (fundo do editor de layout). */
-    private fun captureFrame(view: GLRetroView, done: (Bitmap?, Bitmap?) -> Unit) {
-        if (view.width == 0 || view.height == 0) return done(null, null)
-        val bmp = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+    /**
+     * Copia a tela do jogo para um bitmap de [width] px de largura (a altura segue a proporção da vista); sem [width],
+     * em tamanho real. O PixelCopy já entrega a cópia reduzida, então a miniatura de 320 px não passa mais por uma
+     * captura da tela inteira (uns 10 MB) escalada na thread principal. [done] recebe nulo se a cópia falhou.
+     */
+    private fun captureFrame(view: GLRetroView, width: Int?, done: (Bitmap?) -> Unit) {
+        val vw = view.width
+        val vh = view.height
+        if (vw == 0 || vh == 0) return done(null)
+        val w = if (width == null) vw else minOf(width, vw)
+        val h = (w.toLong() * vh / vw).toInt().coerceAtLeast(1)
+        val bmp = try {
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        } catch (e: OutOfMemoryError) {
+            return done(null)
+        }
         runCatching {
-            PixelCopy.request(view, bmp, { result ->
-                if (result == PixelCopy.SUCCESS) {
-                    done(Bitmap.createScaledBitmap(bmp, 320, (320f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true), bmp)
-                } else done(null, null)
-            }, Handler(Looper.getMainLooper()))
-        }.onFailure { done(null, null) }
+            PixelCopy.request(view, bmp, { result -> done(bmp.takeIf { result == PixelCopy.SUCCESS }) }, Handler(Looper.getMainLooper()))
+        }.onFailure { done(null) }
     }
 
     // endregion
@@ -1684,10 +2170,11 @@ class GameActivity : ComponentActivity() {
         val view = retroView
         val isMenuKey = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE
         if (isMenuKey) {
-            if (event.action == KeyEvent.ACTION_UP) toggleMenu()
+            if (event.action == KeyEvent.ACTION_UP) toggleMenu(fromBack = event.keyCode == KeyEvent.KEYCODE_BACK)
             return true
         }
-        if (!menuOpen && view != null && isGamepadEvent(event)) {
+        // Com o menu na tela (ou abrindo, esperando o estado) os controles não chegam ao jogo.
+        if (!menuOpen && !menuPending && view != null && isGamepadEvent(event)) {
             // Setas soltas não contam: gestos do leitor de digital chegam como D-pad em alguns aparelhos.
             val fromPad = KeyEvent.isGamepadButton(event.keyCode) || event.isFromSource(InputDevice.SOURCE_GAMEPAD)
             if (fromPad && isPhysicalController(event.device)) controllerActive = true
@@ -1698,7 +2185,7 @@ class GameActivity : ComponentActivity() {
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         val view = retroView
-        if (!menuOpen && view != null && (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
+        if (!menuOpen && !menuPending && view != null && (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
             if (isPhysicalController(event.device)) controllerActive = true
             return view.onGenericMotionEvent(event)
         }
@@ -1757,6 +2244,12 @@ class GameActivity : ComponentActivity() {
         private const val EXTRA_GAME_ID = "game_id"
         private const val BLACK_SCREEN_CHECKS = 4
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
+        /** Largura da cópia usada para ver se a tela está toda preta. */
+        private const val BLACK_CHECK_WIDTH = 64
+        /** Largura da miniatura dos save states. */
+        private const val THUMB_WIDTH = 320
+        /** Cópias da tela tentadas ao abrir a tradução, cada uma depois de a emulação desenhar quadros novos. */
+        private const val TRANSLATE_CAPTURE_ATTEMPTS = 2
         private const val SRAM_SAVE_INTERVAL_MS = 30_000L
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
@@ -1765,15 +2258,19 @@ class GameActivity : ComponentActivity() {
         /** Uma sessão com Vulkan que passa disto e termina sem queda desconta uma queda anterior (VulkanHealth). */
         private const val CLEAN_SESSION_MS = 5 * 60_000L
         private const val BENCH_WARMUP_MS = 1_500L
-        private const val BENCH_MEASURE_MS = 4_000L
         private const val BENCH_SAMPLE_MS = 250L
         private const val BENCH_TEARDOWN_MS = 350L
         private const val WATCH_INTERVAL_MS = 1_000L
+        /** A janela do vigia de velocidade (10 s) mais uma folga: o calor que a explica pode ter passado um instante antes. */
+        private const val THERMAL_LOOKBACK_MS = 15_000L
+        private const val PERF_INTERVAL_MS = 1_000L
         private const val BUSY_HINT_DELAY_MS = 300L
         /** Quanto esperar a emulação voltar depois de fechar o menu, antes de desistir de carregar ou reiniciar. */
         private const val RESUME_WAIT_MS = 5_000L
         /** Tentativas do carregamento automático quando a emulação para no meio dele. */
         private const val AUTOLOAD_ATTEMPTS = 3
+        /** Estado (já descompactado) acima disto não é lido durante o carregamento do jogo, só no primeiro quadro. */
+        private const val AUTOLOAD_PREREAD_MAX_BYTES = 64L * 1024 * 1024
         /** Portas do LibretroDroid (Input::getInputState ignora port >= 4). */
         private const val MAX_PORTS = 4
         private val RETROPAD_KEYS = listOf(

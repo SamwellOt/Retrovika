@@ -645,19 +645,20 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_pause(
     }
 }
 
-JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(
     JNIEnv* env,
     jclass obj,
     jobject glRetroView
 ) {
-    LibretroDroid::getInstance().step();
+    // Nanossegundos de trabalho do desenho (sem a espera de ritmo), para o ADPF do Kotlin; 0 em reapresentação.
+    jlong workNanos = (jlong) LibretroDroid::getInstance().step();
 
     // A ponte Vulkan > GL quebrou (GPU travada, envio falhou): sem isso o jogo seguia com a tela preta para
     // sempre. A exceção chega ao GLRetroView como ERROR_GL_NOT_COMPATIBLE e para a emulação.
     if (LibretroDroid::getInstance().isVideoBackendLost()) {
         LOGE("The Vulkan frame bridge was lost. Leaving.");
         JavaUtils::throwRetroException(env, ERROR_GL_NOT_COMPATIBLE);
-        return;
+        return 0;
     }
 
     if (LibretroDroid::getInstance().requiresVideoRefresh()) {
@@ -680,6 +681,8 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_step(
         });
         if (cls) env->DeleteLocalRef(cls);
     }
+
+    return workNanos;
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRumbleEnabled(
@@ -696,6 +699,22 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setFrameSp
     jint speed
 ) {
     LibretroDroid::getInstance().setFrameSpeed(speed);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setScreenRefreshRate(
+    JNIEnv* env,
+    jclass obj,
+    jfloat rate
+) {
+    LibretroDroid::getInstance().setScreenRefreshRate(rate);
+}
+
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setFastForwardHints(
+    JNIEnv* env,
+    jclass obj,
+    jboolean enabled
+) {
+    LibretroDroid::getInstance().setFastForwardHints(enabled);
 }
 
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setAudioEnabled(
@@ -781,6 +800,13 @@ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getRunCou
     jclass obj
 ) {
     return (jlong) LibretroDroid::getInstance().getRunCount();
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getVideoFrameCount(
+    JNIEnv* env,
+    jclass obj
+) {
+    return (jlong) LibretroDroid::getInstance().getVideoFrameCount();
 }
 
 JNIEXPORT jdouble JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getContentFps(

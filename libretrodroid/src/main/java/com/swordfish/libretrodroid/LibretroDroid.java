@@ -107,12 +107,16 @@ public class LibretroDroid {
     public static native void pause();
     public static native void destroy();
 
-    public static native void step(GLRetroView retroView);
+    /** Um desenho. Devolve os nanossegundos de trabalho (sem a espera de ritmo); 0 se só reapresentou o último quadro. */
+    public static native long step(GLRetroView retroView);
 
     public static native void reset();
 
     public static native void setRumbleEnabled(boolean enabled);
     public static native void setFrameSpeed(int speed);
+    public static native void setFastForwardHints(boolean enabled);
+    /** Taxa de atualização atual da tela, quando muda com o jogo aberto (60/90/120 Hz). Qualquer thread. */
+    public static native void setScreenRefreshRate(float rate);
     public static native void setAudioEnabled(boolean enabled);
     public static native void setShaderConfig(GLRetroShader shader);
     public static native void setViewport(float x, float y, float width, float height);
@@ -160,6 +164,7 @@ public class LibretroDroid {
     public static native long netplayStatus();
     public static native long netplayFrame();
     public static native long getRunCount();
+    public static native long getVideoFrameCount();
     public static native void requestFrameSnapshot();
     public static native int[] takeFrameSnapshot();
     public static native double getContentFps();
