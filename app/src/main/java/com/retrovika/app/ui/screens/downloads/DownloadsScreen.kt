@@ -44,6 +44,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -104,6 +105,8 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
     val settings by app.settings.cached.collectAsStateWithLifecycle()
     var showLinkDialog by rememberSaveable { mutableStateOf(false) }
     var confirmCancelAll by rememberSaveable { mutableStateOf(false) }
+    // Id do download a cancelar: com parte já baixada, cancelar perde o progresso e pede confirmação.
+    var confirmCancel by rememberSaveable { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("downloads", listState)
 
@@ -155,7 +158,9 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
             action = if (active.size > 1) R.string.downloads_cancel_all else null, onAction = { confirmCancelAll = true },
         ) { task ->
             DownloadRow(task, onClick = null) {
-                IconButton(onClick = { manager.cancel(task.id) }) { Icon(Icons.Rounded.Close, stringResource(R.string.common_cancel), tint = Palette.TextSecondary) }
+                IconButton(onClick = { if (task.bytesDone > 0) confirmCancel = task.id else manager.cancel(task.id) }) {
+                    Icon(Icons.Rounded.Close, stringResource(R.string.common_cancel), tint = Palette.TextSecondary)
+                }
             }
         }
 
@@ -178,12 +183,26 @@ fun DownloadsScreen(onOpenGame: (Long) -> Unit, onExplore: () -> Unit, onOpenBro
                     IconButton(
                         onClick = { GameActivity.launch(context, id) },
                         modifier = Modifier.clip(CircleShape).background(Palette.SunsetGradient),
-                    ) { Icon(Icons.Rounded.PlayArrow, stringResource(R.string.common_play), tint = Color(0xFF1C0010)) }
+                    ) { Icon(Icons.Rounded.PlayArrow, stringResource(R.string.common_play), tint = Palette.OnAccent) }
                 }
                 IconButton(onClick = { manager.remove(task.id) }) { Icon(Icons.Rounded.Close, stringResource(R.string.common_remove), tint = Palette.TextMuted) }
             }
         }
     }
+    }
+
+    confirmCancel?.let { id ->
+        val task = tasks.firstOrNull { it.id == id }?.takeIf { it.status in DownloadManager.ACTIVE }
+        // Terminou ou falhou com o diálogo aberto: não há mais o que cancelar.
+        LaunchedEffect(task == null) { if (task == null) confirmCancel = null }
+        if (task != null) ConfirmDialog(
+            title = stringResource(R.string.downloads_cancel_title, task.title),
+            message = stringResource(R.string.downloads_cancel_message),
+            confirmLabel = stringResource(R.string.downloads_cancel_one),
+            dismissLabel = stringResource(R.string.downloads_keep),
+            onConfirm = { manager.cancel(id) },
+            onDismiss = { confirmCancel = null },
+        )
     }
 
     if (confirmCancelAll) {

@@ -1,5 +1,7 @@
 package com.retrovika.app.ui.screens.explore
 
+import coil3.request.ImageRequest
+import coil3.compose.LocalPlatformContext
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -262,7 +264,12 @@ private fun Hero(title: String, source: SourceDetails, backloggd: BackloggdInfo?
         Box(Modifier.fillMaxWidth().height(300.dp).ambientGlow(primary = accent, secondary = Palette.Neon, height = 300.dp))
         when {
             backdrop != null -> AsyncImage(backdrop, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(280.dp).graphicsLayer { alpha = 0.85f })
-            cover != null -> AsyncImage(cover, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(280.dp).blur(36.dp).graphicsLayer { alpha = 0.6f })
+            cover != null -> {
+                // Decodificada pequena, como no "Continuar" do início: vai ser desfocada de qualquer jeito.
+                val platform = LocalPlatformContext.current
+                val small = remember(cover) { ImageRequest.Builder(platform).data(cover).size(96).build() }
+                AsyncImage(small, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(280.dp).blur(36.dp).graphicsLayer { alpha = 0.6f })
+            }
         }
         Box(
             Modifier.fillMaxWidth().height(282.dp)
@@ -413,7 +420,7 @@ private fun ScoreSkeleton(wide: Boolean) {
 @Composable
 private fun BrandDot(letter: String, color: Color, size: Dp = 22.dp) {
     Box(Modifier.size(size).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
-        Text(letter, fontSize = (size.value * 0.55f).sp, fontWeight = FontWeight.Bold, color = Color(0xFF1C0010))
+        Text(letter, fontSize = (size.value * 0.55f).sp, fontWeight = FontWeight.Bold, color = Palette.OnAccent)
     }
 }
 

@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import com.retrovika.app.ui.components.GameQuickMenu
 
 @Composable
 fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
@@ -76,6 +77,8 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
     val systems = remember(countMap, onlyWithGames) { Systems.all.filter { !onlyWithGames || (countMap[it.id] ?: 0) > 0 } }
     val gridState = rememberLazyGridState()
     ScrollToTopOnReselect("library", gridState)
+    var quick by remember { mutableStateOf<Game?>(null) }
+    quick?.let { GameQuickMenu(it, onDismiss = { quick = null }, onDetails = onOpenGame) }
     // Resultados de busca são capas: seguem o tamanho escolhido nos ajustes. Consoles mantêm a grade própria.
     val columns = if (query.isBlank()) 150.dp else settings.coverSize.minWidth.dp
 
@@ -123,7 +126,7 @@ fun LibraryScreen(onOpenSystem: (String) -> Unit, onOpenGame: (Long) -> Unit) {
             if (currentResults?.isEmpty() == true) item(span = { GridItemSpan(maxLineSpan) }) {
                 EmptyState(stringResource(R.string.library_no_results_title), stringResource(R.string.library_no_results_message, query), icon = Icons.Rounded.SearchOff)
             }
-            items(results.orEmpty(), key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
+            items(results.orEmpty(), key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }, onLongClick = { quick = game }) }
         } else {
             // "Com jogos" sem nenhum jogo na biblioteca: explica em vez de deixar a grade vazia.
             if (onlyWithGames && countsLoaded && systems.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {

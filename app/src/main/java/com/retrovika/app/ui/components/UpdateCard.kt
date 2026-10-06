@@ -30,8 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,7 +63,7 @@ fun UpdateCard(state: UpdateState, modifier: Modifier = Modifier, onDismiss: (()
     var expanded by remember(release.version) { mutableStateOf(false) }
     SurfaceCard(
         modifier.fillMaxWidth(),
-        brush = Brush.linearGradient(listOf(Color(0xFF3A1060), Palette.SurfaceHigh, Color(0xFF10263A))),
+        brush = Palette.HeroGradient,
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

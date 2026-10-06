@@ -13,6 +13,10 @@ interface DatDao {
     @Query("SELECT COUNT(*) FROM dat_entries WHERE systemId = :systemId AND (crc32 IS NOT NULL OR md5 IS NOT NULL)")
     suspend fun countHashed(systemId: String): Int
 
+    /** Entradas que só o MD5 identifica (sem CRC): só nesse caso vale ler o arquivo de novo para o MD5. */
+    @Query("SELECT COUNT(*) FROM dat_entries WHERE systemId = :systemId AND crc32 IS NULL AND md5 IS NOT NULL")
+    suspend fun countMd5Only(systemId: String): Int
+
     @Query("SELECT * FROM dat_entries WHERE systemId = :systemId AND crc32 IN (:crcs) LIMIT 1")
     suspend fun findByCrc(systemId: String, crcs: List<String>): DatEntry?
 

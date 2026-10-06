@@ -39,4 +39,7 @@
     <string name="downloads_cancel_all_title">Cancel all downloads?</string>
     <string name="downloads_cancel_all_message">The %1$d downloads in progress or waiting in the queue will stop.</string>
     <string name="downloads_keep">Keep downloading</string>
+    <string name="downloads_cancel_title">Cancel “%s”?</string>
+    <string name="downloads_cancel_message">What was downloaded so far is lost.</string>
+    <string name="downloads_cancel_one">Cancel download</string>
 </resources>

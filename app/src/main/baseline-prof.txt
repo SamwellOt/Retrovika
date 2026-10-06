@@ -1,0 +1,12 @@
+# Baseline Profile do próprio app (as bibliotecas, como o Compose, trazem os seus). Instalado pelo profileinstaller
+# também nas instalações por APK (GitHub, atualizador): o ART compila estas classes e métodos antes da primeira
+# abertura, em vez de interpretá-los até o JIT esquentar. Sem ele, só o código das bibliotecas vinha pré-compilado,
+# e a abertura do app, a primeira rolagem das grades e a abertura de um jogo rodavam o código do app interpretado.
+#
+# Regras com curinga: o AGP as expande para cada classe e método antes do R8 (expandReleaseArtProfileWildcards), e o
+# R8 as reescreve com os nomes encurtados. Tudo do app e da ponte com o LibretroDroid: o caminho de abertura, as telas
+# e a abertura de um jogo.
+Lcom/retrovika/app/**;
+HSPLcom/retrovika/app/**;->**(**)**
+Lcom/swordfish/libretrodroid/**;
+HSPLcom/swordfish/libretrodroid/**;->**(**)**

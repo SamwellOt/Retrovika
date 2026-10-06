@@ -13,9 +13,11 @@ import androidx.compose.foundation.selection.selectable
 import android.content.Context
 import android.provider.Settings
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.core.spring
@@ -27,6 +29,17 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.geometry.Size
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -187,10 +200,13 @@ fun Wordmark(modifier: Modifier = Modifier, fontSize: TextUnit = 14.sp) {
     )
 }
 
-/** Rótulo curto em fonte pixelada ("CONTINUAR", "NOVO"...). */
+/**
+ * Rótulo curto em fonte pixelada ("CONTINUAR", o console no menu de pausa...). Em 10sp: carrega informação
+ * de verdade (console, núcleo), e a 8sp a fonte pixelada ficava ilegível em telas de baixa densidade.
+ */
 @Composable
 fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = Palette.Neon) {
-    Text(text.uppercase(), modifier = modifier, color = color, style = TextStyle(fontFamily = PixelFamily, fontSize = 8.sp, letterSpacing = 1.sp))
+    Text(text.uppercase(), modifier = modifier, color = color, style = TextStyle(fontFamily = PixelFamily, fontSize = 10.sp, letterSpacing = 0.5.sp, lineHeight = 14.sp))
 }
 
 // ---------------------------------------------------------------- fundo e estrutura
@@ -271,6 +287,7 @@ fun SurfaceCard(
     Column(
         modifier
             .pressScale(source, enabled = onClick != null)
+            .then(if (onClick != null) Modifier.focusRing(source, shape) else Modifier)
             .clip(shape)
             .then(if (brush != null) Modifier.background(brush) else Modifier.background(Palette.SurfaceHigh))
             .border(1.dp, Palette.Outline.copy(alpha = 0.7f), shape)
@@ -279,14 +296,45 @@ fun SurfaceCard(
     )
 }
 
-/** Encolhe levemente o elemento enquanto pressionado: resposta tátil visual. */
+/**
+ * Encolhe levemente o elemento enquanto pressionado (resposta tátil visual) e o amplia um pouco quando focado
+ * pelo D-pad (controle, TV): junto com o [focusRing], é o que mostra onde a seleção está.
+ */
 @Composable
-fun Modifier.pressScale(source: MutableInteractionSource, enabled: Boolean = true, pressed: Float = 0.96f): Modifier {
+fun Modifier.pressScale(source: MutableInteractionSource, enabled: Boolean = true, pressed: Float = 0.96f, focused: Float = 1.04f): Modifier {
     if (!enabled || LocalReduceMotion.current) return this
     val isPressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) pressed else 1f, spring(stiffness = 600f), label = "press")
+    val isFocused by source.collectIsFocusedAsState()
+    val scale by animateFloatAsState(
+        when {
+            isPressed -> pressed
+            isFocused -> focused
+            else -> 1f
+        },
+        spring(stiffness = 600f), label = "press",
+    )
     // Lido só na camada gráfica: a animação redesenha o elemento sem recompor o cartão a cada quadro.
     return graphicsLayer { scaleX = scale; scaleY = scale }
+}
+
+/**
+ * Contorno neon enquanto o elemento tem o foco do D-pad (controle, TV, teclado). Os cartões e botões do app tocam
+ * sem indicação (o [pressScale] responde ao toque), e sem isso navegar por controle não mostrava o que estava
+ * selecionado. Vem antes do `clip` na cadeia, para o traço não ser cortado; [outset] afasta o contorno da borda.
+ * O foco é lido só no desenho: ganhar ou perder o foco redesenha o elemento, sem recompor.
+ */
+@Composable
+fun Modifier.focusRing(source: InteractionSource, shape: Shape, outset: Dp = 0.dp, color: Color = Palette.Neon): Modifier {
+    val focused = source.collectIsFocusedAsState()
+    return drawWithContent {
+        drawContent()
+        if (focused.value) {
+            val grow = outset.toPx()
+            val stroke = 2.5.dp.toPx()
+            val outline = shape.createOutline(Size(size.width + grow * 2, size.height + grow * 2), layoutDirection, this)
+            translate(-grow, -grow) { drawOutline(outline, color, style = Stroke(stroke)) }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- botões
@@ -306,6 +354,7 @@ fun GradientButton(
     Row(
         modifier
             .pressScale(source, enabled)
+            .focusRing(source, shape, outset = 3.dp, color = Palette.TextPrimary)
             .defaultMinSize(minHeight = height)
             .clip(shape)
             .background(if (enabled) Palette.SunsetHorizontal else Brush.linearGradient(listOf(Palette.SurfaceHighest, Palette.SurfaceHighest)))
@@ -314,31 +363,40 @@ fun GradientButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val content = if (enabled) Color(0xFF1C0010) else Palette.TextMuted
+        val content = if (enabled) Palette.OnAccent else Palette.TextMuted
         icon?.let { Icon(it, null, tint = content, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)) }
         Text(text, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }
 
-/** Botão secundário: contorno fino e fundo translúcido. */
+/** Botão secundário: contorno fino e fundo translúcido. Desligado, fica apagado e ignora o toque. */
 @Composable
-fun GhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, tint: Color = Palette.TextPrimary) {
+fun GhostButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    tint: Color = Palette.TextPrimary,
+    enabled: Boolean = true,
+) {
     val source = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(50)
+    val content = if (enabled) tint else Palette.TextMuted
     Row(
         modifier
-            .pressScale(source)
+            .pressScale(source, enabled)
+            .focusRing(source, shape)
             .defaultMinSize(minHeight = 44.dp)
             .clip(shape)
-            .background(Color.White.copy(alpha = 0.05f))
-            .border(1.dp, Palette.Outline, shape)
-            .clickable(source, null, role = Role.Button, onClick = onClick)
+            .background(Color.White.copy(alpha = if (enabled) 0.05f else 0.02f))
+            .border(1.dp, if (enabled) Palette.Outline else Palette.Outline.copy(alpha = 0.5f), shape)
+            .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        icon?.let { Icon(it, null, tint = tint, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = tint)
+        icon?.let { Icon(it, null, tint = content, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
+        Text(text, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }
 
@@ -358,7 +416,7 @@ fun HeaderIconButton(
     enabled: Boolean = true,
 ) {
     BadgedBox(
-        badge = { if (badge > 0) androidx.compose.material3.Badge(containerColor = Palette.Neon, contentColor = Color(0xFF1C0010)) { Text("$badge") } },
+        badge = { if (badge > 0) androidx.compose.material3.Badge(containerColor = Palette.Neon, contentColor = Palette.OnAccent) { Text("$badge") } },
         modifier = modifier,
     ) {
         IconButton(
@@ -395,8 +453,13 @@ fun GameCover(
     modifier: Modifier = Modifier,
     corner: Dp = 16.dp,
     contentScale: ContentScale = ContentScale.Crop,
+    /** Desenhado por cima só com a capa carregada (a sigla do console no cartão): sem ela, a etiqueta já mostra a sigla. */
+    overImage: @Composable BoxScope.() -> Unit = {},
 ) {
     val accent = system?.accentColor() ?: Palette.Violet
+    // A etiqueta sai da composição quando a capa carrega: numa grade cheia, eram dois textos medidos e
+    // desenhados (e escondidos) embaixo de cada capa.
+    var loaded by remember(url) { mutableStateOf(false) }
     Box(
         modifier
             .clip(RoundedCornerShape(corner))
@@ -404,7 +467,7 @@ fun GameCover(
     ) {
         // Fallback: etiqueta de cartucho com sulcos no topo, sigla e título. Decorativo para o leitor de tela:
         // quem usa a capa já mostra o título ao lado, e ele seria lido duas vezes.
-        Column(Modifier.fillMaxSize().clearAndSetSemantics {}.padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        if (!loaded) Column(Modifier.fillMaxSize().clearAndSetSemantics {}.padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 repeat(4) { Box(Modifier.width(10.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.18f))) }
             }
@@ -421,7 +484,11 @@ fun GameCover(
             }
         }
         if (url != null) {
-            AsyncImage(model = url, contentDescription = null, contentScale = contentScale, modifier = Modifier.fillMaxSize())
+            AsyncImage(
+                model = url, contentDescription = null, contentScale = contentScale, modifier = Modifier.fillMaxSize(),
+                onSuccess = { loaded = true }, onError = { loaded = false },
+            )
+            if (loaded) overImage()
         }
         // Brilho de vidro na borda superior, dá volume à capa.
         Box(
@@ -434,35 +501,44 @@ fun GameCover(
     }
 }
 
+/** Cartão de jogo das grades e prateleiras. [onLongClick] abre as ações rápidas ([GameQuickMenu]). */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GameCard(game: Game, onClick: () -> Unit, modifier: Modifier = Modifier, width: Dp? = null) {
+fun GameCard(game: Game, onClick: () -> Unit, modifier: Modifier = Modifier, width: Dp? = null, onLongClick: (() -> Unit)? = null) {
     val system = Systems.byId(game.systemId)
     val source = remember { MutableInteractionSource() }
     Column(
         modifier
             .then(if (width != null) Modifier.width(width) else Modifier)
             .pressScale(source)
-            .clickable(source, null, role = Role.Button, onClick = onClick),
+            .focusRing(source, RoundedCornerShape(18.dp), outset = 4.dp)
+            .combinedClickable(
+                interactionSource = source, indication = null, role = Role.Button,
+                onLongClickLabel = if (onLongClick != null) stringResource(R.string.game_quick_actions) else null,
+                onLongClick = onLongClick, onClick = onClick,
+            ),
     ) {
         Box {
-            GameCover(game.title, system, game.coverUrl, Modifier.fillMaxWidth().aspectRatio(0.75f))
+            // A sigla vai sobre a capa carregada; sem capa (ou com a URL falhando), a etiqueta de cartucho já a mostra,
+            // e as duas ficavam uma em cima da outra.
+            GameCover(game.title, system, game.coverUrl, Modifier.fillMaxWidth().aspectRatio(0.75f)) {
+                system?.let {
+                    Text(
+                        it.shortName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(6.dp)
+                            .background(it.accentColor().copy(alpha = 0.85f).compositeOverInk(), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
             if (game.favorite) {
                 Icon(
                     Icons.Rounded.Favorite, stringResource(R.string.common_favorite), tint = Palette.Neon,
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp)
                         .background(Color(0xB30B0714), CircleShape).padding(4.dp),
-                )
-            }
-            // Sem capa, o fallback já mostra a sigla do console.
-            if (game.coverUrl != null) system?.let {
-                Text(
-                    it.shortName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(6.dp)
-                        .background(it.accentColor().copy(alpha = 0.85f).compositeOverInk(), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
         }
@@ -505,6 +581,7 @@ fun SystemTile(system: GameSystem, count: Int, onClick: () -> Unit, modifier: Mo
     Box(
         modifier
             .pressScale(source)
+            .focusRing(source, shape)
             .clip(shape)
             .background(Palette.SurfaceHigh)
             .drawWithCache {
@@ -632,20 +709,22 @@ fun SearchField(value: String, onChange: (String) -> Unit, placeholder: String, 
 @Composable
 fun SelectChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(50)
+    val source = remember { MutableInteractionSource() }
     Box(
         modifier
             .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 36.dp)
+            .focusRing(source, shape, color = if (selected) Palette.TextPrimary else Palette.Neon)
             .clip(shape)
             .then(
                 if (selected) Modifier.background(Palette.SunsetHorizontal)
                 else Modifier.background(Palette.SurfaceHigh).border(1.dp, Palette.Outline, shape),
             )
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .selectable(selected = selected, interactionSource = source, indication = ripple(), role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Color(0xFF1C0010) else Palette.TextSecondary, maxLines = 1)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.OnAccent else Palette.TextSecondary, maxLines = 1)
     }
 }
 
@@ -663,14 +742,16 @@ fun AccentChip(
     icon: ImageVector? = null,
 ) {
     val shape = RoundedCornerShape(50)
+    val source = remember { MutableInteractionSource() }
     Row(
         modifier
             .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 36.dp)
+            .focusRing(source, shape)
             .clip(shape)
             .background(if (selected) accent.copy(alpha = 0.18f) else Palette.SurfaceHigh)
             .border(1.dp, if (selected) accent.copy(alpha = 0.85f) else Palette.Outline, shape)
-            .selectable(selected = selected, role = Role.Checkbox, onClick = onClick)
+            .selectable(selected = selected, interactionSource = source, indication = ripple(), role = Role.Checkbox, onClick = onClick)
             .padding(start = if (icon != null) 10.dp else 12.dp, end = 14.dp, top = 7.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

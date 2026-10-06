@@ -11,6 +11,20 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import com.retrovika.app.ui.components.GameQuickMenu
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -126,6 +140,7 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
         value = BiosManager.unsatisfied(system.bios) { it in ok }
     }
     val importStatus: ScreenMessages = viewModel { ScreenMessages() }
+    var quick by remember { mutableStateOf<Game?>(null) }
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
@@ -229,13 +244,45 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 }
 
                 Spacer(Modifier.height(14.dp))
+                // Núcleo, Vulkan, teste e nível de qualidade: a maioria das visitas é para escolher um jogo, e o painel
+                // inteiro empurrava a grade uma tela para baixo. Fica recolhido num resumo (núcleo · nível); sem jogos
+                // no console, já começa aberto.
+                var settingsOpen by rememberSaveable(systemId) { mutableStateOf(false) }
+                val cardShape = RoundedCornerShape(22.dp)
                 Column(
                     Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
+                        .clip(cardShape)
                         .background(Palette.SurfaceHigh.copy(alpha = 0.85f))
-                        .border(1.dp, Palette.Outline.copy(alpha = 0.7f), RoundedCornerShape(22.dp))
-                        .padding(vertical = 14.dp),
+                        .border(1.dp, Palette.Outline.copy(alpha = 0.7f), cardShape),
                 ) {
+                    // Sem jogos o painel fica aberto e sem recolher: é a única coisa a fazer na tela.
+                    val forced = loaded != null && all.isEmpty()
+                    val open = settingsOpen || forced
+                    val stateText = stringResource(if (open) R.string.system_settings_expanded else R.string.system_settings_collapsed)
+                    val arrow by animateFloatAsState(if (open) 180f else 0f, label = "arrow")
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .then(
+                                if (forced) Modifier
+                                else Modifier.clickable(role = Role.Button) { settingsOpen = !settingsOpen }.semantics { stateDescription = stateText },
+                            )
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconTile(Icons.Rounded.Tune, Palette.Cyan, size = 32.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.system_settings_title), style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                listOfNotNull(core.displayName, effective?.let { stringResource(it.preset.label) }).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, maxLines = 1,
+                            )
+                        }
+                        if (!forced) Icon(Icons.Rounded.ExpandMore, null, tint = Palette.TextSecondary, modifier = Modifier.graphicsLayer { rotationZ = arrow })
+                    }
+                    AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Column(Modifier.padding(bottom = 14.dp)) {
+                    HorizontalDivider(Modifier.padding(bottom = 14.dp), color = Palette.Outline.copy(alpha = 0.5f))
                     Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconTile(Icons.Rounded.Memory, Palette.Cyan, size = 32.dp)
                         Spacer(Modifier.width(10.dp))
@@ -327,12 +374,15 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                             }
                         }
                     }
+                    Text(
+                        stringResource(R.string.system_formats, system.extensions.sorted().joinToString { ".$it" }),
+                        style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted,
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp),
+                    )
+                    }
+                    }
                 }
-                Text(
-                    stringResource(R.string.system_formats, system.extensions.sorted().joinToString { ".$it" }),
-                    style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
-                )
+                Spacer(Modifier.height(14.dp))
                 if (repeated > 0) {
                     SurfaceCard(Modifier.fillMaxWidth().padding(bottom = 14.dp), onClick = onOpenVersions) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -387,8 +437,9 @@ fun SystemScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> Uni
                 }
             }
         }
-        items(games, key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }) }
+        items(games, key = { it.id }, contentType = { "game" }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }, onLongClick = { quick = game }) }
     }
+    quick?.let { GameQuickMenu(it, onDismiss = { quick = null }, onDetails = onOpenGame) }
 }
 
 private fun List<Game>.filterByTitle(query: String): List<Game> {

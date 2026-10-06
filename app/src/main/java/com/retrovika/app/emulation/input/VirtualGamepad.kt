@@ -34,7 +34,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.runtime.mutableStateMapOf
+import kotlin.math.abs
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onPlaced
@@ -46,6 +51,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -120,7 +126,15 @@ fun VirtualGamepad(
 
     // Canto da área do controle na tela: cada parte calcula a própria posição dentro dela para não passar das bordas.
     var areaOrigin by remember { mutableStateOf(Offset.Zero) }
-    BoxWithConstraints(modifier.alpha(if (editor != null) 1f else opacity).onPlaced { if (it.isAttached) areaOrigin = it.positionInRoot() }) {
+    // ModulateAlpha: a opacidade vai em cada desenho, sem a camada fora da tela do tamanho do controle (a tela toda,
+    // sobreposto) que o alpha comum cria e mistura de novo a cada redesenho — o analógico redesenha a cada movimento,
+    // disputando a GPU com núcleos pesados.
+    val alpha = if (editor != null) 1f else opacity
+    BoxWithConstraints(
+        modifier
+            .graphicsLayer { this.alpha = alpha; compositingStrategy = CompositingStrategy.ModulateAlpha }
+            .onPlaced { if (it.isAttached) areaOrigin = it.positionInRoot() },
+    ) {
         val size = PadMetrics(layout)
         val fit = if (!overlay) {
             min(maxWidth.value / size.portraitWidth, maxHeight.value / size.portraitHeight)
@@ -327,6 +341,10 @@ private fun RightCluster(layout: PadLayout, s: Float, listener: PadListener, fee
 @Composable
 private fun FaceCluster(layout: PadLayout, s: Float, listener: PadListener, feedback: () -> Unit) {
     val btn = (62 * s).dp
+    val group = remember { FaceGroup() }
+    @Composable
+    fun FaceButton(button: PadButton, size: Dp, listener: PadListener, feedback: () -> Unit, modifier: Modifier = Modifier) =
+        FaceButton(button, size, group, listener, feedback, modifier)
     when (layout.arrangement) {
         FaceArrangement.DIAMOND -> Box(Modifier.size(btn * 2.9f)) {
             val (top, right, bottom, left) = layout.face
@@ -386,19 +404,140 @@ private fun Modifier.pressable(onChange: (Boolean) -> Unit): Modifier {
     }
 }
 
+/**
+ * Os botões de ação como um grupo: o dedo que aperta um botão pode deslizar até o vizinho (solta um, aperta o
+ * outro) ou parar no vão entre dois e apertar os dois (A+B com um polegar só, como num controle de verdade).
+ * Cada botão continua com o próprio pointerInput — o toque só começa em cima de um botão, e o vão segue chegando
+ * ao jogo (tela de toque do DS) —, mas o caminho do dedo é comparado, em coordenadas da tela, com o grupo todo.
+ * Sair para uma área sem botão mantém o que estava apertado: o polegar que escorrega um pouco não solta o botão.
+ */
+private class FaceGroup {
+    private val places = HashMap<PadButton, LayoutCoordinates>()
+    private val byPointer = HashMap<PointerId, Set<PadButton>>()
+    /** Quem apertou cada botão: a soltura vai para o mesmo listener, para nada ficar preso no jogo. */
+    private val owners = HashMap<PadButton, PadListener>()
+    /** Lido só no desenho dos botões: apertar redesenha, sem recompor. */
+    val pressed = mutableStateMapOf<PadButton, Boolean>()
+
+    fun place(button: PadButton, coordinates: LayoutCoordinates) { places[button] = coordinates }
+
+    /** O dedo [pointer] está em [root]; [fallback] é o botão do toque inicial, se ele cair no canto da caixa. */
+    fun track(pointer: PointerId, root: Offset?, listener: PadListener, feedback: () -> Unit, fallback: PadButton? = null) {
+        val hit = root?.let(::hitTest) ?: fallback?.let(::setOf) ?: return
+        if (hit == byPointer[pointer]) return
+        byPointer[pointer] = hit
+        sync(listener, feedback)
+    }
+
+    fun release(pointer: PointerId) {
+        if (byPointer.remove(pointer) != null) sync(null) {}
+    }
+
+    private fun sync(listener: PadListener?, feedback: () -> Unit) {
+        val now = byPointer.values.flatten().toSet()
+        owners.keys.filter { it !in now }.forEach { b ->
+            owners.remove(b)?.onKey(b.keyCode, false)
+            pressed.remove(b)
+        }
+        if (listener == null) return
+        var any = false
+        now.filter { it !in owners }.forEach { b ->
+            owners[b] = listener
+            listener.onKey(b.keyCode, true)
+            pressed[b] = true
+            any = true
+        }
+        if (any) feedback()
+    }
+
+    private class Spot(val button: PadButton, val center: Offset, val radius: Float, val distance: Float) {
+        val ratio get() = distance / radius
+    }
+
+    private fun hitTest(p: Offset): Set<PadButton>? {
+        val spots = places.mapNotNull { (b, c) ->
+            if (!c.isAttached) return@mapNotNull null
+            val w = c.size.width.toFloat()
+            val h = c.size.height.toFloat()
+            // Pelas coordenadas da tela: o tamanho e a posição do perfil (camada gráfica) entram na conta.
+            val center = c.localToRoot(Offset(w / 2f, h / 2f))
+            val radius = (c.localToRoot(Offset(w, h / 2f)) - center).getDistance()
+            if (radius <= 0f) null else Spot(b, center, radius, (p - center).getDistance())
+        }.sortedBy { it.ratio }
+        val first = spots.firstOrNull() ?: return null
+        if (first.ratio <= 1f) return setOf(first.button)
+        val second = spots.getOrNull(1)
+        if (second != null && between(p, first, second)) return setOf(first.button, second.button)
+        return if (first.ratio <= EDGE_SLACK) setOf(first.button) else null
+    }
+
+    /** No vão entre dois botões vizinhos: perto do segmento que liga os centros, longe das pontas. */
+    private fun between(p: Offset, a: Spot, b: Spot): Boolean {
+        val seg = b.center - a.center
+        val len = seg.getDistance()
+        if (len <= 0f || len > PAIR_REACH * (a.radius + b.radius) / 2f) return false
+        val rel = p - a.center
+        val t = (rel.x * seg.x + rel.y * seg.y) / (len * len)
+        val perpendicular = abs(rel.x * seg.y - rel.y * seg.x) / len
+        return t in 0.2f..0.8f && perpendicular <= 0.6f * min(a.radius, b.radius)
+    }
+
+    private companion object {
+        /** Folga fora do círculo que ainda conta como o botão (em raios). */
+        const val EDGE_SLACK = 1.3f
+        /** Distância máxima entre centros (em raios) para o vão apertar os dois: vizinhos sim, opostos do losango não. */
+        const val PAIR_REACH = 3.4f
+    }
+}
+
 @Composable
-private fun FaceButton(button: PadButton, size: Dp, listener: PadListener, feedback: () -> Unit, modifier: Modifier = Modifier) {
-    var pressed by remember { mutableStateOf(false) }
+private fun FaceButton(button: PadButton, size: Dp, group: FaceGroup, listener: PadListener, feedback: () -> Unit, modifier: Modifier = Modifier) {
     val base = button.color?.let { Color(it) } ?: Color(0xFF424242)
+    // O gesto é criado uma vez: lê sempre o listener e a vibração atuais (parte ocultada ou de volta, editor).
+    val currentListener by rememberUpdatedState(listener)
+    val currentFeedback by rememberUpdatedState(feedback)
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     Box(
         modifier
             .size(size)
-            .background(if (pressed) base.copy(alpha = 0.95f) else base.copy(alpha = 0.55f), CircleShape)
-            .border(2.dp, if (pressed) PadPressed else PadStroke, CircleShape)
-            .pressable { down ->
-                pressed = down
-                if (down) feedback()
-                listener.onKey(button.keyCode, down)
+            .onPlaced { coordinates = it; group.place(button, it) }
+            .drawBehind {
+                val down = group.pressed[button] == true
+                val stroke = 2.dp.toPx()
+                drawCircle(if (down) base.copy(alpha = 0.95f) else base.copy(alpha = 0.55f))
+                drawCircle(if (down) PadPressed else PadStroke, radius = this.size.minDimension / 2f - stroke / 2f, style = Stroke(stroke))
+            }
+            .pointerInput(button) {
+                fun root(local: Offset) = coordinates?.takeIf { it.isAttached }?.localToRoot(local)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    // O gesto inteiro (até a soltura) vai para quem recebeu o primeiro toque.
+                    val target = currentListener
+                    val haptic = currentFeedback
+                    // Cada dedo que pousa neste botão durante o gesto é seguido à parte: o polegar que saiu deslizando
+                    // para o vizinho não impede outro dedo de apertar este, e soltar um não solta o do outro.
+                    val fingers = mutableSetOf(down.id)
+                    group.track(down.id, root(down.position), target, haptic, fallback = button)
+                    try {
+                        while (fingers.isNotEmpty()) {
+                            val event = awaitPointerEvent()
+                            for (change in event.changes) {
+                                change.consume()
+                                when {
+                                    change.changedToDownIgnoreConsumed() -> {
+                                        fingers += change.id
+                                        group.track(change.id, root(change.position), target, haptic, fallback = button)
+                                    }
+                                    !change.pressed -> if (fingers.remove(change.id)) group.release(change.id)
+                                    change.id in fingers -> group.track(change.id, root(change.position), target, haptic)
+                                }
+                            }
+                        }
+                    } finally {
+                        fingers.forEach(group::release)
+                    }
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -408,15 +547,17 @@ private fun FaceButton(button: PadButton, size: Dp, listener: PadListener, feedb
 
 @Composable
 private fun ShoulderButton(button: PadButton, s: Float, listener: PadListener, feedback: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
+    // Lido só no desenho: apertar redesenha o botão sem recompô-lo.
+    val pressed = remember { mutableStateOf(false) }
+    var pressedValue by pressed
     val shape = RoundedCornerShape(14.dp)
     Box(
         Modifier
             .size(width = (84 * s).dp, height = (44 * s).dp)
-            .background(if (pressed) PadPressed else PadSurface, shape)
+            .drawBehind { drawRoundRect(if (pressed.value) PadPressed else PadSurface, cornerRadius = CornerRadius(14.dp.toPx())) }
             .border(1.5.dp, PadStroke, shape)
             .pressable { down ->
-                pressed = down
+                pressedValue = down
                 if (down) feedback()
                 listener.onKey(button.keyCode, down)
             },
@@ -426,15 +567,16 @@ private fun ShoulderButton(button: PadButton, s: Float, listener: PadListener, f
 
 @Composable
 private fun PillButton(button: PadButton, s: Float, listener: PadListener, feedback: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
+    val pressed = remember { mutableStateOf(false) }
+    var pressedValue by pressed
     val shape = RoundedCornerShape(50)
     Box(
         Modifier
             .size(width = (74 * s).dp, height = (28 * s).dp)
-            .background(if (pressed) PadPressed else PadSurface, shape)
+            .drawBehind { drawRoundRect(if (pressed.value) PadPressed else PadSurface, cornerRadius = CornerRadius(this.size.height / 2f)) }
             .border(1.dp, PadStroke, shape)
             .pressable { down ->
-                pressed = down
+                pressedValue = down
                 if (down) feedback()
                 listener.onKey(button.keyCode, down)
             },
@@ -571,7 +713,8 @@ private fun AnalogStick(size: Dp, source: Int, listener: PadListener) {
 /** Os quatro botões C do N64, enviados como analógico direito (padrão do Mupen64Plus-Next). */
 @Composable
 private fun CButtons(size: Dp, listener: PadListener, feedback: () -> Unit) {
-    var pressed by remember { mutableStateOf(setOf<Int>()) }
+    val pressedState = remember { mutableStateOf(setOf<Int>()) }
+    var pressed by pressedState
     val btn = size / 3
 
     fun send(next: Set<Int>) {
@@ -589,7 +732,8 @@ private fun CButtons(size: Dp, listener: PadListener, feedback: () -> Unit) {
         Box(
             modifier
                 .size(btn)
-                .background(if (index in pressed) Color(0xFFFFD600) else Color(0x99FFD600), CircleShape)
+                // Lido no desenho: apertar um C não recompõe os quatro.
+                .drawBehind { drawCircle(if (index in pressedState.value) Color(0xFFFFD600) else Color(0x99FFD600)) }
                 .pressable { down ->
                     if (down) feedback()
                     send(if (down) pressed + index else pressed - index)

@@ -58,10 +58,20 @@
     <string name="game_disc_n">Disco %d</string>
     <string name="game_reset">Reiniciar jogo</string>
     <string name="game_core_no_options">Este núcleo não expõe opções configuráveis.</string>
-    <string name="game_core_options_hint">Toque em uma opção para alternar o valor. Algumas mudanças só valem após reiniciar o jogo.</string>
+    <string name="game_core_options_hint">Toque numa opção para escolher o valor (com controle, ← e → também mudam). Algumas mudanças só valem depois de reiniciar o jogo.</string>
     <string name="game_refresh_list">Atualizar lista</string>
     <string name="game_loading_game">Carregando o jogo…</string>
     <string name="game_restoring_progress">Restaurando o progresso…</string>
     <string name="game_cancelling">Cancelando…</string>
     <string name="game_menu_capturing">Guardando o estado do jogo…</string>
+    <string name="game_state_loaded_undo">Estado carregado · dá para desfazer pelo menu</string>
+    <string name="game_undo_load">Desfazer o último carregamento</string>
+    <string name="game_undo_reset">Desfazer o reinício</string>
+    <string name="game_undo_load_subtitle">Volta para onde você estava antes de carregar</string>
+    <string name="game_undo_reset_subtitle">Volta para onde você estava antes de reiniciar</string>
+    <string name="game_undo_done">De volta para onde você estava</string>
+    <string name="game_reset_confirm_title">Reiniciar o jogo?</string>
+    <string name="game_reset_confirm_message">Tudo desde o último save se perde. Ainda dá para desfazer pela aba Estados.</string>
+    <string name="game_core_option_default">padrão</string>
+    <string name="game_reset_confirm_message_no_undo">Tudo desde o último save se perde.</string>
 </resources>

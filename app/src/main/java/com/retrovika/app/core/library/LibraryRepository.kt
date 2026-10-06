@@ -14,6 +14,7 @@ import com.retrovika.app.core.storage.Archives
 import com.retrovika.app.core.storage.RomExtractor
 import com.retrovika.app.core.storage.FileNames
 import com.retrovika.app.core.storage.StoragePaths
+import com.retrovika.app.core.storage.StorageAccess
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Systems
 import com.retrovika.app.emulation.GameActivity
@@ -79,6 +80,8 @@ class LibraryRepository(
     suspend fun setCoreOverride(id: Long, coreId: String?) = dao.setCoreOverride(id, coreId)
     suspend fun setIdentified(id: Long, name: String, region: String?) = dao.setIdentified(id, name, region)
 
+    suspend fun setIdentifiedAll(matches: List<Triple<Long, String, String?>>) = dao.setIdentifiedAll(matches)
+
     /**
      * URIs removidas durante uma varredura: ela pode ter visto o arquivo antes da remoção e o cadastraria de
      * novo ao terminar. Cada varredura tira daqui só as que já estavam no começo dela.
@@ -134,9 +137,11 @@ class LibraryRepository(
 
     private val startupScanDone = AtomicBoolean(false)
 
-    /** Varredura da abertura do app: só a primeira chamada do processo varre. */
+    /** Varredura da abertura do app: só a primeira chamada do processo varre. Depois dela, a limpeza dos .part. */
     suspend fun rescanOnStartup() {
-        if (startupScanDone.compareAndSet(false, true)) rescan()
+        if (!startupScanDone.compareAndSet(false, true)) return
+        rescan()
+        runCatching { sweepStaleParts() }
     }
 
     private val scanLock = Mutex()
@@ -200,7 +205,8 @@ class LibraryRepository(
         _scan.value = ScanState(running = true)
         lastProgress = 0L
         val deletedBefore = deletedUris.toList()
-        val found = mutableListOf<Game>()
+        // Só o que a varredura viu: o jogo (título, região, capa: três regex e a URL) só é montado para os novos.
+        val found = mutableListOf<ScannedFile>()
         try {
             // Arquivos de `roms/` que a varredura viu e julgou auxiliares (o .bin de um .cue importado depois).
             val auxiliary = HashSet<String>()
@@ -222,7 +228,7 @@ class LibraryRepository(
             val hidden = settings.current().hiddenGames
             val existing = dao.allUris().toSet()
             val foundUris = found.map { it.uri }.toSet()
-            dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden && it.uri !in deletedUris })
+            dao.insertAll(found.filter { it.uri !in existing && it.uri !in hidden && it.uri !in deletedUris }.map { it.toGame() })
             // Removido enquanto outra varredura já o reinseria: sai agora.
             existing.filter { it in hidden }.chunked(500).forEach { dao.deleteByUris(it) }
             // Remove entradas cujo arquivo realmente sumiu e as internas que viraram auxiliares
@@ -242,7 +248,12 @@ class LibraryRepository(
         }
     }
 
-    private fun scanInternal(out: MutableList<Game>, auxiliaryOut: MutableSet<String>) {
+    /** Um arquivo de jogo achado na varredura; vira [Game] ([toGame]) só se ainda não estiver no banco. */
+    private inner class ScannedFile(val system: GameSystem, val fileName: String, val uri: String, val size: Long, val source: GameSource) {
+        fun toGame() = buildGame(system, fileName, uri, size, source)
+    }
+
+    private fun scanInternal(out: MutableList<ScannedFile>, auxiliaryOut: MutableSet<String>) {
         Systems.all.forEach { system ->
             val dir = File(paths.roms, system.id)
             if (!dir.exists()) return@forEach
@@ -282,7 +293,7 @@ class LibraryRepository(
                     if (auxiliary) {
                         auxiliaryOut += file.absolutePath
                     } else {
-                        out += buildGame(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED)
+                        out += ScannedFile(system, file.name, file.absolutePath, file.length(), GameSource.IMPORTED)
                         progress(out.size, file.name)
                     }
                 }
@@ -293,14 +304,70 @@ class LibraryRepository(
     /** Índice (.cue/.ccd/…) que [system] abre como jogo; os outros não escondem as faixas que citam. */
     private fun isPlayableSheet(ext: String, system: GameSystem) = ext in GameFiles.SHEET_EXTENSIONS && ext in system.extensions
 
+    /** Um item de uma pasta vinculada: id do documento, nome, pasta ou não e tamanho. */
+    private data class TreeChild(val id: String, val name: String, val isDir: Boolean, val size: Long)
+
+    /** Os itens de uma pasta de uma árvore SAF, sem os ocultos. Null: o provedor não achou a pasta. */
+    private fun safChildren(treeUri: Uri, docId: String): List<TreeChild>? {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+        return resolver.query(
+            children,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE,
+            ),
+            null, null, null,
+        )?.use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val id = c.getString(0)
+                    val name = c.getString(1) ?: continue
+                    if (name.startsWith(".")) continue
+                    add(TreeChild(id, name, c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR, c.getLong(3)))
+                }
+            }
+        }
+    }
+
     /**
-     * Varredura rápida de uma árvore SAF usando DocumentsContract (bem mais veloz que DocumentFile).
-     * [seenDocs] guarda "autoridade + id do documento" dos arquivos já cadastrados por outra árvore
-     * vinculada (uma pasta dentro da outra), para o mesmo arquivo não virar dois jogos.
+     * Com acesso a todos os arquivos, uma pasta do armazenamento local é lida direto do disco ([StorageAccess.realDir]):
+     * uma chamada ao provedor por pasta (cada uma um IPC) fazia coleções com milhares de pastas demorarem minutos.
+     * Os ids seguem o formato do provedor ("primary:Pasta/sub/jogo.iso"), então as URIs saem idênticas às da
+     * varredura pelo SAF e favoritos e tempo de jogo continuam presos ao mesmo jogo. Antes de confiar, a raiz da
+     * árvore é lida dos dois jeitos e comparada; qualquer diferença volta ao SAF. Null: sem leitura direta.
      */
-    private fun scanTree(treeUri: Uri, out: MutableList<Game>, seenDocs: MutableSet<String>) {
+    private fun directLister(treeUri: Uri): ((String) -> List<TreeChild>?)? {
+        val tree = StorageAccess.realDir(context, treeUri) ?: return null
+        val lister: (String) -> List<TreeChild>? = lister@{ docId ->
+            val relative = docId.substringAfter(':', "")
+            if (StorageAccess.isRestricted(relative)) return@lister emptyList()
+            val dir = File(tree.volumeRoot, relative)
+            dir.listFiles()?.mapNotNull { f ->
+                if (f.name.startsWith(".")) return@mapNotNull null
+                val childRelative = if (relative.isEmpty()) f.name else "$relative/${f.name}"
+                TreeChild("${tree.volume}:$childRelative", f.name, f.isDirectory, if (f.isDirectory) 0L else f.length())
+            }
+        }
+        val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+        // O tamanho só dos arquivos: o de pastas varia entre o provedor e o File.
+        val key: (TreeChild) -> Triple<String, Boolean, Long> = { Triple(it.id, it.isDir, if (it.isDir) 0L else it.size) }
+        val viaSaf = safChildren(treeUri, rootId)?.map(key)?.toSet() ?: return null
+        val direct = lister(rootId)?.map(key)?.toSet() ?: return null
+        return lister.takeIf { viaSaf == direct }
+    }
+
+    /**
+     * Varredura rápida de uma árvore SAF usando DocumentsContract (bem mais veloz que DocumentFile), ou direto do
+     * disco quando dá ([directLister]). [seenDocs] guarda "autoridade + id do documento" dos arquivos já
+     * cadastrados por outra árvore vinculada (uma pasta dentro da outra), para o mesmo arquivo não virar dois jogos.
+     */
+    private fun scanTree(treeUri: Uri, out: MutableList<ScannedFile>, seenDocs: MutableSet<String>) {
         val rootId = DocumentsContract.getTreeDocumentId(treeUri)
         val rootName = rootId.substringAfterLast('/').substringAfterLast(':')
+        val direct = runCatching { directLister(treeUri) }.getOrNull()
+        val listChildren: (String) -> List<TreeChild>? = direct ?: { safChildren(treeUri, it) }
         val queue = ArrayDeque(listOf(rootId to listOf(rootName)))
         // Caminhos ("pasta/sub/arquivo", minúsculos) citados por índices já lidos. A busca é em
         // largura, então o .m3u de uma pasta é lido antes das subpastas com os discos que ele cita.
@@ -308,28 +375,14 @@ class LibraryRepository(
         while (queue.isNotEmpty()) {
             val (docId, folders) = queue.removeFirst()
             if (folders.size > 6) continue
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
             val entries = mutableListOf<Triple<String, String, Long>>()
             // Null significa que o provedor não achou a pasta (cartão removido, app desinstalado):
             // tratá-la como vazia apagaria os jogos dela, então a árvore é marcada como ilegível.
-            resolver.query(
-                children,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    DocumentsContract.Document.COLUMN_SIZE,
-                ),
-                null, null, null,
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getString(0)
-                    val name = c.getString(1) ?: continue
-                    if (name.startsWith(".")) continue
-                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) queue += id to (folders + name)
-                    else entries += Triple(id, name, c.getLong(3))
-                }
-            } ?: throw IOException("Pasta inacessível: $docId")
+            val listed = listChildren(docId) ?: throw IOException("Pasta inacessível: $docId")
+            listed.forEach { child ->
+                if (child.isDir) queue += child.id to (folders + child.name)
+                else entries += Triple(child.id, child.name, child.size)
+            }
             val folderKey = folders.joinToString("/")
             var sheetsKnown = true
             // Só índices que algum console abre nesta pasta: um .ccd na pasta "psx" (o PS1 não lê .ccd)
@@ -356,7 +409,7 @@ class LibraryRepository(
                 val system = RomNaming.resolveSystem(name, folders) ?: return@forEach
                 if (!seenDocs.add("${treeUri.authority}\u0000$id")) return@forEach
                 val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id).toString()
-                out += buildGame(system, name, uri, size, GameSource.LOCAL)
+                out += ScannedFile(system, name, uri, size, GameSource.LOCAL)
                 progress(out.size, name)
             }
         }

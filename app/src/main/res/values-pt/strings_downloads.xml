@@ -39,4 +39,7 @@
     <string name="downloads_cancel_all_title">Cancelar todos os downloads?</string>
     <string name="downloads_cancel_all_message">Os %1$d downloads em andamento ou na fila vão parar.</string>
     <string name="downloads_keep">Continuar baixando</string>
+    <string name="downloads_cancel_title">Cancelar “%s”?</string>
+    <string name="downloads_cancel_message">O que já foi baixado se perde.</string>
+    <string name="downloads_cancel_one">Cancelar download</string>
 </resources>

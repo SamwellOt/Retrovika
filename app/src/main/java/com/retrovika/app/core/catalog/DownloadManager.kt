@@ -109,10 +109,12 @@ class DownloadManager(
 
     /**
      * Limpa os .part deixados por downloads, importações e extrações interrompidos (app encerrado à
-     * força, aparelho reiniciado). Roda uma vez ao criar o gerenciador; cada download espera por ela
-     * antes de começar, para a limpeza nunca apagar o temporário de um download em andamento.
+     * força, aparelho reiniciado). Começa no primeiro download (a varredura da abertura também limpa, ver
+     * [LibraryRepository.rescanOnStartup]); cada download espera por ela antes de começar, para a limpeza nunca
+     * apagar o temporário de um download em andamento. Antes rodava ao criar o gerenciador, em todo início de
+     * processo: inclusive o de quem só abriu um jogo, disputando o disco com o carregamento dele.
      */
-    private val sweep: Job = scope.launch(Dispatchers.IO) { runCatching { library.sweepStaleParts() } }
+    private val sweep: Job by lazy { scope.launch(Dispatchers.IO) { runCatching { library.sweepStaleParts() } } }
 
     init {
         // Serviço em primeiro plano enquanto a fila não está vazia: sem ele o Android mata o processo, e o

@@ -99,4 +99,16 @@
     <string name="library_with_games_empty_message">Vincule uma pasta ou importe jogos, e os consoles que tiverem jogos aparecem aqui.</string>
     <string name="details_favorite_add">Adicionar aos favoritos</string>
     <string name="details_favorite_remove">Remover dos favoritos</string>
+    <string name="game_quick_actions">Opções do jogo</string>
+    <string name="game_quick_details">Abrir página do jogo</string>
+    <string name="home_played_just_now">Jogado agora há pouco</string>
+    <string name="home_played_minutes">Jogado há %d min</string>
+    <string name="home_played_hours">Jogado há %d h</string>
+    <plurals name="home_played_days">
+        <item quantity="one">Jogado há %d dia</item>
+        <item quantity="other">Jogado há %d dias</item>
+    </plurals>
+    <string name="system_settings_title">Ajustes do console</string>
+    <string name="system_settings_expanded">Aberto</string>
+    <string name="system_settings_collapsed">Fechado</string>
 </resources>

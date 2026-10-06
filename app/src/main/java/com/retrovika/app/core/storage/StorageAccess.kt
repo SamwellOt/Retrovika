@@ -31,6 +31,46 @@ object StorageAccess {
         else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
     }
 
+    /** Volume do armazenamento local ("primary", "1234-ABCD") e a pasta raiz dele no disco. */
+    data class VolumeDir(val volume: String, val volumeRoot: File)
+
+    /**
+     * O volume por trás de uma pasta vinculada do armazenamento local, quando o app pode listá-la direto do disco
+     * com o mesmo resultado do provedor: Android 11+ com acesso a todos os arquivos, ou até o 9 com a permissão de
+     * leitura. No Android 10 o armazenamento isolado esconde de java.io os arquivos que não são mídia: fica no SAF.
+     */
+    fun realDir(context: Context, treeUri: Uri): VolumeDir? {
+        if (treeUri.authority != EXTERNAL_STORAGE_AUTHORITY) return null
+        val fullAccess = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> Environment.isExternalStorageManager()
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P -> granted(context)
+            else -> false
+        }
+        if (!fullAccess) return null
+        val treeId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull() ?: return null
+        val volume = treeId.substringBefore(':', "")
+        val root = volumeRoot(volume) ?: return null
+        return VolumeDir(volume, root).takeIf { root.isDirectory }
+    }
+
+    /**
+     * Pastas que o provedor esconde das árvores a partir do Android 11 (Android/data, Android/obb, Android/sandbox):
+     * lidas direto do disco elas trariam, por exemplo, a própria pasta `roms/` do app como jogos vinculados. Até o 9
+     * o provedor as mostra, e a leitura direta também precisa mostrar, senão os jogos de lá sairiam da biblioteca.
+     */
+    fun isRestricted(relative: String): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            relative.lowercase().let { p -> RESTRICTED.any { p == it || p.startsWith("$it/") } }
+
+    private val RESTRICTED = listOf("android/data", "android/obb", "android/sandbox")
+
+    private fun volumeRoot(volume: String): File? = when (volume) {
+        "" -> null
+        "primary" -> Environment.getExternalStorageDirectory()
+        "home" -> Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+        else -> File("/storage", volume)
+    }
+
     /**
      * Arquivo real por trás de um documento do armazenamento local ("primary:Pasta/jogo.iso" ou
      * "1234-ABCD:…" num cartão SD), se o app consegue lê-lo. Null para outros provedores ou sem permissão.
@@ -40,12 +80,7 @@ object StorageAccess {
         val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return null
         val volume = docId.substringBefore(':', "")
         val relative = docId.substringAfter(':', "")
-        val root = when (volume) {
-            "" -> return null
-            "primary" -> Environment.getExternalStorageDirectory()
-            "home" -> Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            else -> File("/storage", volume)
-        }
+        val root = volumeRoot(volume) ?: return null
         return File(root, relative).takeIf { it.isFile && it.canRead() }
     }
 }

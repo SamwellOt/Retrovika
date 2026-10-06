@@ -56,11 +56,19 @@ jobs:
           RETROVIKA_KEYSTORE_PASSWORD: ${{ secrets.RETROVIKA_KEYSTORE_PASSWORD }}
           RETROVIKA_KEY_ALIAS: ${{ secrets.RETROVIKA_KEY_ALIAS }}
           RETROVIKA_KEY_PASSWORD: ${{ secrets.RETROVIKA_KEY_PASSWORD }}
+        # O universal mantém o nome de sempre (e é enviado primeiro): as versões até a 0.6.6 baixam o primeiro .apk
+        # da release. Os por arquitetura ("Retrovika-x.y.z.arm64-v8a.apk") são os que o atualizador novo escolhe.
         run: |
-          ./gradlew assembleRelease --stacktrace
+          ./gradlew assembleRelease -PabiSplits --stacktrace
           version="${TAG#v}"
-          cp app/build/outputs/apk/release/app-release.apk "Retrovika-$version.apk"
-          echo "APK=Retrovika-$version.apk" >> "$GITHUB_ENV"
+          out=app/build/outputs/apk/release
+          cp "$out/app-universal-release.apk" "Retrovika-$version.apk"
+          apks="Retrovika-$version.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "$out/app-$abi-release.apk" "Retrovika-$version.$abi.apk"
+            apks="$apks Retrovika-$version.$abi.apk"
+          done
+          echo "APKS=$apks" >> "$GITHUB_ENV"
 
       - name: Publicar release
         env:
@@ -71,11 +79,18 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Republicar uma release (APK corrigido): as notas são relidas do arquivo e a tag passa
             # para o commit compilado, para APK, texto e código-fonte da release baterem.
-            gh release upload "$TAG" "$APK" --clobber
+            # Em duas levas, como na criação: o universal volta a ser o mais antigo e continua o primeiro da lista.
+            universal="${APKS%% *}"
+            gh release upload "$TAG" "$universal" --clobber
+            gh release upload "$TAG" ${APKS#"$universal "} --clobber
             if [ -f "$notes" ]; then gh release edit "$TAG" --notes-file "$notes"; fi
             if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
               git push -f origin "$GITHUB_SHA:refs/tags/$TAG"
             fi
           else
-            gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "Retrovika ${TAG#v}" "${args[@]}"
+            # O universal sai sozinho na criação e os outros depois: na lista da release (por ordem de envio e também
+            # por nome) ele vem primeiro, que é o que as versões antigas do atualizador baixam.
+            universal="${APKS%% *}"
+            gh release create "$TAG" "$universal" --target "$GITHUB_SHA" --title "Retrovika ${TAG#v}" "${args[@]}"
+            gh release upload "$TAG" ${APKS#"$universal "}
           fi

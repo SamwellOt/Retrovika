@@ -9,7 +9,9 @@ enum class GameSource { LOCAL, IMPORTED, DOWNLOADED }
 
 @Entity(
     tableName = "games",
-    indices = [Index("systemId"), Index(value = ["uri"], unique = true), Index("lastPlayed")],
+    // addedAt e favorite: "Adicionados" e "Favoritos" do início são observados o tempo todo e refeitos a cada
+    // escrita na tabela (varredura, sessão de jogo); sem índice, cada vez era a tabela inteira mais uma ordenação.
+    indices = [Index("systemId"), Index(value = ["uri"], unique = true), Index("lastPlayed"), Index("addedAt"), Index("favorite")],
 )
 data class Game(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

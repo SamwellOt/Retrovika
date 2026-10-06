@@ -1,0 +1,274 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "d16afeb4c7977b82ecded0bc9a55c436",
+    "entities": [
+      {
+        "tableName": "games",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `rawName` TEXT NOT NULL, `fileName` TEXT NOT NULL, `uri` TEXT NOT NULL, `systemId` TEXT NOT NULL, `size` INTEGER NOT NULL, `region` TEXT, `coverUrl` TEXT, `favorite` INTEGER NOT NULL, `lastPlayed` INTEGER, `playTimeSeconds` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, `coreOverride` TEXT, `source` TEXT NOT NULL, `developer` TEXT, `description` TEXT, `datName` TEXT, `verified` INTEGER NOT NULL DEFAULT 0)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawName",
+            "columnName": "rawName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "fileName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uri",
+            "columnName": "uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "systemId",
+            "columnName": "systemId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "region",
+            "columnName": "region",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "coverUrl",
+            "columnName": "coverUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "favorite",
+            "columnName": "favorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastPlayed",
+            "columnName": "lastPlayed",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "playTimeSeconds",
+            "columnName": "playTimeSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "addedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coreOverride",
+            "columnName": "coreOverride",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "developer",
+            "columnName": "developer",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "datName",
+            "columnName": "datName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "verified",
+            "columnName": "verified",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_games_systemId",
+            "unique": false,
+            "columnNames": [
+              "systemId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_systemId` ON `${TABLE_NAME}` (`systemId`)"
+          },
+          {
+            "name": "index_games_uri",
+            "unique": true,
+            "columnNames": [
+              "uri"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_games_uri` ON `${TABLE_NAME}` (`uri`)"
+          },
+          {
+            "name": "index_games_lastPlayed",
+            "unique": false,
+            "columnNames": [
+              "lastPlayed"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_lastPlayed` ON `${TABLE_NAME}` (`lastPlayed`)"
+          },
+          {
+            "name": "index_games_addedAt",
+            "unique": false,
+            "columnNames": [
+              "addedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_addedAt` ON `${TABLE_NAME}` (`addedAt`)"
+          },
+          {
+            "name": "index_games_favorite",
+            "unique": false,
+            "columnNames": [
+              "favorite"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_games_favorite` ON `${TABLE_NAME}` (`favorite`)"
+          }
+        ]
+      },
+      {
+        "tableName": "dat_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `systemId` TEXT NOT NULL, `name` TEXT NOT NULL, `cleanTitle` TEXT NOT NULL, `crc32` TEXT, `md5` TEXT, `size` INTEGER NOT NULL, `region` TEXT, `revision` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "systemId",
+            "columnName": "systemId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cleanTitle",
+            "columnName": "cleanTitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crc32",
+            "columnName": "crc32",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "md5",
+            "columnName": "md5",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "region",
+            "columnName": "region",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_dat_entries_systemId_crc32",
+            "unique": false,
+            "columnNames": [
+              "systemId",
+              "crc32"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_dat_entries_systemId_crc32` ON `${TABLE_NAME}` (`systemId`, `crc32`)"
+          },
+          {
+            "name": "index_dat_entries_systemId_md5",
+            "unique": false,
+            "columnNames": [
+              "systemId",
+              "md5"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_dat_entries_systemId_md5` ON `${TABLE_NAME}` (`systemId`, `md5`)"
+          },
+          {
+            "name": "index_dat_entries_systemId_cleanTitle",
+            "unique": false,
+            "columnNames": [
+              "systemId",
+              "cleanTitle"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_dat_entries_systemId_cleanTitle` ON `${TABLE_NAME}` (`systemId`, `cleanTitle`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd16afeb4c7977b82ecded0bc9a55c436')"
+    ]
+  }
+}

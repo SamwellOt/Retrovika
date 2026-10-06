@@ -29,8 +29,8 @@ android {
         applicationId = "com.retrovika.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 35
-        versionName = "0.6.6"
+        versionCode = 36
+        versionName = "0.6.7"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -77,6 +77,17 @@ android {
     buildFeatures { compose = true }
     // Só os idiomas do app: descarta as traduções extras das bibliotecas.
     androidResources { localeFilters += listOf("en", "pt") }
+    // -PabiSplits (o workflow de release usa): além do APK universal, um por arquitetura, só com as bibliotecas
+    // nativas dela. O tradutor offline do ML Kit sozinho tem uns 20 MB nas três; o APK do aparelho fica uns 11 MB
+    // menor, e o atualizador do app baixa o da arquitetura certa (AppUpdater.parseRelease).
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("abiSplits").isPresent
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
     packaging {
         jniLibs {
             useLegacyPackaging = true

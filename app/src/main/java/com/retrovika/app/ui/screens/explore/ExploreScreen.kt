@@ -1,5 +1,6 @@
 package com.retrovika.app.ui.screens.explore
 
+import com.retrovika.app.ui.components.focusRing
 import com.retrovika.app.ui.components.busyWaitText
 import com.retrovika.app.ui.components.pressScale
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -397,6 +398,7 @@ private fun CatalogCard(entry: CatalogEntry, task: DownloadTask?, sourceLabels: 
     Column(
         Modifier
             .pressScale(source, pressed = 0.98f)
+            .focusRing(source, CardShape)
             .clip(CardShape)
             .background(Palette.SurfaceHigh)
             .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.12f), Palette.Outline.copy(alpha = 0.5f))), CardShape)

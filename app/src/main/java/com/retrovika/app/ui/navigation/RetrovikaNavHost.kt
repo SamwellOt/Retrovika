@@ -41,11 +41,18 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.ui.semantics.Role
 import com.retrovika.app.ui.components.LocalReduceMotion
 import com.retrovika.app.ui.components.systemAnimationsOff
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -190,10 +197,15 @@ fun RetrovikaNavHost() {
         app.scope.launch { app.updater.checkOnStartup(app.settings.current().checkUpdates) }
     }
 
+    // Tablet ou celular deitado: as abas vão para uma coluna à esquerda. Embaixo, a barra flutuante comia uns 80 dp
+    // de uma tela de 360 dp de altura. A coluna fica em todas as telas (não só nas abas): com ela entrando e saindo
+    // a cada página empilhada, o conteúdo pularia de largura.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val rail = maxWidth >= RAIL_MIN_WIDTH
     Scaffold(
         containerColor = Palette.Ink,
         bottomBar = {
-            AnimatedVisibility(
+            if (!rail) AnimatedVisibility(
                 visible = route in tabRoutes,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
@@ -202,8 +214,15 @@ fun RetrovikaNavHost() {
             }
         },
     ) { padding ->
+        Row(Modifier.fillMaxSize()) {
+        if (rail) {
+            // Numa página empilhada (console, jogo, ajustes de núcleos) fica marcada a aba de onde ela saiu.
+            val stack by nav.currentBackStack.collectAsStateWithLifecycle()
+            val owner = stack.lastOrNull { it.destination.route in tabRoutes }?.destination?.route ?: route
+            TabRail(owner, activeDownloads, onSelect = selectTab)
+        }
         // O conteúdo rola por baixo da barra flutuante; cada tela soma LocalBottomInset ao seu padding.
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxHeight()) {
           CompositionLocalProvider(
               LocalBottomInset provides padding.calculateBottomPadding(),
               LocalTabReselect provides reselect,
@@ -212,8 +231,13 @@ fun RetrovikaNavHost() {
             NavHost(
                 nav, startDestination = "home",
                 // Na horizontal, a barra de navegação de 3 botões e o recorte da câmera ficam nas laterais:
-                // as telas só cuidam do topo e da base, então as laterais são descontadas aqui.
-                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+                // as telas só cuidam do topo e da base, então as laterais são descontadas aqui (a da esquerda
+                // fica com a coluna de abas, quando ela está na tela).
+                modifier = Modifier.fillMaxSize()
+                    // A esquerda já foi descontada pela coluna, que é irmã: sem marcá-la como usada, telas com
+                    // navigationBarsPadding (o navegador) somariam a barra de navegação de novo à esquerda.
+                    .then(if (rail) Modifier.consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start)) else Modifier)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(if (rail) WindowInsetsSides.End else WindowInsetsSides.Horizontal)),
                 // Abas trocam com um fade curto; telas empilhadas entram deslizando levemente da direita.
                 // Durações enxutas: durante a transição as duas telas são desenhadas ao mesmo tempo.
                 // Com "reduzir animações" a troca é imediata: só uma tela é desenhada por vez.
@@ -320,6 +344,63 @@ fun RetrovikaNavHost() {
                     .background(Brush.verticalGradient(listOf(Palette.Ink.copy(alpha = 0.92f), Palette.Ink.copy(alpha = 0.6f)))),
             )
         }
+        }
+    }
+    }
+}
+
+/** Largura a partir da qual as abas ficam numa coluna lateral (a classe "média" do Material). */
+private val RAIL_MIN_WIDTH = 600.dp
+
+/** As abas numa coluna flutuante à esquerda, para telas largas; o mesmo visual da barra de baixo. */
+@Composable
+private fun TabRail(route: String, activeDownloads: Int, onSelect: (String) -> Unit) {
+    val shape = RoundedCornerShape(28.dp)
+    Box(
+        Modifier
+            .fillMaxHeight()
+            .background(Brush.horizontalGradient(0f to Palette.Ink, 0.75f to Palette.Ink.copy(alpha = 0.94f), 1f to Color.Transparent))
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical))
+            .padding(start = 10.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .shadow(24.dp, shape, ambientColor = Palette.Neon, spotColor = Palette.Neon)
+                .clip(shape)
+                .background(Palette.SurfaceHigh)
+                .border(1.dp, Palette.Outline, shape)
+                // Celular deitado com fonte grande: rola em vez de cortar a última aba.
+                .verticalScroll(rememberScrollState())
+                .padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            tabs.forEach { tab ->
+                val selected = route == tab.route
+                val label = stringResource(tab.label)
+                val tint by animateColorAsState(if (selected) Palette.OnAccent else Palette.TextSecondary, label = "tab")
+                val badge = if (tab.route == "downloads") activeDownloads else 0
+                Column(
+                    Modifier
+                        .width(72.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .then(if (selected) Modifier.background(Palette.SunsetGradient) else Modifier)
+                        .selectable(selected = selected, role = Role.Tab) { onSelect(tab.route) }
+                        .padding(vertical = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    BadgedBox(badge = {
+                        if (badge > 0) Badge(containerColor = Palette.Cyan, contentColor = Palette.Ink) { Text("$badge") }
+                    }) {
+                        // O rótulo fica embaixo do ícone: descrever o ícone faria o nome ser lido duas vezes.
+                        Icon(tab.icon, null, tint = tint, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.height(3.dp))
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }
 
@@ -346,6 +427,12 @@ private fun NavHostController.navigateTab(route: String): Boolean {
     // guardaria e restauraria a mesma pilha, e a tela só piscava.
     if (route != "home" && runCatching { getBackStackEntry(route) }.isSuccess) {
         popBackStack(route, inclusive = false)
+        return true
+    }
+    // Página aberta a partir do Início (a coluna de abas fica visível nela): volta ao Início. Sem isto, o navigate
+    // abaixo guardava a página na pilha do Início e a restaurava na hora, e a tela só piscava.
+    if (route == "home" && currentBackStack.value.none { it.destination.route in tabRoutes && it.destination.route != "home" }) {
+        popBackStack("home", inclusive = false)
         return true
     }
     navigate(route) {
@@ -392,7 +479,7 @@ private fun FloatingTabBar(route: String, activeDownloads: Int, onSelect: (Strin
         tabs.forEach { tab ->
             val selected = route == tab.route
             val label = stringResource(tab.label)
-            val tint by animateColorAsState(if (selected) Color(0xFF1C0010) else Palette.TextSecondary, label = "tab")
+            val tint by animateColorAsState(if (selected) Palette.OnAccent else Palette.TextSecondary, label = "tab")
             val badge = if (tab.route == "downloads") activeDownloads else 0
             Row(
                 Modifier

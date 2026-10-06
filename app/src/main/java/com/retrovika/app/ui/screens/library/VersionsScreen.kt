@@ -164,7 +164,7 @@ fun VersionsScreen(systemId: String, onBack: () -> Unit, onOpenGame: (Long) -> U
                                 app.scope.launch(Dispatchers.Main) {
                                     try {
                                         val found = app.dat.identifyAll(list) { done, total -> check.progress = done to total }
-                                        found.forEach { (game, entry) -> app.library.setIdentified(game.id, entry.name, entry.region) }
+                                        app.library.setIdentifiedAll(found.map { (game, entry) -> Triple(game.id, entry.name, entry.region) })
                                         check.error = false
                                         // Mesmo truque do countString: em português o 0 cai em "one" ("0 jogo")
                                         check.message = res.resources.getQuantityString(R.plurals.versions_verify_result, if (found.isEmpty()) 2 else found.size, found.size)

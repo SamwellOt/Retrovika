@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,16 +58,34 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Upload
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import com.retrovika.app.ui.components.Badge
+import com.retrovika.app.ui.components.ConfirmDialog
+import com.retrovika.app.ui.components.focusRing
+import com.retrovika.app.ui.components.pressScale
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.minimumInteractiveComponentSize
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -143,6 +162,8 @@ fun GameScreen(
      * até ele sair): o que depende do estado (gravar num slot, traduzir, hospedar partida) fica desligado.
      */
     menuPending: Boolean = false,
+    /** Controle físico em uso: o menu abre com o foco em "Continuar", mesmo se o último toque na tela foi um dedo. */
+    controllerActive: Boolean = false,
     /** Carregando o jogo (do GLRetroView criado até o primeiro quadro): cobre a tela preta do núcleo. */
     loading: LoadingUi? = null,
     /** Contador de desempenho: lido só dentro dele, uma vez por segundo, sem recompor a tela do jogo; nulo = escondido. */
@@ -220,10 +241,16 @@ fun GameScreen(
         // A aba fica aqui: o menu sai da composição enquanto o editor do controle está aberto e, ao voltar,
         // precisa continuar em Controle. Cada nova abertura do menu começa em Estados.
         var menuTab by remember { mutableStateOf(MenuTab.STATES) }
-        LaunchedEffect(menuShown) { if (!menuShown) menuTab = MenuTab.STATES }
+        // O foco inicial vai para "Continuar" uma vez por abertura: voltar do editor do controle (que recria o menu)
+        // não o tira da aba Controle.
+        var focusPlaced by remember { mutableStateOf(false) }
+        LaunchedEffect(menuShown) { if (!menuShown) { menuTab = MenuTab.STATES; focusPlaced = false } }
 
         AnimatedVisibility(visible = menuShown && !padEditing, enter = fadeIn(), exit = fadeOut()) {
-            PauseMenu(game, system, menu, fastForward, settings, padProfile, menuTab, ready = !menuPending, capturing = menuPending && busy) { menuTab = it }
+            PauseMenu(
+                game, system, menu, fastForward, settings, padProfile, menuTab, ready = !menuPending, capturing = menuPending && busy,
+                placeFocus = !focusPlaced, controllerActive = controllerActive, onFocusPlaced = { focusPlaced = true },
+            ) { menuTab = it }
         }
 
         if (menuOpen) menu.sharing()?.let { ShareStateSheet(it, menu) }
@@ -411,6 +438,10 @@ private fun PauseMenu(
     ready: Boolean,
     /** Captura demorando (passou do instante em que só piscaria): um aviso discreto no pé do menu. */
     capturing: Boolean,
+    /** Primeira composição do menu nesta abertura: o foco ainda pode ir para "Continuar" ([onFocusPlaced] avisa que foi). */
+    placeFocus: Boolean,
+    controllerActive: Boolean,
+    onFocusPlaced: () -> Unit,
     onTab: (MenuTab) -> Unit,
 ) {
     var refresh by remember { mutableIntStateOf(0) }
@@ -419,9 +450,21 @@ private fun PauseMenu(
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF2A0C52), Palette.Ink, Palette.Ink)))
+            .background(Brush.verticalGradient(listOf(Palette.DeepViolet, Palette.Ink, Palette.Ink)))
+            // Só segura os toques para não chegarem ao jogo: fora da navegação pelo D-pad.
+            .focusProperties { canFocus = false }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { },
     ) {
+        // Aberto pelo controle (fora do modo de toque): o foco já começa em "Continuar", e o D-pad navega pelo
+        // menu sem um primeiro aperto "perdido". No toque nada fica destacado.
+        val resume = remember { FocusRequester() }
+        val inputMode = LocalInputModeManager.current.inputMode
+        // Os botões e analógicos do controle não tiram o Android do modo de toque: o controle em uso conta também.
+        val wantsFocus = placeFocus && (controllerActive || inputMode == InputMode.Keyboard)
+        LaunchedEffect(Unit) {
+            if (wantsFocus) runCatching { resume.requestFocus() }
+            onFocusPlaced()
+        }
         // Em retrato (ou telas estreitas) o cabeçalho empilha e os estados viram lista vertical.
         val compact = maxWidth < 600.dp || maxHeight > maxWidth
         Column(
@@ -437,7 +480,7 @@ private fun PauseMenu(
                 Text(game?.title.orEmpty(), style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    GradientButton(stringResource(R.string.common_continue), menu::close, Modifier.weight(1f), icon = Icons.Rounded.PlayArrow, height = 48.dp)
+                    GradientButton(stringResource(R.string.common_continue), menu::close, Modifier.weight(1f).focusRequester(resume), icon = Icons.Rounded.PlayArrow, height = 48.dp)
                     GhostButton(stringResource(R.string.game_exit), menu::exit, icon = Icons.AutoMirrored.Rounded.ExitToApp)
                 }
             } else {
@@ -450,7 +493,7 @@ private fun PauseMenu(
                     Spacer(Modifier.width(12.dp))
                     GhostButton(stringResource(R.string.game_exit), menu::exit, icon = Icons.AutoMirrored.Rounded.ExitToApp)
                     Spacer(Modifier.width(10.dp))
-                    GradientButton(stringResource(R.string.common_continue), menu::close, icon = Icons.Rounded.PlayArrow, height = 44.dp)
+                    GradientButton(stringResource(R.string.common_continue), menu::close, Modifier.focusRequester(resume), icon = Icons.Rounded.PlayArrow, height = 44.dp)
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -517,11 +560,45 @@ private fun slotsState(menu: MenuActions, refresh: Int): List<SaveSlot>? {
     return slots
 }
 
+/**
+ * "Desfazer": volta ao ponto de antes do último carregar ou reiniciar pelo menu. Um estado carregado no slot errado
+ * (o botão fica logo abaixo do de gravar) ou um reinício sem querer perdiam o progresso da sessão.
+ */
+@Composable
+private fun UndoRow(menu: MenuActions, modifier: Modifier = Modifier) {
+    val kind = menu.undoKind() ?: return
+    val shape = RoundedCornerShape(18.dp)
+    val source = remember { MutableInteractionSource() }
+    Row(
+        modifier
+            .fillMaxWidth()
+            .pressScale(source)
+            .focusRing(source, shape)
+            .clip(shape)
+            .background(Palette.Sun.copy(alpha = 0.10f))
+            .border(1.dp, Palette.Sun.copy(alpha = 0.45f), shape)
+            .clickable(source, null, role = Role.Button, onClick = menu::undo)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.AutoMirrored.Rounded.Undo, null, tint = Palette.Sun, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(if (kind == UndoKind.RESET) R.string.game_undo_reset else R.string.game_undo_load), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(if (kind == UndoKind.RESET) R.string.game_undo_reset_subtitle else R.string.game_undo_load_subtitle),
+                style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+            )
+        }
+    }
+}
+
 /** Retrato: um estado por linha, miniatura à esquerda e botões empilhados à direita. */
 @Composable
 private fun StatesList(menu: MenuActions, refresh: Int, ready: Boolean, onChanged: () -> Unit) {
     val slots = slotsState(menu, refresh) ?: return
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
+        if (menu.undoKind() != null) item(key = "undo") { UndoRow(menu) }
         items(slots, key = { it.index }) { slot ->
             Row(
                 Modifier
@@ -545,24 +622,66 @@ private fun StatesList(menu: MenuActions, refresh: Int, ready: Boolean, onChange
     }
 }
 
+/**
+ * Botão dos slots no estilo do app: degradê do sol ([primary], gravar) ou contorno (carregar). O desenho fica
+ * compacto (40 dp) para caber três por cartão na horizontal, mas o toque vale nos 48 dp recomendados.
+ */
+@Composable
+private fun SlotButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, primary: Boolean, enabled: Boolean, showIcon: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val source = remember { MutableInteractionSource() }
+    val content = when {
+        !enabled -> Palette.TextMuted
+        primary -> Palette.OnAccent
+        else -> Palette.TextPrimary
+    }
+    Box(modifier.minimumInteractiveComponentSize(), contentAlignment = Alignment.Center) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .pressScale(source, enabled)
+                .focusRing(source, shape)
+                .clip(shape)
+                .then(
+                    when {
+                        primary && enabled -> Modifier.background(Palette.SunsetHorizontal)
+                        primary -> Modifier.background(Palette.SurfaceHighest)
+                        else -> Modifier.background(Color.White.copy(alpha = 0.05f)).border(1.dp, if (enabled) Palette.Outline else Palette.Outline.copy(alpha = 0.5f), shape)
+                    },
+                )
+                .clickable(source, null, enabled = enabled, role = Role.Button, onClick = onClick)
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (showIcon) { Icon(icon, null, tint = content, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)) }
+            Text(label, style = MaterialTheme.typography.labelLarge, color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 @Composable
 private fun SlotButtons(menu: MenuActions, slot: SaveSlot, ready: Boolean, onChanged: () -> Unit, stacked: Boolean) {
     val save: @Composable (Modifier) -> Unit = { m ->
         // Gravar usa o estado capturado ao abrir o menu: só depois que ele ficou pronto.
-        FilledTonalButton(onClick = { menu.save(slot.index, onChanged) }, enabled = ready, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-            Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_save), maxLines = 1)
-        }
+        SlotButton(stringResource(R.string.game_save), Icons.Rounded.Save, primary = true, enabled = ready, showIcon = stacked, modifier = m) { menu.save(slot.index, onChanged) }
     }
     val load: @Composable (Modifier) -> Unit = { m ->
-        OutlinedButton(onClick = { menu.load(slot.index) }, enabled = slot.exists, modifier = m.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-            Icon(Icons.Rounded.Upload, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.game_load), maxLines = 1)
-        }
+        SlotButton(stringResource(R.string.game_load), Icons.Rounded.Upload, primary = false, enabled = slot.exists, showIcon = stacked, modifier = m) { menu.load(slot.index) }
     }
     val canSave = slot.index != SaveStates.AUTO_SLOT
     val share: @Composable () -> Unit = {
         if (slot.exists) {
+            val source = remember { MutableInteractionSource() }
             Box(
-                Modifier.size(36.dp).clip(CircleShape).background(Palette.Cyan.copy(alpha = 0.14f)).clickable { menu.share(slot.index) },
+                Modifier
+                    .minimumInteractiveComponentSize()
+                    .size(40.dp)
+                    .focusRing(source, CircleShape)
+                    .clip(CircleShape)
+                    .background(Palette.Cyan.copy(alpha = 0.14f))
+                    .clickable(source, null, role = Role.Button) { menu.share(slot.index) },
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Rounded.Share, stringResource(R.string.share_state_title), tint = Palette.Cyan, modifier = Modifier.size(18.dp)) }
         }
@@ -588,6 +707,8 @@ private fun SlotButtons(menu: MenuActions, slot: SaveSlot, ready: Boolean, onCha
 @Composable
 private fun StatesTab(menu: MenuActions, refresh: Int, ready: Boolean, onChanged: () -> Unit) {
     val slots = slotsState(menu, refresh) ?: return
+    Column {
+    UndoRow(menu, Modifier.padding(bottom = 10.dp))
     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         items(slots, key = { it.index }) { slot ->
             Column(
@@ -607,12 +728,14 @@ private fun StatesTab(menu: MenuActions, refresh: Int, ready: Boolean, onChanged
             }
         }
     }
+    }
 }
 
 @Composable
 private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOption, ready: Boolean) {
     var currentShader by remember { mutableStateOf(shader) }
     var disks by remember { mutableStateOf(menu.disks()) }
+    var confirmReset by remember { mutableStateOf(false) }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             SettingRow(stringResource(R.string.game_fast_forward), stringResource(R.string.game_fast_forward_subtitle)) {
@@ -650,37 +773,56 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                     style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!net.playing) {
-                        OutlinedButton(onClick = menu::hostNetplay, enabled = ready) {
-                            Icon(Icons.Rounded.Wifi, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.netplay_host))
-                        }
+                        GhostButton(stringResource(R.string.netplay_host), menu::hostNetplay, icon = Icons.Rounded.Wifi, enabled = ready)
                     } else {
-                        if (net.isHost) OutlinedButton(onClick = { net.resync() }) { Text(stringResource(R.string.netplay_resync)) }
-                        OutlinedButton(onClick = { net.end() }) { Text(stringResource(R.string.netplay_leave)) }
+                        if (net.isHost) GhostButton(stringResource(R.string.netplay_resync), { net.resync() })
+                        GhostButton(stringResource(R.string.netplay_leave), { net.end() })
                     }
                 }
             }
         }
         item {
-            OutlinedButton(onClick = { menu.close(); menu.translate() }, enabled = ready) {
-                Icon(Icons.Rounded.Translate, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.translate_screen))
-            }
+            GhostButton(stringResource(R.string.translate_screen), { menu.close(); menu.translate() }, icon = Icons.Rounded.Translate, enabled = ready)
         }
         item {
-            OutlinedButton(onClick = menu::reset) {
-                Icon(Icons.Rounded.RestartAlt, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.game_reset))
-            }
+            // Só com o estado de agora capturado: é ele que o "Desfazer" do reinício devolve.
+            GhostButton(stringResource(R.string.game_reset), { confirmReset = true }, icon = Icons.Rounded.RestartAlt, tint = Palette.Coral, enabled = ready)
         }
+    }
+    // Reiniciar apaga o progresso desde o último save: um toque sem querer não pode bastar.
+    if (confirmReset) {
+        ConfirmDialog(
+            title = stringResource(R.string.game_reset_confirm_title),
+            // Núcleo sem save states (Play!) ou captura que falhou: não há estado de antes para o "Desfazer" devolver.
+            message = stringResource(if (menu.canUndoReset()) R.string.game_reset_confirm_message else R.string.game_reset_confirm_message_no_undo),
+            confirmLabel = stringResource(R.string.game_reset),
+            onConfirm = menu::reset,
+            onDismiss = { confirmReset = false },
+            icon = Icons.Rounded.RestartAlt,
+        )
     }
 }
 
+/**
+ * Opções do núcleo: tocar abre a lista de valores (o atual e o padrão do núcleo marcados); com controle, esquerda e
+ * direita passam pelo anterior e pelo próximo direto na linha. Antes o toque só avançava, e voltar um valor exigia
+ * dar a volta na lista inteira.
+ */
 @Composable
 private fun CoreTab(menu: MenuActions) {
     var options by remember { mutableStateOf(menu.coreOptions()) }
+    var picking by remember { mutableStateOf<CoreOption?>(null) }
     if (options.isEmpty()) {
         Text(stringResource(R.string.game_core_no_options), color = Palette.TextSecondary)
         return
+    }
+    val set: (CoreOption, String) -> Unit = { opt, value ->
+        // Recusado (partida em rede): a linha continua com o valor que o núcleo tem.
+        if (value != opt.value && menu.setCoreOption(opt, value)) {
+            options = options.map { if (it.key == opt.key) it.copy(value = value) else it }
+        }
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
@@ -690,24 +832,75 @@ private fun CoreTab(menu: MenuActions) {
             )
         }
         items(options, key = { it.key }) { opt ->
+            val shape = RoundedCornerShape(12.dp)
+            val source = remember { MutableInteractionSource() }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .focusRing(source, shape)
+                    .clip(shape)
                     .background(Palette.SurfaceHigh)
-                    .clickable {
-                        val next = opt.next()
-                        menu.setCoreOption(opt, next)
-                        options = options.map { if (it.key == opt.key) it.copy(value = next) else it }
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        // Segurar a seta repetiria a troca a cada ~50 ms, reaplicando a opção no núcleo a cada passo
+                        // (resolução interna, por exemplo): um passo por aperto.
+                        val repeat = e.nativeKeyEvent.repeatCount > 0
+                        when (e.key) {
+                            Key.DirectionLeft -> { if (!repeat) set(opt, opt.previous()); true }
+                            Key.DirectionRight -> { if (!repeat) set(opt, opt.next()); true }
+                            else -> false
+                        }
                     }
+                    .semantics { stateDescription = opt.value }
+                    .clickable(source, null, role = Role.DropdownList) { picking = opt }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(opt.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.width(10.dp))
                 Text(opt.value, style = MaterialTheme.typography.labelMedium, color = Palette.Neon, fontWeight = FontWeight.Bold)
             }
         }
         item { TextButton(onClick = { options = menu.coreOptions() }) { Text(stringResource(R.string.game_refresh_list)) } }
+    }
+    picking?.let { opt ->
+        CoreOptionSheet(opt, onPick = { set(opt, it); picking = null }, onDismiss = { picking = null })
+    }
+}
+
+/** Todos os valores de uma opção do núcleo; o primeiro da lista é o padrão do núcleo (formato libretro v0). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CoreOptionSheet(option: CoreOption, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(), containerColor = Palette.Surface) {
+        LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                Text(option.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp))
+            }
+            items(option.values) { value ->
+                val selected = value == option.value
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(selected = selected, role = Role.RadioButton) { onPick(value) }
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            value, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyLarge,
+                            color = if (selected) Palette.Neon else Palette.TextPrimary,
+                            fontWeight = if (selected) FontWeight.Bold else null,
+                        )
+                        if (value == option.default) {
+                            Spacer(Modifier.width(8.dp))
+                            Badge(stringResource(R.string.game_core_option_default), Palette.Cyan)
+                        }
+                    }
+                    if (selected) Icon(Icons.Rounded.Check, null, tint = Palette.Neon)
+                }
+            }
+        }
     }
 }
 

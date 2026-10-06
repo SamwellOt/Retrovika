@@ -40,17 +40,26 @@ object Palette {
     // Contraste mínimo de 4,5:1 (WCAG AA) sobre Ink (5,9:1) e SurfaceHigh (5,2:1), e ainda 4,6:1 sobre
     // SurfaceHighest; continua abaixo do TextSecondary na hierarquia.
     val TextMuted = Color(0xFF8D86B2)
+    /** Texto e ícones sobre o degradê do sol ou o rosa neon (botão principal, chip ativo, aba ativa). */
+    val OnAccent = Color(0xFF1C0010)
+    /** Ameixa do início dos cartões de destaque (boas-vindas, atualização, sobre). */
+    val Plum = Color(0xFF3A1060)
+    /** Violeta profundo do topo do menu de pausa e do cabeçalho dos ajustes. */
+    val DeepViolet = Color(0xFF2A0C52)
+    /** Azul-petróleo escuro do fim dos cartões de destaque. */
+    val NightTeal = Color(0xFF10263A)
 
     /** Degradê do sol do logo, usado em botões principais e na marca. */
     val SunsetGradient = Brush.linearGradient(listOf(Neon, Orange, Sun))
     val SunsetHorizontal = Brush.horizontalGradient(listOf(Neon, Color(0xFFFF6A5C), Orange))
     val CoolGradient = Brush.linearGradient(listOf(Violet, Cyan))
-    val HeroGradient = Brush.linearGradient(listOf(Color(0xFF2A0C52), Color(0xFF130E21)))
+    /** Fundo dos cartões de destaque: ameixa → superfície → azul-petróleo. */
+    val HeroGradient = Brush.linearGradient(listOf(Plum, SurfaceHigh, NightTeal))
 }
 
 private val colors = darkColorScheme(
     primary = Palette.Neon,
-    onPrimary = Color(0xFF1C0010),
+    onPrimary = Palette.OnAccent,
     primaryContainer = Color(0xFF4A1233),
     onPrimaryContainer = Color(0xFFFFD6E6),
     secondary = Palette.Cyan,

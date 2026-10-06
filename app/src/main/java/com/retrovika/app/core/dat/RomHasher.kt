@@ -23,8 +23,12 @@ import kotlin.coroutines.coroutineContext
 object RomHasher {
     data class Hashes(val crc32: List<String>, val md5: List<String>, val size: Long)
 
-    suspend fun hash(context: Context, game: Game): Hashes? = withContext(Dispatchers.IO) {
-        openStream(context, game)?.use { input -> hashStream(input, headerLength(context, game)) }
+    /**
+     * Os hashes do arquivo. Sem [md5] só o CRC32 é calculado (várias vezes mais rápido que o MD5): os DATs No-Intro
+     * trazem o CRC de quase todas as entradas, e o MD5 só é pedido quando o CRC não achou nada.
+     */
+    suspend fun hash(context: Context, game: Game, md5: Boolean = true): Hashes? = withContext(Dispatchers.IO) {
+        openStream(context, game)?.use { input -> hashStream(input, headerLength(context, game), md5) }
     }
 
     private fun headerLength(context: Context, game: Game): Int {
@@ -45,7 +49,7 @@ object RomHasher {
             } ?: false
         }.getOrDefault(false)
 
-    private suspend fun hashStream(input: InputStream, headerLength: Int): Hashes {
+    private suspend fun hashStream(input: InputStream, headerLength: Int, withMd5: Boolean): Hashes {
         val crcFull = CRC32(); val crcTrim = CRC32()
         val md5Full = MessageDigest.getInstance("MD5"); val md5Trim = MessageDigest.getInstance("MD5")
         val buffer = ByteArray(64 * 1024)
@@ -56,12 +60,12 @@ object RomHasher {
             val n = input.read(buffer)
             if (n < 0) break
             crcFull.update(buffer, 0, n)
-            md5Full.update(buffer, 0, n)
+            if (withMd5) md5Full.update(buffer, 0, n)
             if (headerLength > 0) {
                 val skip = (headerLength - pos).coerceIn(0L, n.toLong()).toInt()
                 if (skip < n) {
                     crcTrim.update(buffer, skip, n - skip)
-                    md5Trim.update(buffer, skip, n - skip)
+                    if (withMd5) md5Trim.update(buffer, skip, n - skip)
                 }
             }
             pos += n
@@ -71,7 +75,7 @@ object RomHasher {
             add(crcFull.value.toString(16).padStart(8, '0'))
             if (headerLength > 0) add(crcTrim.value.toString(16).padStart(8, '0'))
         }
-        val md5s = buildList {
+        val md5s = if (!withMd5) emptyList() else buildList {
             add(md5Full.digest().toHex())
             if (headerLength > 0) add(md5Trim.digest().toHex())
         }

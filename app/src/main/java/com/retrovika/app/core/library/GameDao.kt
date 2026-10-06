@@ -8,24 +8,34 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Listas (grades, prateleiras, busca) e a página do jogo. As listas trazem todas as colunas menos a descrição
+ * ([LIST_COLUMNS]): ela só aparece na página do jogo ([observe]), e cada mudança na tabela reemite todas as
+ * listas observadas com os textos de todos os jogos. Nada grava de volta um jogo vindo de uma lista.
+ */
 @Dao
 interface GameDao {
-    @Query("SELECT * FROM games ORDER BY title COLLATE NOCASE")
+    companion object {
+        const val LIST_COLUMNS = "id, title, rawName, fileName, uri, systemId, size, region, coverUrl, favorite, lastPlayed, " +
+            "playTimeSeconds, addedAt, coreOverride, source, developer, NULL AS description, datName, verified"
+    }
+
+    @Query("SELECT $LIST_COLUMNS FROM games ORDER BY title COLLATE NOCASE")
     fun observeAll(): Flow<List<Game>>
 
-    @Query("SELECT * FROM games WHERE systemId = :systemId ORDER BY title COLLATE NOCASE")
+    @Query("SELECT $LIST_COLUMNS FROM games WHERE systemId = :systemId ORDER BY title COLLATE NOCASE")
     fun observeBySystem(systemId: String): Flow<List<Game>>
 
-    @Query("SELECT * FROM games WHERE lastPlayed IS NOT NULL ORDER BY lastPlayed DESC LIMIT :limit")
+    @Query("SELECT $LIST_COLUMNS FROM games WHERE lastPlayed IS NOT NULL ORDER BY lastPlayed DESC LIMIT :limit")
     fun observeRecent(limit: Int = 12): Flow<List<Game>>
 
-    @Query("SELECT * FROM games WHERE favorite = 1 ORDER BY title COLLATE NOCASE")
+    @Query("SELECT $LIST_COLUMNS FROM games WHERE favorite = 1 ORDER BY title COLLATE NOCASE")
     fun observeFavorites(): Flow<List<Game>>
 
-    @Query("SELECT * FROM games ORDER BY addedAt DESC LIMIT :limit")
+    @Query("SELECT $LIST_COLUMNS FROM games ORDER BY addedAt DESC LIMIT :limit")
     fun observeNewest(limit: Int = 12): Flow<List<Game>>
 
-    @Query("SELECT * FROM games WHERE title LIKE '%' || :query || '%' ORDER BY title COLLATE NOCASE LIMIT 100")
+    @Query("SELECT $LIST_COLUMNS FROM games WHERE title LIKE '%' || :query || '%' ORDER BY title COLLATE NOCASE LIMIT 100")
     fun search(query: String): Flow<List<Game>>
 
     @Query("SELECT systemId, COUNT(*) AS count FROM games GROUP BY systemId")
@@ -69,4 +79,10 @@ interface GameDao {
 
     @Query("UPDATE games SET datName = :name, region = COALESCE(:region, region), verified = 1 WHERE id = :id")
     suspend fun setIdentified(id: Long, name: String, region: String?)
+
+    /** Vários de uma vez, numa transação só: as listas observadas são refeitas uma vez, não uma por jogo. */
+    @androidx.room.Transaction
+    suspend fun setIdentifiedAll(matches: List<Triple<Long, String, String?>>) {
+        matches.forEach { (id, name, region) -> setIdentified(id, name, region) }
+    }
 }

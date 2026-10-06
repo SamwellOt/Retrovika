@@ -58,10 +58,20 @@
     <string name="game_disc_n">Disc %d</string>
     <string name="game_reset">Restart game</string>
     <string name="game_core_no_options">This core has no configurable options.</string>
-    <string name="game_core_options_hint">Tap an option to cycle its value. Some changes only apply after restarting the game.</string>
+    <string name="game_core_options_hint">Tap an option to pick its value (with a controller, ← and → also change it). Some changes only apply after restarting the game.</string>
     <string name="game_refresh_list">Refresh list</string>
     <string name="game_loading_game">Loading game…</string>
     <string name="game_restoring_progress">Restoring progress…</string>
     <string name="game_cancelling">Cancelling…</string>
     <string name="game_menu_capturing">Capturing the game state…</string>
+    <string name="game_state_loaded_undo">State loaded · undo it from the menu</string>
+    <string name="game_undo_load">Undo the last load</string>
+    <string name="game_undo_reset">Undo the restart</string>
+    <string name="game_undo_load_subtitle">Back to where you were before loading</string>
+    <string name="game_undo_reset_subtitle">Back to where you were before restarting</string>
+    <string name="game_undo_done">Back to where you were</string>
+    <string name="game_reset_confirm_title">Restart the game?</string>
+    <string name="game_reset_confirm_message">Everything since your last save is lost. You can still undo it from the States tab.</string>
+    <string name="game_core_option_default">default</string>
+    <string name="game_reset_confirm_message_no_undo">Everything since your last save is lost.</string>
 </resources>

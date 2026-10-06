@@ -100,4 +100,16 @@
     <string name="library_with_games_empty_message">Link a folder or import games, and the consoles that have them show up here.</string>
     <string name="details_favorite_add">Add to favorites</string>
     <string name="details_favorite_remove">Remove from favorites</string>
+    <string name="game_quick_actions">Game options</string>
+    <string name="game_quick_details">Open game page</string>
+    <string name="home_played_just_now">Played just now</string>
+    <string name="home_played_minutes">Played %d min ago</string>
+    <string name="home_played_hours">Played %d h ago</string>
+    <plurals name="home_played_days">
+        <item quantity="one">Played %d day ago</item>
+        <item quantity="other">Played %d days ago</item>
+    </plurals>
+    <string name="system_settings_title">Console settings</string>
+    <string name="system_settings_expanded">Expanded</string>
+    <string name="system_settings_collapsed">Collapsed</string>
 </resources>

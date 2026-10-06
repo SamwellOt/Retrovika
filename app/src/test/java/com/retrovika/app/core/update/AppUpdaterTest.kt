@@ -36,6 +36,25 @@ class AppUpdaterTest {
     }
 
     @Test
+    fun `escolhe o apk da arquitetura do aparelho e cai no universal`() {
+        val json = """
+            {"tag_name":"v0.6.7","assets":[
+              {"name":"Retrovika-0.6.7.arm64-v8a.apk","browser_download_url":"https://x/arm64.apk","size":14},
+              {"name":"Retrovika-0.6.7.apk","browser_download_url":"https://x/universal.apk","size":25},
+              {"name":"Retrovika-0.6.7.armeabi-v7a.apk","browser_download_url":"https://x/v7a.apk","size":13},
+              {"name":"Retrovika-0.6.7.x86_64.apk","browser_download_url":"https://x/x86_64.apk","size":15}]}
+        """.trimIndent()
+        assertEquals("https://x/arm64.apk", AppUpdater.parseRelease(json, listOf("arm64-v8a", "armeabi-v7a"))!!.apkUrl)
+        assertEquals("https://x/v7a.apk", AppUpdater.parseRelease(json, listOf("armeabi-v7a", "armeabi"))!!.apkUrl)
+        // Arquitetura sem APK próprio, ou sem saber a do aparelho: o universal, nunca o de outra arquitetura.
+        assertEquals("https://x/universal.apk", AppUpdater.parseRelease(json, listOf("riscv64"))!!.apkUrl)
+        assertEquals("https://x/universal.apk", AppUpdater.parseRelease(json)!!.apkUrl)
+        // Release só com APKs por arquitetura, nenhum deste aparelho: nada a instalar.
+        val onlySplits = """{"tag_name":"v0.6.7","assets":[{"name":"Retrovika-0.6.7.x86_64.apk","browser_download_url":"u"}]}"""
+        assertNull(AppUpdater.parseRelease(onlySplits, listOf("arm64-v8a")))
+    }
+
+    @Test
     fun `ignora release sem apk e pre-release`() {
         assertNull(AppUpdater.parseRelease("""{"tag_name":"v1.0","assets":[]}"""))
         assertNull(AppUpdater.parseRelease("""{"tag_name":"v1.0","prerelease":true,"assets":[{"name":"a.apk","browser_download_url":"u"}]}"""))

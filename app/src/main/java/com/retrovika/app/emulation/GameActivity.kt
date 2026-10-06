@@ -225,6 +225,18 @@ class GameActivity : ComponentActivity() {
     private var frozenState: ByteArray? = null
     /** Quadros rodados ([GLRetroView.runCount]) quando [frozenState] foi capturado; -1 se não se sabe. */
     private var frozenAtFrames = -1L
+    /**
+     * O jogo de antes do último carregar ou reiniciar pelo menu (o estado capturado ao abrir o menu): "Desfazer"
+     * volta a ele. Um nível só, e só nesta sessão; [undoKind] diz ao menu o que desfazer.
+     */
+    private var undoState: ByteArray? = null
+    private var undoKind by mutableStateOf<UndoKind?>(null)
+    /** Quadros rodados ([GLRetroView.runCount]) quando o ponto de desfazer foi criado: ele vence com o jogo andando. */
+    private var undoAtFrames = 0L
+    /** Muda a cada ponto novo: a compressão de um ponto antigo que termina depois não o sobrescreve. */
+    private var undoGeneration = 0
+    /** Gravações das opções do núcleo, na ordem em que foram feitas (ver [MenuActions.setCoreOption]). */
+    private val optionSaves = Channel<Triple<String, String, String>>(Channel.UNLIMITED)
     /** Quadros rodados quando o salvamento automático foi gravado pela última vez nesta sessão; -1 = nunca/desatualizado. */
     private var lastAutoFrames = -1L
     /** O salvamento automático lido antes da hora, enquanto o núcleo carrega (ver [prepare]); nulo se não se aplica. */
@@ -345,6 +357,7 @@ class GameActivity : ComponentActivity() {
                     toast = toast,
                     busy = busy,
                     menuPending = menuPending,
+                    controllerActive = controllerActive,
                     loading = loading,
                     // Lambda: só o contador lê o estado, e a tela do jogo não recompõe a cada segundo por causa dele.
                     perfStats = { perfStats },
@@ -354,6 +367,10 @@ class GameActivity : ComponentActivity() {
                 )
             }
         }
+
+        // Uma gravação por vez e na ordem: tocadas rápidas (ou ← → do controle) lançavam gravações em paralelo, e uma
+        // intermediária podia terminar por último e voltar na próxima abertura. No escopo do app: sair do jogo não as perde.
+        app.scope.launch { for ((coreId, key, value) in optionSaves) runCatching { app.settings.setCoreOption(coreId, key, value) } }
 
         lifecycleScope.launch {
             // Qualquer falha inesperada na preparação vira a tela de erro com o motivo, em vez de fechar o app.
@@ -1342,6 +1359,9 @@ class GameActivity : ComponentActivity() {
         activityResumed = true
         playSession?.let { app.sessions.open(it) }
         hideSystemBars()
+        // Analógicos de controles físicos: o Android junta os movimentos e entrega um lote por vsync (até um quadro
+        // de atraso). Sem lote, cada leitura do eixo chega na hora. Os botões já chegam assim.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) window.decorView.requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_JOYSTICK)
         updateEmulationState()
     }
 
@@ -1388,6 +1408,7 @@ class GameActivity : ComponentActivity() {
         if (isFinishing) app.remote.stop()
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
+        optionSaves.close()
         super.onDestroy()
     }
 
@@ -1541,6 +1562,32 @@ class GameActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Guarda o ponto de desfazer. O estado vai comprimido (RZip: 25–200× menor) assim que a compressão termina, fora da
+     * thread principal: inteiro, um estado de PS2 ou GameCube segurava dezenas de MB a sessão toda.
+     */
+    private fun rememberUndo(view: GLRetroView, state: ByteArray, kind: UndoKind) {
+        undoState = state
+        undoKind = kind
+        undoAtFrames = view.runCount()
+        val generation = ++undoGeneration
+        lifecycleScope.launch {
+            val packed = withContext(Dispatchers.Default) { runCatching { RZip.compress(state) }.getOrNull() } ?: return@launch
+            if (generation == undoGeneration && undoState === state) undoState = packed
+        }
+    }
+
+    private fun clearUndo() {
+        undoState = null
+        undoKind = null
+        undoGeneration++
+    }
+
+    /** O ponto de desfazer vale por alguns minutos de jogo: depois disso, um toque nele apagaria tudo o que veio depois. */
+    private fun expireUndo(view: GLRetroView) {
+        if (undoState != null && view.runCount() - undoAtFrames > UNDO_MAX_FRAMES) clearUndo()
+    }
+
     /** O estado do jogo mudou sem rodar quadro nenhum (carregar, reiniciar…): o próximo salvamento automático grava. */
     private fun autoSaveStale() { lastAutoFrames = -1L }
 
@@ -1572,10 +1619,14 @@ class GameActivity : ComponentActivity() {
                 menuPending = false
                 // Voltar depois de "Sair" (ainda esperando o estado) desiste da saída também.
                 exitAfterCapture = false
+                // Com controle em uso o foco foi para "Continuar" assim que o menu apareceu: volta para o jogo.
+                retroView?.requestFocus()
                 return
             }
             closeShare()
             menuOpen = false
+            // Ao voltar a rodar, o LibretroDroid recria a entrada sem nada apertado (resume): nenhum botão fica preso.
+            retroView?.let { menuFocus(it, open = false) }
             padEditing = false
             menuFrame = null
             // A captura vale só para este menu; reaproveitá-la depois ilustraria o save com uma tela antiga.
@@ -1624,6 +1675,8 @@ class GameActivity : ComponentActivity() {
             if (!statesSupported()) { toast = getString(R.string.game_states_unsupported, core.displayName); return }
             // Sem jogo carregado não há o que restaurar, e o carregamento automático ainda viria por cima.
             if (!autoSaveReady) { toast = getString(R.string.game_state_not_ready); return }
+            // O jogo como estava ao abrir o menu: o fechar() abaixo solta o [frozenState].
+            val before = frozenState
             lifecycleScope.launch {
                 val data = try {
                     withContext(Dispatchers.IO) { states.read(slot) }
@@ -1642,7 +1695,37 @@ class GameActivity : ComponentActivity() {
                 // quadro desenhado, para ter o contexto GL): o menu fecha antes. A espera fica fora da thread principal.
                 close()
                 val ok = awaitEmulationFrame(view) && applyState(view, data) == true
-                if (retroView === view) toast = getString(if (ok) R.string.game_state_loaded else R.string.game_state_load_failed)
+                if (retroView !== view) return@launch
+                // Sem o estado de antes (menu ainda capturando, núcleo sem estado), o ponto antigo não vale mais: ele
+                // voltaria para antes de um carregamento mais velho, apagando o que foi jogado entre os dois.
+                if (ok) if (before != null) rememberUndo(view, before, UndoKind.LOAD) else clearUndo()
+                toast = getString(
+                    when {
+                        !ok -> R.string.game_state_load_failed
+                        before != null -> R.string.game_state_loaded_undo
+                        else -> R.string.game_state_loaded
+                    },
+                )
+            }
+        }
+
+        override fun undoKind(): UndoKind? = undoKind
+
+        override fun canUndoReset() = statesSupported() && frozenState != null
+
+        override fun undo() {
+            val view = retroView ?: return
+            expireUndo(view)
+            val stored = undoState ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
+            // Como o carregar: o estado só entra na thread de emulação, com o menu fechado e um quadro desenhado.
+            close()
+            lifecycleScope.launch {
+                val data = withContext(Dispatchers.Default) { runCatching { if (RZip.isCompressed(stored)) RZip.decompress(stored) else stored }.getOrNull() }
+                val ok = data != null && awaitEmulationFrame(view) && applyState(view, data) == true
+                if (retroView !== view) return@launch
+                if (ok) clearUndo()
+                toast = getString(if (ok) R.string.game_undo_done else R.string.game_state_load_failed)
             }
         }
 
@@ -1662,10 +1745,12 @@ class GameActivity : ComponentActivity() {
         override fun coreOptions(): List<CoreOption> =
             retroView?.getVariables()?.mapNotNull(CoreOption::parse).orEmpty().filter { it.key !in core.fixed }
 
-        override fun setCoreOption(option: CoreOption, value: String) {
-            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
-            retroView?.updateVariables(Variable(option.key, value))
-            app.scope.launch { app.settings.setCoreOption(core.id, option.key, value) }
+        override fun setCoreOption(option: CoreOption, value: String): Boolean {
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return false }
+            val view = retroView ?: return false
+            view.updateVariables(Variable(option.key, value))
+            optionSaves.trySend(Triple(core.id, option.key, value))
+            return true
         }
 
         override fun disks(): Pair<Int, Int> {
@@ -1684,12 +1769,14 @@ class GameActivity : ComponentActivity() {
         override fun reset() {
             val view = retroView ?: return
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
+            val before = frozenState
             // Como o carregamento: reiniciar mexe no núcleo, então a emulação volta a rodar antes.
             close()
             lifecycleScope.launch {
                 if (!awaitEmulationFrame(view)) return@launch
                 autoSaveStale()
-                withContext(Dispatchers.Default) { runCatching { view.reset() } }
+                val ok = withContext(Dispatchers.Default) { runCatching { view.reset() }.isSuccess }
+                if (ok && retroView === view) if (before != null) rememberUndo(view, before, UndoKind.RESET) else clearUndo()
             }
         }
 
@@ -2003,6 +2090,8 @@ class GameActivity : ComponentActivity() {
         // Com o menu aberto os eventos do controle não chegam ao núcleo: o que estava apertado ao abrir
         // ficaria preso (personagem andando sozinho) ao voltar ao jogo.
         releaseAllInputs(view)
+        // Antes de o menu aparecer: com ele já na tela e o estado ainda saindo, o "Desfazer" vencido seria tocável.
+        expireUndo(view)
         muteForCapture(view)
         menuOpening = true
         // O menu aparece já, com o que depende do estado desligado: o toque tem resposta na hora. A emulação só
@@ -2050,9 +2139,20 @@ class GameActivity : ComponentActivity() {
         frozenAtFrames = frames
         menuSnapshot = thumb
         menuOpen = true
+        menuFocus(view, open = true)
         updateEmulationState()
         // Com a emulação já parada, o exit() grava o [frozenState] que acabou de chegar, sem serializar de novo.
         if (exit) menuActions.exit()
+    }
+
+    /**
+     * O GLRetroView fica com o foco do Android durante o jogo. Com o menu aberto ele sai da fila de foco: senão as setas
+     * de um teclado (ou de um controle que ainda não apertou nada no jogo) iam para ele, e o menu não navegava.
+     */
+    private fun menuFocus(view: GLRetroView, open: Boolean) {
+        view.isFocusable = !open
+        view.isFocusableInTouchMode = !open
+        if (!open) view.requestFocus()
     }
 
     /** O estado do menu ainda está saindo da thread de emulação (menu na tela esperando, ou cancelado no meio). */
@@ -2166,6 +2266,16 @@ class GameActivity : ComponentActivity() {
         }
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // Com o jogo rodando, os movimentos do toque (D-pad deslizado, analógico virtual, tela de toque do DS) vão
+        // direto, sem esperar o próximo vsync, onde o Android os agrupa por padrão: até um quadro a menos de atraso.
+        // O pedido vale para o gesto que começa neste toque; no menu e nas outras telas fica o lote normal.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && !menuOpen && !menuPending && ui is EmulationUi.Running) {
+            window.decorView.requestUnbufferedDispatch(event)
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val view = retroView
         val isMenuKey = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE
@@ -2251,6 +2361,8 @@ class GameActivity : ComponentActivity() {
         /** Cópias da tela tentadas ao abrir a tradução, cada uma depois de a emulação desenhar quadros novos. */
         private const val TRANSLATE_CAPTURE_ATTEMPTS = 2
         private const val SRAM_SAVE_INTERVAL_MS = 30_000L
+        /** Uns 5 minutos de jogo a 60 quadros por segundo. */
+        private const val UNDO_MAX_FRAMES = 60L * 60 * 5
         /** Teto de uma vibração de rumble contínua; o núcleo manda força zero para parar antes disso. */
         private const val RUMBLE_MAX_MS = 10_000L
         private const val BENCH_LOAD_TIMEOUT_MS = 25_000L
@@ -2324,6 +2436,9 @@ fun ShaderOption.toShaderConfig(): ShaderConfig = when (this) {
     ShaderOption.LCD -> ShaderConfig.LCD
 }
 
+/** O que o "Desfazer" do menu de pausa desfaz. */
+enum class UndoKind { LOAD, RESET }
+
 interface MenuActions {
     fun open()
     fun close()
@@ -2331,10 +2446,16 @@ interface MenuActions {
     fun thumbnail(slot: Int): Bitmap?
     fun save(slot: Int, onDone: () -> Unit)
     fun load(slot: Int)
+    /** Nulo quando não há o que desfazer; é estado do Compose, o menu recompõe quando muda. */
+    fun undoKind(): UndoKind?
+    fun undo()
+    /** Reiniciar agora deixa um "Desfazer": o núcleo grava estados e o de agora foi capturado. */
+    fun canUndoReset(): Boolean
     fun toggleFastForward()
     fun setShader(option: ShaderOption)
     fun coreOptions(): List<CoreOption>
-    fun setCoreOption(option: CoreOption, value: String)
+    /** Falso se a opção não foi aplicada (partida em rede): a tela não deve mostrar o valor novo. */
+    fun setCoreOption(option: CoreOption, value: String): Boolean
     fun disks(): Pair<Int, Int>
     fun changeDisk(index: Int)
     fun reset()

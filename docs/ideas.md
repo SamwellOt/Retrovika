@@ -1,0 +1,27 @@
+# Ideas for later
+
+Features that would set Retrovika apart, collected in October 2026 from a review of the code. None of them is implemented. Each one lists what it builds on, so the work can start from the existing pieces. Ranked by impact × feasibility.
+
+Already present, so not listed: shaders (`ShaderOption`), haptics on the virtual pad, core rumble (port 0), physical controllers by `controllerNumber`, play time and last played.
+
+1. **AI companion (S–M).** A "Help" tab in the pause menu sends Gemini the frozen frame, the title, the console, the Wikipedia summary and the recent translated lines, and answers "what do I do now?" with a spoiler level. Also a "previously on…" recap when a game comes back after days (autosave thumbnail + play time) and a "how to play" card from the `PadLayout`. Builds on `GeminiTranslator`/`GeminiText` (key, model, errors, `GameContext`), the frame capture of `LiveTranslator` (`requestFrameSnapshot`, `frozenState`), `LiveTranslator.history`, `GameInfoRepository` (Wikipedia, HowLongToBeat) and `MenuTab` in `GameScreen`. Risks: needs the user's own key; answers are often wrong without the `google_search` grounding tool; the frame leaves the device (ask once).
+
+2. **Rewind and a "time machine" (M).** A native ring of serialized states (every N frames, XOR deltas, compressed) in `LibretroDroid::step`, on the GL thread; hold a pad button to rewind. Plus an automatic timeline: every few minutes a compressed state and thumbnail, beyond the 4 slots, against bad saves and soft locks. Builds on `RZip` (states shrink 25–200×), `SaveStates.writeAsync` and the thumbnails. Only for `GameSystem.lightweight`, never with `saveStates = false`, in netplay or in guest sessions. Risks: memory/CPU on heavy cores, interplay with fast-forward and `SpeedWatch`.
+
+3. **"Continue" everywhere (S, PiP M).** Dynamic shortcuts on the launcher icon for the last 3 games (`ShortcutManagerCompat`, pushed on game exit), a Glance widget with the autosave thumbnail and play time, and Picture-in-Picture (`enterPictureInPictureMode` + `onUserLeaveHint`). PiP has to move the SRAM/autosave write from `onPause` to `onStop` without losing the crash safety, and hide the pad.
+
+4. **Spoken translation and live subtitles (S/M).** `TextToSpeech` reads each translated block; an "auto" mode re-runs OCR without pausing when the text area of the frame changes (16×16 grid hash) and shows subtitles instead of the overlay. Builds on `LiveTranslator`, `TranslationOverlay`, `TranslationText.groupLines` and the native frame snapshot. Risks: Gemini quota (default to ML Kit + Google Translate), OCR cost on ENTRY devices.
+
+5. **Instant replay, "save the last 30 s" (M).** A low-bitrate H.264 ring of GOPs plus AAC, written with `MediaMuxer` on one tap and shared through the FileProvider. Builds on `capture.cpp`, `remote/VideoEncoder.kt` (encoder fallbacks), `Capture::writeAudio` and `Fmp4`. GLES 3 only; can't run with remote play (one capture surface); keep it out of `SpeedWatch` like a connected remote screen.
+
+6. **RetroAchievements (L, highest impact).** rcheevos in the `libretrodroid` CMake build, `rc_client` driven after `retro_run` on the GL thread, `SET_MEMORY_MAPS`/`SYSTEM_RAM` in `environment.cpp`, HTTP bridged to OkHttp over JNI, login in the `secrets` prefs, toast and badges. Hardcore mode must block rewind, cheats, state loading, slow motion and translation pauses. Disc hashing over SAF goes through `GameFiles.virtualFiles`. Check RA's rules for new emulator integrations.
+
+7. **PT-BR translation patches applied at launch (M).** IPS/BPS/UPS soft-patching (pure Kotlin, unit-testable) into `loadGameFromBytes`, never touching the ROM; matched by the CRC/MD5 that `RomHasher`/`DatRepository` already compute; "Play translated" toggle on the game page. Risk: finding a source of patches (romhacking.net is archived). Mostly cartridge systems; disc patches (xdelta) are heavier.
+
+8. **Run-ahead (M).** Run hidden frames with video and audio off and restore the state, so the visible frame is 1–2 frames ahead. Single instance only (LibretroDroid is a singleton). Needs audio discard on hidden frames and a `GET_SAVESTATE_CONTEXT` answer. Doubles CPU per frame; off in netplay and in the benchmark; `lightweight` systems only.
+
+9. **Save sync and device handoff (M–L).** WebDAV first, Google Drive (`drive.appdata`) later: `.srm`, the slot 0 autosave, per-game choices and pad profiles, last writer wins with a conflict prompt. "Continue on the tablet/TV" pushes autosave + SRAM. Builds on `StatePackage`/`.rvstate`, `LanTransfer`, `StatePackage.match`, `RZip`. The shared PlayStation memory cards (`saves/psx/`, `pcsx2/memcards`) need care. Android backup leaves `states/` out today.
+
+10. **Handheld and TV mode (M–L).** Per-console and per-game remapping of physical buttons (extending `PadProfile`), hotkey combos (Select+R1 to save, etc.), hiding the touch pad when built-in controls are detected (`hidePad`, `detectController`).
+
+Ruled out for now: internet netplay through a relay (input-delay lockstep without rollback feels poor at internet latency, and a relay is ongoing cost); theme colours from cover art (low impact, could be a detail of idea 3).

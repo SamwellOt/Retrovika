@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /** INVALID: o conteúdo não é do formato esperado (BiosFile.format), mesmo com o nome certo. */
 enum class BiosStatus { OK, WRONG_HASH, INVALID, MISSING }
@@ -31,7 +32,7 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
         val file = File(paths.system, bios.fileName)
         val status = when {
             !file.exists() -> BiosStatus.MISSING
-            bios.md5 != null && !md5(file).equals(bios.md5, ignoreCase = true) -> BiosStatus.WRONG_HASH
+            bios.md5 != null && !cachedMd5(file).equals(bios.md5, ignoreCase = true) -> BiosStatus.WRONG_HASH
             bios.format != null && !BiosFormats.isValid(bios.format, file) -> BiosStatus.INVALID
             else -> BiosStatus.OK
         }
@@ -64,6 +65,20 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
         return file.exists() && (bios.format == null || BiosFormats.isValid(bios.format, file))
     }
 
+    /** MD5 já calculado por arquivo, com o tamanho e a data dele: trocar o arquivo invalida a entrada. */
+    private val md5Cache = ConcurrentHashMap<String, Triple<Long, Long, String>>()
+
+    /**
+     * O MD5 de [file], refeito só quando o tamanho ou a data mudam. A página de cada console confere as BIOS ao
+     * abrir: sem o cache, eram alguns MB lidos e resumidos (BIOS de PS2, Saturn) toda vez.
+     */
+    private fun cachedMd5(file: File): String {
+        val size = file.length()
+        val modified = file.lastModified()
+        md5Cache[file.path]?.let { (s, m, hash) -> if (s == size && m == modified) return hash }
+        return md5(file).also { md5Cache[file.path] = Triple(size, modified, it) }
+    }
+
     /** [check] calcula MD5 de cada arquivo; use esta versão a partir da UI. */
     suspend fun checkAsync(system: GameSystem): List<BiosCheck> = withContext(Dispatchers.IO) { check(system) }
 
@@ -90,11 +105,13 @@ class BiosManager(private val paths: StoragePaths, private val resolver: Content
                     ?: return@mapNotNull null
                 val dest = File(paths.system, match.fileName)
                 // Casou só pelo nome, com MD5 diferente: não substitui uma cópia que já confere.
-                if (match.md5 != null && !match.md5.equals(hash, true) && dest.exists() && md5(dest).equals(match.md5, true)) {
+                if (match.md5 != null && !match.md5.equals(hash, true) && dest.exists() && cachedMd5(dest).equals(match.md5, true)) {
                     return@mapNotNull null
                 }
                 dest.parentFile?.mkdirs()
                 file.copyTo(dest, overwrite = true)
+                // O hash da cópia já é conhecido: a mesma data (no mesmo segundo) não deixa um hash velho no cache.
+                md5Cache[dest.path] = Triple(dest.length(), dest.lastModified(), hash)
                 match.fileName
             } catch (e: CancellationException) {
                 throw e

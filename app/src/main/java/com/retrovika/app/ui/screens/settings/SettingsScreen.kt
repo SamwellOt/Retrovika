@@ -473,7 +473,7 @@ private fun AboutCard(version: String, games: Int, systems: Int) {
             .padding(top = 18.dp)
             .fillMaxWidth()
             .clip(shape)
-            .background(Brush.linearGradient(listOf(Color(0xFF3A1060), Color(0xFF1B152E), Color(0xFF10263A))))
+            .background(Palette.HeroGradient)
             .border(1.dp, Brush.linearGradient(listOf(Palette.Neon.copy(alpha = 0.5f), Palette.Cyan.copy(alpha = 0.3f))), shape)
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -585,7 +585,7 @@ private fun PadPreview(opacity: Float, scale: Float) {
             .fillMaxWidth()
             .height(130.dp)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF2A0C52), Color(0xFF5A1466), Color(0xFF1C0736))))
+            .background(Brush.verticalGradient(listOf(Palette.DeepViolet, Color(0xFF5A1466), Color(0xFF1C0736))))
             .border(1.dp, Palette.Outline, shape),
     ) {
         Canvas(Modifier.fillMaxSize()) {

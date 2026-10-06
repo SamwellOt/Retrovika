@@ -7,6 +7,13 @@ import com.retrovika.app.core.library.RomNaming
 import com.retrovika.app.core.net.Http
 import com.retrovika.app.core.systems.Systems
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,13 +43,17 @@ class DatRepository(
     suspend fun identify(game: Game): Identification {
         if (!supports(game.systemId)) return Identification.Unsupported
         ensureLoaded(game.systemId)
-        return match(game)
+        return match(game, md5Fallback = dao.countMd5Only(game.systemId) > 0)
     }
 
-    private suspend fun match(game: Game): Identification {
-        val hashes = RomHasher.hash(context, game) ?: return Identification.NotFound
+    /**
+     * Primeiro só o CRC32, numa passada barata; o MD5 (uma segunda leitura) só quando o CRC não achou nada e o DAT
+     * tem entradas que só o MD5 identifica ([md5Fallback]).
+     */
+    private suspend fun match(game: Game, md5Fallback: Boolean): Identification {
+        val hashes = RomHasher.hash(context, game, md5 = false) ?: return Identification.NotFound
         val match = dao.findByCrc(game.systemId, hashes.crc32)
-            ?: dao.findByMd5(game.systemId, hashes.md5)
+            ?: (if (md5Fallback) RomHasher.hash(context, game, md5 = true)?.let { dao.findByMd5(game.systemId, it.md5) } else null)
             ?: return Identification.NotFound
         val versions = dao.versions(game.systemId, match.cleanTitle).filter { it.id != match.id }
         return Identification.Found(match, versions)
@@ -52,41 +63,58 @@ class DatRepository(
      * Identifica de uma vez os [games] ainda não verificados, avisando o progresso (feitos, total).
      * Devolve os que bateram com o DAT; quem chama grava o resultado. Um arquivo ilegível só fica de fora.
      */
-    suspend fun identifyAll(games: List<Game>, onProgress: (Int, Int) -> Unit): List<Pair<Game, DatEntry>> {
+    suspend fun identifyAll(games: List<Game>, onProgress: (Int, Int) -> Unit): List<Pair<Game, DatEntry>> = coroutineScope {
         val pending = games.filter { !it.verified && supports(it.systemId) }
-        val found = mutableListOf<Pair<Game, DatEntry>>()
-        // Sistemas cujo DAT já foi tentado nesta rodada. Um DAT que não rende nenhuma entrada não é baixado de
-        // novo para cada jogo: os jogos daquele sistema ficam de fora.
-        val loaded = HashSet<String>()
-        val empty = HashSet<String>()
-        pending.forEachIndexed { i, game ->
-            onProgress(i, pending.size)
-            if (game.systemId in empty) return@forEachIndexed
-            val result = try {
-                if (loaded.add(game.systemId)) {
-                    ensureLoaded(game.systemId)
-                    if (dao.countHashed(game.systemId) == 0) {
-                        empty += game.systemId
-                        return@forEachIndexed
-                    }
-                }
-                match(game)
+        val found = Collections.synchronizedList(mutableListOf<Pair<Game, DatEntry>>())
+        val done = AtomicInteger(0)
+        val total = pending.size
+        onProgress(0, total)
+        // Alguns arquivos ao mesmo tempo: o hash de um espera o disco enquanto o de outro usa a CPU.
+        val gate = Semaphore(PARALLEL_HASHES)
+        // Um sistema por vez: o DAT dele é baixado e indexado antes de qualquer hash. Um DAT que não rende nenhuma
+        // entrada não é baixado de novo para cada jogo: os jogos daquele sistema ficam de fora.
+        for ((systemId, list) in pending.groupBy { it.systemId }) {
+            val ready = try {
+                ensureLoaded(systemId)
+                dao.countHashed(systemId) > 0
             } catch (c: kotlinx.coroutines.CancellationException) {
                 throw c
             } catch (t: java.io.IOException) {
                 // Sem internet para baixar o DAT: nenhum outro jogo vai conseguir, então para aqui.
-                if (dao.countHashed(game.systemId) == 0) throw t
-                null
+                if (dao.countHashed(systemId) == 0) throw t
+                true
             } catch (t: Exception) {
-                // Arquivo ou entrada estranha (não de rede): só este jogo fica de fora, o lote segue. Se foi o DAT
-                // que não deu índice, os outros jogos do sistema nem são lidos.
-                if (runCatching { dao.countHashed(game.systemId) }.getOrDefault(0) == 0) empty += game.systemId
-                null
+                runCatching { dao.countHashed(systemId) }.getOrDefault(0) > 0
             }
-            if (result is Identification.Found) found += game to result.match
+            if (!ready) {
+                onProgress(done.addAndGet(list.size), total)
+                continue
+            }
+            val md5Fallback = runCatching { dao.countMd5Only(systemId) > 0 }.getOrDefault(true)
+            list.map { game ->
+                async {
+                    gate.withPermit {
+                        // Arquivo ilegível ou entrada estranha: só este jogo fica de fora, o lote segue.
+                        val result = try {
+                            match(game, md5Fallback)
+                        } catch (c: kotlinx.coroutines.CancellationException) {
+                            throw c
+                        } catch (t: Exception) {
+                            null
+                        }
+                        if (result is Identification.Found) found += game to result.match
+                    }
+                    onProgress(done.incrementAndGet(), total)
+                }
+            }.awaitAll()
         }
-        onProgress(pending.size, pending.size)
-        return found
+        onProgress(total, total)
+        found.toList()
+    }
+
+    private companion object {
+        /** Arquivos lidos ao mesmo tempo na verificação em lote. */
+        const val PARALLEL_HASHES = 3
     }
 
     /** Evita baixar e indexar o mesmo DAT duas vezes quando vários jogos são identificados juntos. */

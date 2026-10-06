@@ -92,7 +92,7 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
         job = scope.launch {
             if (manual) _state.value = UpdateState.Checking
             _state.value = try {
-                val release = parseRelease(Http.getString(LATEST_URL, mapOf("Accept" to "application/vnd.github+json")))
+                val release = parseRelease(Http.getString(LATEST_URL, mapOf("Accept" to "application/vnd.github+json")), Build.SUPPORTED_ABIS.toList())
                 if (release != null && Versions.newer(release.version, currentVersion)) UpdateState.Available(release)
                 else {
                     // Nada novo: o APK de uma atualização já instalada não serve mais.
@@ -243,13 +243,25 @@ class AppUpdater(private val context: Context, private val scope: CoroutineScope
         internal fun safeVersion(version: String): String =
             version.replace(Regex("[^0-9A-Za-z._-]"), "_").replace("..", "_").take(40).ifBlank { "update" }
 
-        /** Lê a resposta de `releases/latest`; nulo se não há APK anexado. */
-        internal fun parseRelease(json: String): AppRelease? {
+        /** Arquiteturas com APK próprio na release ("Retrovika-0.6.7.arm64-v8a.apk"). */
+        private val SPLIT_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+        /**
+         * Lê a resposta de `releases/latest`; nulo se não há APK anexado. Desde a 0.6.7 a release traz, além do APK
+         * universal, um por arquitetura, só com as bibliotecas nativas dela (uns 11 MB menor): vale o da primeira
+         * arquitetura de [abis] (as do aparelho, na ordem de preferência) que tiver o seu; sem nenhum, o universal.
+         * O universal continua com o nome de sempre, e as versões anteriores, que pegam o primeiro .apk, o acham.
+         */
+        internal fun parseRelease(json: String, abis: List<String> = emptyList()): AppRelease? {
             val o = Http.json.parseToJsonElement(json).jsonObject
             if (o.flag("draft") || o.flag("prerelease")) return null
             val tag = o.text("tag_name") ?: return null
-            val apk = o["assets"]?.jsonArray.orEmpty().map { it.jsonObject }
-                .firstOrNull { it.text("name").orEmpty().endsWith(".apk", ignoreCase = true) } ?: return null
+            val apks = o["assets"]?.jsonArray.orEmpty().map { it.jsonObject }
+                .filter { it.text("name").orEmpty().endsWith(".apk", ignoreCase = true) }
+            fun abiOf(name: String) = SPLIT_ABIS.firstOrNull { name.endsWith(".$it.apk", ignoreCase = true) }
+            val apk = abis.firstNotNullOfOrNull { abi -> apks.firstOrNull { abiOf(it.text("name").orEmpty()) == abi } }
+                ?: apks.firstOrNull { abiOf(it.text("name").orEmpty()) == null }
+                ?: return null
             return AppRelease(
                 version = tag.removePrefix("v"),
                 notes = notesOf(o.text("body").orEmpty()),

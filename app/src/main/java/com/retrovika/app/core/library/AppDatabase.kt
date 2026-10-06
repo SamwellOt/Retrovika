@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.retrovika.app.core.dat.DatDao
 import com.retrovika.app.core.dat.DatEntry
 
-@Database(entities = [Game::class, DatEntry::class], version = 2, exportSchema = true)
+@Database(entities = [Game::class, DatEntry::class], version = 3, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun games(): GameDao
     abstract fun dats(): DatDao
@@ -41,9 +41,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v3: índices de addedAt e favorite (prateleiras "Adicionados" e "Favoritos" do início). */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_games_addedAt` ON `games` (`addedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_games_favorite` ON `games` (`favorite`)")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "retrovika.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

@@ -3,11 +3,12 @@ package com.retrovika.app.ui.screens.details
 import com.retrovika.app.ui.components.regionLabel
 import androidx.compose.ui.res.stringResource
 import com.retrovika.app.R
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,7 +36,6 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Verified
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +59,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import com.retrovika.app.ui.components.RemoveGameDialog
+import com.retrovika.app.ui.components.shimmer
 import com.retrovika.app.container
 import com.retrovika.app.core.dat.DatRepository
 import com.retrovika.app.core.library.GameSource
@@ -131,26 +135,32 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
     val scope = rememberCoroutineScope()
     val game by remember(gameId) { app.library.observe(gameId) }.collectAsStateWithLifecycle(null)
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
-    val identify: DetailsIdentify = viewModel(key = "identify-$gameId") { DetailsIdentify() }
     // O jogo sumiu com a tela aberta (pasta desvinculada, removido numa varredura): volta em vez de
     // deixar uma tela vazia sem botão de voltar.
     var loaded by remember(gameId) { mutableStateOf(false) }
     LaunchedEffect(game) {
         if (game != null) loaded = true else if (loaded) onBack()
     }
-    val g = game ?: return
+    // Até o banco responder, o esqueleto da página (com o voltar): a transição não desliza uma tela vazia.
+    val g = game ?: return DetailsSkeleton(onBack)
     val system = Systems.byId(g.systemId)
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Tablet ou celular deitado: capa e "Jogar" numa coluna fixa à esquerda, o resto rolando à direita.
+        // Numa coluna só, o botão de 56 dp esticava a tela toda e a capa ficava pequena no meio do vazio.
+        val wide = maxWidth >= 600.dp
         // Fundo: a própria capa, desfocada
         val accent = system?.accentColor() ?: Palette.Violet
         Box(Modifier.fillMaxWidth().height(420.dp).ambientGlow(primary = accent, secondary = Palette.Neon, height = 420.dp))
-        g.coverUrl?.let {
-            AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(380.dp).blur(40.dp).graphicsLayer { alpha = 0.7f })
+        g.coverUrl?.let { url ->
+            // Decodificada pequena, como no "Continuar" do início: vai ser desfocada de qualquer jeito.
+            val platform = LocalPlatformContext.current
+            val small = remember(url) { ImageRequest.Builder(platform).data(url).size(96).build() }
+            AsyncImage(small, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(380.dp).blur(40.dp).graphicsLayer { alpha = 0.7f })
         }
         Box(Modifier.fillMaxWidth().height(382.dp).background(Brush.verticalGradient(listOf(Color(0x330B0714), Color(0xB30B0714), Palette.Ink))))
 
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()) {
+        val header: @Composable () -> Unit = {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onBack)
                 Spacer(Modifier.weight(1f))
@@ -163,215 +173,269 @@ fun GameDetailsScreen(gameId: Long, onBack: () -> Unit, onOpenSystem: (String) -
                 )
                 HeaderIconButton(Icons.Rounded.Delete, stringResource(R.string.common_remove), { confirmDelete = true })
             }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
-                GameCover(
-                    g.title, system, g.coverUrl,
-                    Modifier.width(140.dp).height(190.dp),
-                    corner = 18.dp,
-                )
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Kicker(system?.shortName ?: stringResource(R.string.details_game), color = system?.readableAccent() ?: Palette.TextSecondary)
-                    Spacer(Modifier.height(8.dp))
-                    Text(g.title, style = MaterialTheme.typography.headlineSmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(4.dp))
-                    Text(g.developer ?: system?.name.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
-                    system?.let {
-                        // Atalho para a coleção do console, sem voltar pela pilha.
-                        Text(
-                            stringResource(R.string.details_open_system, it.shortName),
-                            style = MaterialTheme.typography.labelLarge, color = it.readableAccent(),
-                            modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { onOpenSystem(it.id) }.padding(vertical = 4.dp),
-                        )
+        }
+
+        if (wide) {
+            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                header()
+                Row(Modifier.weight(1f)) {
+                    Column(Modifier.width(320.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 24.dp + LocalBottomInset.current)) {
+                        Spacer(Modifier.height(8.dp))
+                        GameCover(g.title, system, g.coverUrl, Modifier.padding(horizontal = 20.dp).width(200.dp).height(270.dp), corner = 20.dp)
+                        Spacer(Modifier.height(16.dp))
+                        Column(Modifier.padding(horizontal = 20.dp)) { TitleBlock(g, system, onOpenSystem) }
+                        Spacer(Modifier.height(18.dp))
+                        PlaySection(g, system)
+                    }
+                    Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                        Spacer(Modifier.height(8.dp))
+                        InfoSections(g, system, onOpenGame, onOpenVersions)
                     }
                 }
             }
-            Spacer(Modifier.height(22.dp))
-            GradientButton(
-                stringResource(if (g.lastPlayed != null) R.string.common_continue else R.string.common_play),
-                onClick = { GameActivity.launch(context, g.id) },
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                icon = Icons.Rounded.PlayArrow,
-                height = 56.dp,
-            )
-            if (system != null) {
-                // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
-                val preferred by remember(system.id) { app.settings.effectiveCoreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
-                preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                g.region?.let { Pill(regionLabel(it), icon = Icons.Rounded.Public) }
-                Pill(g.size.formatBytes(), icon = Icons.Rounded.Storage)
-                // Arquivo sem extensão: sem o filtro, a pílula mostrava o nome inteiro.
-                g.fileName.substringAfterLast('.', "").takeIf { it.isNotBlank() }?.let {
-                    Pill(it.uppercase(), icon = Icons.AutoMirrored.Rounded.InsertDriveFile)
+        } else {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()) {
+                header()
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
+                    GameCover(
+                        g.title, system, g.coverUrl,
+                        Modifier.width(140.dp).height(190.dp),
+                        corner = 18.dp,
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) { TitleBlock(g, system, onOpenSystem) }
                 }
-                if (g.playTimeSeconds >= 60) Pill(formatPlayTime(g.playTimeSeconds), icon = Icons.Rounded.Schedule, color = Palette.Sun)
-                Pill(
-                    icon = Icons.Rounded.Folder,
-                    text = 
-                    when (g.source) {
-                        GameSource.LOCAL -> stringResource(R.string.details_source_local)
-                        GameSource.IMPORTED -> stringResource(R.string.details_source_imported)
-                        GameSource.DOWNLOADED -> stringResource(R.string.details_source_downloaded)
-                    },
-                )
+                Spacer(Modifier.height(22.dp))
+                PlaySection(g, system)
+                InfoSections(g, system, onOpenGame, onOpenVersions)
             }
-            g.lastPlayed?.let {
-                Text(
-                    stringResource(R.string.details_last_session, DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))),
-                    style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                )
-            }
-            g.description?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-            }
-
-            if (system != null && system.cores.size > 1) {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader(stringResource(R.string.details_core_title))
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.details_core_subtitle),
-                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 20.dp),
-                )
-                Spacer(Modifier.height(10.dp))
-                ChipStrip {
-                    SelectChip(stringResource(R.string.details_core_default), g.coreOverride == null, onClick = { scope.launch { app.library.setCoreOverride(g.id, null) } })
-                    system.cores.forEach { c ->
-                        SelectChip(c.displayName, g.coreOverride == c.id, onClick = { scope.launch { app.library.setCoreOverride(g.id, c.id) } })
-                    }
-                }
-            }
-
-            if (system != null) GameTuning(g, system)
-
-            LibraryVersions(g, onOpenGame = onOpenGame, onOpenAll = { onOpenVersions(g.systemId) })
-
-            if (app.dat.supports(g.systemId)) {
-                Spacer(Modifier.height(24.dp))
-                SectionHeader(stringResource(R.string.details_identify_title))
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.details_identify_subtitle),
-                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-                Spacer(Modifier.height(10.dp))
-                when {
-                    identify.running -> Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(stringResource(R.string.details_identifying), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
-                    }
-                    else -> when (val id = identify.result) {
-                        is DatRepository.Identification.Found -> {
-                            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Palette.Success)
-                                Spacer(Modifier.width(6.dp))
-                                Text(id.match.name, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            if (id.versions.isNotEmpty()) {
-                                Text(
-                                    stringResource(R.string.details_other_versions, id.versions.size),
-                                    style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                                )
-                                id.versions.forEach { v ->
-                                    Text(
-                                        "• ${listOfNotNull(v.region?.let { r -> regionLabel(r) }, v.revision).joinToString(" · ").ifBlank { v.name }}",
-                                        style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 1.dp),
-                                    )
-                                }
-                            }
-                        }
-                        is DatRepository.Identification.NotFound -> Text(
-                            stringResource(R.string.details_not_found),
-                            style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
-                            modifier = Modifier.padding(horizontal = 20.dp),
-                        )
-                        else -> {
-                            if (g.verified && g.datName != null) {
-                                Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Palette.Success)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(g.datName!!, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
-                            GhostButton(
-                                stringResource(if (g.verified) R.string.details_see_versions else R.string.details_identify_version),
-                                icon = Icons.Rounded.Verified,
-                                tint = Palette.Cyan,
-                                onClick = {
-                                    identify.running = true
-                                    identify.error = null
-                                    // Contexto localizado da aplicação, pego fora da corrotina: capturar a Activity a
-                                    // manteria viva (rotação) até o hash terminar.
-                                    val res = context.localized()
-                                    val game = g
-                                    // No escopo do app: girar a tela ou sair da página não interrompe a identificação.
-                                    app.scope.launch(Dispatchers.Main) {
-                                        // Sem internet na primeira vez (o DAT é baixado), o motivo aparece abaixo do botão.
-                                        val result = try {
-                                            app.dat.identify(game)
-                                        } catch (c: CancellationException) {
-                                            throw c
-                                        } catch (t: Throwable) {
-                                            identify.error = t.userMessage(res)
-                                            null
-                                        } finally {
-                                            identify.running = false
-                                        }
-                                        identify.result = result
-                                        if (result is DatRepository.Identification.Found) {
-                                            // O escopo do app não tem tratador: uma falha do banco aqui derrubaria o processo.
-                                            runCatching { app.library.setIdentified(game.id, result.match.name, result.match.region) }
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.padding(horizontal = 20.dp),
-                            )
-                            identify.error?.let {
-                                Text(
-                                    it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral,
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(40.dp + LocalBottomInset.current))
         }
     }
 
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text(stringResource(R.string.details_remove_title, g.title)) },
-            text = {
-                Text(
-                    stringResource(if (g.isContentUri) R.string.details_remove_linked else R.string.details_remove_file),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    val failedText = context.localized().getString(R.string.details_remove_failed, g.title)
-                    scope.launch {
-                        // Falso: o arquivo da ROM não pôde ser apagado e o jogo continua na biblioteca; a tela fica.
-                        if (app.library.delete(g, deleteFile = !g.isContentUri)) onBack()
-                        else Toast.makeText(context, failedText, Toast.LENGTH_LONG).show()
-                    }
-                }) { Text(stringResource(R.string.common_remove), color = Palette.Coral) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } },
-            containerColor = Palette.SurfaceHigh,
+    if (confirmDelete) RemoveGameDialog(g, onDismiss = { confirmDelete = false }, onRemoved = onBack)
+}
+
+/** Página ainda sem o jogo: o voltar de verdade e blocos no lugar da capa, do título e do botão. */
+@Composable
+private fun DetailsSkeleton(onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().ambientGlow().statusBarsPadding()) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            HeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.common_back), onBack)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
+            Box(Modifier.width(140.dp).height(190.dp).shimmer(RoundedCornerShape(18.dp)))
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Box(Modifier.width(60.dp).height(12.dp).shimmer())
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.fillMaxWidth(0.9f).height(22.dp).shimmer())
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth(0.6f).height(22.dp).shimmer())
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.fillMaxWidth(0.4f).height(12.dp).shimmer())
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        Box(Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(56.dp).shimmer(RoundedCornerShape(50)))
+    }
+}
+
+/** Console, título, desenvolvedora e o atalho para a coleção do console. */
+@Composable
+private fun TitleBlock(g: Game, system: GameSystem?, onOpenSystem: (String) -> Unit) {
+    Kicker(system?.shortName ?: stringResource(R.string.details_game), color = system?.readableAccent() ?: Palette.TextSecondary)
+    Spacer(Modifier.height(8.dp))
+    Text(g.title, style = MaterialTheme.typography.headlineSmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
+    Spacer(Modifier.height(4.dp))
+    Text(g.developer ?: system?.name.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+    system?.let {
+        // Atalho para a coleção do console, sem voltar pela pilha.
+        Text(
+            stringResource(R.string.details_open_system, it.shortName),
+            style = MaterialTheme.typography.labelLarge, color = it.readableAccent(),
+            modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) { onOpenSystem(it.id) }.padding(vertical = 4.dp),
         )
+    }
+}
+
+/** "Jogar"/"Continuar" e o aviso de núcleo que ainda falta instalar. */
+@Composable
+private fun PlaySection(g: Game, system: GameSystem?) {
+    val context = LocalContext.current
+    val app = context.container
+    GradientButton(
+        stringResource(if (g.lastPlayed != null) R.string.common_continue else R.string.common_play),
+        onClick = { GameActivity.launch(context, g.id) },
+        modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
+        icon = Icons.Rounded.PlayArrow,
+        height = 56.dp,
+    )
+    if (system != null) {
+        // null = preferência ainda carregando: sem isso o aviso do núcleo padrão piscava na tela.
+        val preferred by remember(system.id) { app.settings.effectiveCoreFor(system.id).map { it.orEmpty() } }.collectAsStateWithLifecycle(null)
+        preferred?.let { CoreNotice(system.core(g.coreOverride ?: it)) }
+    }
+}
+
+/** Tudo abaixo do botão de jogar: arquivo, descrição, núcleo, desempenho, versões e identificação. */
+@Composable
+private fun InfoSections(g: Game, system: GameSystem?, onOpenGame: (Long) -> Unit, onOpenVersions: (String) -> Unit) {
+    val app = LocalContext.current.container
+    val scope = rememberCoroutineScope()
+    Spacer(Modifier.height(16.dp))
+    Row(Modifier.padding(horizontal = 20.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        g.region?.let { Pill(regionLabel(it), icon = Icons.Rounded.Public) }
+        Pill(g.size.formatBytes(), icon = Icons.Rounded.Storage)
+        // Arquivo sem extensão: sem o filtro, a pílula mostrava o nome inteiro.
+        g.fileName.substringAfterLast('.', "").takeIf { it.isNotBlank() }?.let {
+            Pill(it.uppercase(), icon = Icons.AutoMirrored.Rounded.InsertDriveFile)
+        }
+        if (g.playTimeSeconds >= 60) Pill(formatPlayTime(g.playTimeSeconds), icon = Icons.Rounded.Schedule, color = Palette.Sun)
+        Pill(
+            icon = Icons.Rounded.Folder,
+            text =
+            when (g.source) {
+                GameSource.LOCAL -> stringResource(R.string.details_source_local)
+                GameSource.IMPORTED -> stringResource(R.string.details_source_imported)
+                GameSource.DOWNLOADED -> stringResource(R.string.details_source_downloaded)
+            },
+        )
+    }
+    g.lastPlayed?.let {
+        Text(
+            stringResource(R.string.details_last_session, DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))),
+            style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+        )
+    }
+    g.description?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+    }
+
+    if (system != null && system.cores.size > 1) {
+        Spacer(Modifier.height(24.dp))
+        SectionHeader(stringResource(R.string.details_core_title))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.details_core_subtitle),
+            style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 20.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        ChipStrip {
+            SelectChip(stringResource(R.string.details_core_default), g.coreOverride == null, onClick = { scope.launch { app.library.setCoreOverride(g.id, null) } })
+            system.cores.forEach { c ->
+                SelectChip(c.displayName, g.coreOverride == c.id, onClick = { scope.launch { app.library.setCoreOverride(g.id, c.id) } })
+            }
+        }
+    }
+
+    if (system != null) GameTuning(g, system)
+
+    LibraryVersions(g, onOpenGame = onOpenGame, onOpenAll = { onOpenVersions(g.systemId) })
+
+    if (app.dat.supports(g.systemId)) IdentifySection(g)
+    Spacer(Modifier.height(40.dp + LocalBottomInset.current))
+}
+
+/** Identificação pelo DAT No-Intro: botão, progresso, o nome achado e as outras versões do jogo. */
+@Composable
+private fun IdentifySection(g: Game) {
+    val context = LocalContext.current
+    val app = context.container
+    val identify: DetailsIdentify = viewModel(key = "identify-${g.id}") { DetailsIdentify() }
+    Spacer(Modifier.height(24.dp))
+    SectionHeader(stringResource(R.string.details_identify_title))
+    Spacer(Modifier.height(4.dp))
+    Text(
+        stringResource(R.string.details_identify_subtitle),
+        style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+        modifier = Modifier.padding(horizontal = 20.dp),
+    )
+    Spacer(Modifier.height(10.dp))
+    when {
+        identify.running -> Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(stringResource(R.string.details_identifying), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+        }
+        else -> when (val id = identify.result) {
+            is DatRepository.Identification.Found -> {
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Palette.Success)
+                    Spacer(Modifier.width(6.dp))
+                    Text(id.match.name, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (id.versions.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.details_other_versions, id.versions.size),
+                        style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                    id.versions.forEach { v ->
+                        Text(
+                            "• ${listOfNotNull(v.region?.let { r -> regionLabel(r) }, v.revision).joinToString(" · ").ifBlank { v.name }}",
+                            style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 1.dp),
+                        )
+                    }
+                }
+            }
+            is DatRepository.Identification.NotFound -> Text(
+                stringResource(R.string.details_not_found),
+                style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            else -> {
+                if (g.verified && g.datName != null) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.CheckCircle, null, Modifier.size(18.dp), tint = Palette.Success)
+                        Spacer(Modifier.width(6.dp))
+                        Text(g.datName!!, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                GhostButton(
+                    stringResource(if (g.verified) R.string.details_see_versions else R.string.details_identify_version),
+                    icon = Icons.Rounded.Verified,
+                    tint = Palette.Cyan,
+                    onClick = {
+                        identify.running = true
+                        identify.error = null
+                        // Contexto localizado da aplicação, pego fora da corrotina: capturar a Activity a
+                        // manteria viva (rotação) até o hash terminar.
+                        val res = context.localized()
+                        val game = g
+                        // No escopo do app: girar a tela ou sair da página não interrompe a identificação.
+                        app.scope.launch(Dispatchers.Main) {
+                            // Sem internet na primeira vez (o DAT é baixado), o motivo aparece abaixo do botão.
+                            val result = try {
+                                app.dat.identify(game)
+                            } catch (c: CancellationException) {
+                                throw c
+                            } catch (t: Throwable) {
+                                identify.error = t.userMessage(res)
+                                null
+                            } finally {
+                                identify.running = false
+                            }
+                            identify.result = result
+                            if (result is DatRepository.Identification.Found) {
+                                // O escopo do app não tem tratador: uma falha do banco aqui derrubaria o processo.
+                                runCatching { app.library.setIdentified(game.id, result.match.name, result.match.region) }
+                            }
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+                identify.error?.let {
+                    Text(
+                        it, style = MaterialTheme.typography.bodySmall, color = Palette.Coral,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -393,7 +457,7 @@ private fun LibraryVersions(game: Game, onOpenGame: (Long) -> Unit, onOpenAll: (
         val current = rated.game.id == game.id
         Row(
             Modifier.fillMaxWidth()
-                .clickable(enabled = !current) { onOpenGame(rated.game.id) }
+                .clickable(enabled = !current, role = Role.Button) { onOpenGame(rated.game.id) }
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

@@ -6,6 +6,18 @@ import com.retrovika.app.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.ripple
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import com.retrovika.app.emulation.SaveStates
+import com.retrovika.app.ui.components.GameQuickMenu
+import com.retrovika.app.ui.components.ReadableWidth
+import com.retrovika.app.ui.components.focusRing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -125,8 +137,14 @@ fun HomeScreen(
     val bottom = LocalBottomInset.current
     val listState = rememberLazyListState()
     ScrollToTopOnReselect("home", listState)
+    // Toque longo num cartão das prateleiras: jogar, favoritar ou remover sem abrir a página.
+    var quick by remember { mutableStateOf<Game?>(null) }
+    quick?.let { GameQuickMenu(it, onDismiss = { quick = null }, onDetails = onOpenGame) }
+    val onQuick: (Game) -> Unit = { quick = it }
 
-    LazyColumn(Modifier.fillMaxSize().ambientGlow(), state = listState, contentPadding = PaddingValues(bottom = bottom + 24.dp)) {
+    // Em tablets e na horizontal o conteúdo fica centralizado: o "Continuar" esticado de borda a borda virava uma faixa.
+    ReadableWidth(HOME_MAX_WIDTH) { side ->
+    LazyColumn(Modifier.fillMaxSize().ambientGlow(), state = listState, contentPadding = PaddingValues(start = side, end = side, bottom = bottom + 24.dp)) {
         item {
             Column(Modifier.statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -196,12 +214,14 @@ fun HomeScreen(
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(present, key = { it.first.id }) { (system, count) ->
                         val shape = RoundedCornerShape(16.dp)
+                        val source = remember { MutableInteractionSource() }
                         Row(
                             Modifier
+                                .focusRing(source, shape)
                                 .clip(shape)
                                 .background(Brush.linearGradient(listOf(system.accentColor().copy(alpha = 0.28f), Palette.SurfaceHigh)))
                                 .border(1.dp, system.readableAccent().copy(alpha = 0.35f), shape)
-                                .clickable { onOpenSystem(system.id) }
+                                .clickable(source, ripple(), role = Role.Button) { onOpenSystem(system.id) }
                                 .padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -219,11 +239,15 @@ fun HomeScreen(
             }
         }
 
-        shelf("recent", R.string.home_shelf_recent, recent.drop(1), onOpenGame)
-        shelf("favorites", R.string.home_shelf_favorites, favorites, onOpenGame)
-        shelf("newest", R.string.home_shelf_newest, newest, onOpenGame)
+        shelf("recent", R.string.home_shelf_recent, recent.drop(1), onOpenGame, onQuick)
+        shelf("favorites", R.string.home_shelf_favorites, favorites, onOpenGame, onQuick)
+        shelf("newest", R.string.home_shelf_newest, newest, onOpenGame, onQuick)
+    }
     }
 }
+
+/** Largura máxima do início em telas largas: cabe a prateleira com folga, sem esticar o cartão de continuar. */
+private val HOME_MAX_WIDTH = 960.dp
 
 /** Indicador da varredura no topo, com o número de jogos achados até agora. */
 @Composable
@@ -242,14 +266,14 @@ private fun ScanStatus() {
     Text(stringResource(R.string.home_scanning, scan.found), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.shelf(key: String, @StringRes title: Int, games: List<Game>, onOpenGame: (Long) -> Unit) {
+private fun androidx.compose.foundation.lazy.LazyListScope.shelf(key: String, @StringRes title: Int, games: List<Game>, onOpenGame: (Long) -> Unit, onQuick: (Game) -> Unit) {
     if (games.isEmpty()) return
     item(key = "shelf-$key") {
         Spacer(Modifier.height(26.dp))
         SectionHeader(stringResource(title))
         Spacer(Modifier.height(12.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(games, key = { it.id }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }, width = 128.dp) }
+            items(games, key = { it.id }) { game -> GameCard(game, onClick = { onOpenGame(game.id) }, width = 128.dp, onLongClick = { onQuick(game) }) }
         }
     }
 }
@@ -311,7 +335,7 @@ private fun WelcomeCard(onAddFolder: () -> Unit, onExplore: () -> Unit) {
     SurfaceCard(
         Modifier.padding(horizontal = 20.dp, vertical = 12.dp).fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
-        brush = Brush.linearGradient(listOf(Color(0xFF3A1060), Palette.SurfaceHigh, Palette.Surface)),
+        brush = Brush.linearGradient(listOf(Palette.Plum, Palette.SurfaceHigh, Palette.Surface)),
     ) {
         Column(Modifier.padding(22.dp)) {
             BrandMark(64.dp)
@@ -355,27 +379,62 @@ private fun ContinueCard(game: Game, onPlay: () -> Unit, onDetails: () -> Unit) 
     val system = Systems.byId(game.systemId)
     val accent = system?.accentColor() ?: Palette.Violet
     val shape = RoundedCornerShape(28.dp)
+    val source = remember { MutableInteractionSource() }
+    val app = LocalContext.current.container
+    // A última tela do jogo (miniatura do salvamento automático): o cartão mostra onde o jogador parou, não só a
+    // caixa. A data do arquivo entra na chave do cache, para um salvamento novo não mostrar a imagem antiga.
+    // Relida também a cada volta ao primeiro plano: saindo do jogo pelo Home do aparelho, a miniatura chega depois do
+    // estado (attachThumbnail), e a primeira leitura podia não achá-la.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val shot by produceState<Pair<File, Long>?>(null, game.id, game.lastPlayed, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            value = withContext(Dispatchers.IO) {
+                // A saída do jogo grava o salvamento automático (e a miniatura) em segundo plano: espera, para não
+                // mostrar a tela da sessão anterior.
+                SaveStates.awaitAll()
+                File(app.paths.statesDir(game.systemId, game.id), "slot${SaveStates.AUTO_SLOT}.png")
+                    .takeIf { it.isFile }?.let { it to it.lastModified() }
+            }
+        }
+    }
     Box(
         Modifier
             .padding(horizontal = 20.dp, vertical = 8.dp)
             .fillMaxWidth()
+            .focusRing(source, shape)
             .shadow(28.dp, shape, ambientColor = accent, spotColor = accent)
             .clip(shape)
             .background(Palette.Surface)
-            .clickable(onClick = onDetails),
+            .clickable(source, ripple(), role = Role.Button, onClick = onDetails),
     ) {
-        // Fundo: a capa ampliada e desfocada, coberta por um degradê na cor do console.
-        // A capa é decodificada pequena: vai ser desfocada de qualquer jeito, e o bitmap menor pesa bem menos.
-        game.coverUrl?.let { url ->
-            val platform = LocalPlatformContext.current
-            val small = remember(url) { ImageRequest.Builder(platform).data(url).size(96).build() }
-            AsyncImage(small, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().blur(28.dp).graphicsLayer { alpha = 0.55f })
+        val platform = LocalPlatformContext.current
+        val screenshot = shot
+        if (screenshot != null) {
+            val (file, modified) = screenshot
+            val request = remember(file, modified) {
+                ImageRequest.Builder(platform).data(file).memoryCacheKey("${file.path}@$modified").diskCacheKey("${file.path}@$modified").build()
+            }
+            AsyncImage(request, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().graphicsLayer { alpha = 0.55f })
+            // Escuro atrás da capa e do texto; a tela do jogo aparece mais para a direita, sem clarear o texto.
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.horizontalGradient(0f to Color(0xF20B0714), 0.5f to Color(0xE0130E21), 1f to Color(0xB3130E21)),
+                ),
+            )
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.22f), Color.Transparent))))
+        } else {
+            // Fundo: a capa ampliada e desfocada, coberta por um degradê na cor do console.
+            // A capa é decodificada pequena: vai ser desfocada de qualquer jeito, e o bitmap menor pesa bem menos.
+            game.coverUrl?.let { url ->
+                val small = remember(url) { ImageRequest.Builder(platform).data(url).size(96).build() }
+                AsyncImage(small, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().blur(28.dp).graphicsLayer { alpha = 0.55f })
+            }
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.linearGradient(listOf(accent.copy(alpha = 0.55f), Color(0xE6130E21), Color(0xF20B0714))),
+                ),
+            )
         }
-        Box(
-            Modifier.matchParentSize().background(
-                Brush.linearGradient(listOf(accent.copy(alpha = 0.55f), Color(0xE6130E21), Color(0xF20B0714))),
-            ),
-        )
         Box(Modifier.matchParentSize().border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.2f), Color.Transparent)), shape))
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             GameCover(game.title, system, game.coverUrl, Modifier.width(104.dp).height(140.dp), corner = 16.dp)
@@ -384,6 +443,10 @@ private fun ContinueCard(game: Game, onPlay: () -> Unit, onDetails: () -> Unit) 
                 Kicker(stringResource(R.string.common_continue), color = Palette.Sun)
                 Spacer(Modifier.height(8.dp))
                 Text(game.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                game.lastPlayed?.let {
+                    Spacer(Modifier.height(2.dp))
+                    Text(playedAgo(it), style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary)
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     system?.let { Pill(it.shortName, color = it.readableAccent()) }
@@ -393,6 +456,21 @@ private fun ContinueCard(game: Game, onPlay: () -> Unit, onDetails: () -> Unit) 
                 GradientButton(stringResource(R.string.common_play), onPlay, icon = Icons.Rounded.PlayArrow, height = 44.dp)
             }
         }
+    }
+}
+
+/** "Jogado há 5 min", "há 2 h", "há 3 dias": relido a cada minuto enquanto a tela está aberta. */
+@Composable
+private fun playedAgo(timestamp: Long): String {
+    val now by produceState(System.currentTimeMillis(), timestamp) {
+        while (true) { delay(60_000); value = System.currentTimeMillis() }
+    }
+    val minutes = ((now - timestamp) / 60_000).coerceAtLeast(0)
+    return when {
+        minutes < 1 -> stringResource(R.string.home_played_just_now)
+        minutes < 60 -> stringResource(R.string.home_played_minutes, minutes.toInt())
+        minutes < 24 * 60 -> stringResource(R.string.home_played_hours, (minutes / 60).toInt())
+        else -> (minutes / (24 * 60)).toInt().let { pluralStringResource(R.plurals.home_played_days, it, it) }
     }
 }
 
