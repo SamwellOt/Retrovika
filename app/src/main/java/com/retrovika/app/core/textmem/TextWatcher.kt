@@ -27,6 +27,7 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         val before = previous
         previous = current
         val out = mutableListOf<TextHook>()
+        val changedBlocks = changedBlocks(view)
         for (run in found) {
             val key = (run.address.toLong() shl 3) or run.encoding.ordinal.toLong()
             current[key] = run.hash
@@ -39,7 +40,60 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
             val preview = run.preview.take(24)
             out += TextHook("$AUTO_PREFIX$preview", run.address, length, run.encoding, wordSwap, null, core = core)
         }
+        if (before != null) tableHooks(view, changedBlocks, existing, out)
         return out
+    }
+
+    private var blockHashes: IntArray? = null
+
+    /** Os blocos de [BLOCK] bytes que mudaram desde a varredura anterior (vazio na primeira). */
+    private fun changedBlocks(v: ByteArray): List<Int> {
+        val count = v.size / BLOCK
+        val old = blockHashes?.takeIf { it.size == count }
+        val now = IntArray(count)
+        val changed = ArrayList<Int>()
+        for (b in 0 until count) {
+            val h = hashOf(v, b * BLOCK, b * BLOCK + BLOCK)
+            now[b] = h
+            if (old != null && old[b] != h) changed += b
+        }
+        blockHashes = now
+        return changed
+    }
+
+    /**
+     * Texto que não é ASCII: as regiões que mudaram entre duas varreduras são lidas como tabela linear de inglês
+     * ([TableDetector]); onde formam palavras, o buffer vira uma fonte do tipo tabela.
+     */
+    private fun tableHooks(v: ByteArray, changed: List<Int>, existing: List<TextHook>, out: MutableList<TextHook>) {
+        if (changed.isEmpty() || changed.size > MAX_CHANGED_BLOCKS) return
+        // Junta blocos vizinhos (um buraco de um bloco) numa região só.
+        val regions = ArrayList<IntRange>()
+        var start = changed[0]
+        var end = changed[0]
+        for (b in changed.drop(1)) {
+            if (b - end <= 2) end = b else { regions += start..end; start = b; end = b }
+        }
+        regions += start..end
+        var tried = 0
+        for (r in regions) {
+            if (tried >= MAX_REGIONS || out.size >= MAX_PER_SCAN) break
+            val from = r.first * BLOCK
+            val to = (r.last + 1) * BLOCK
+            if (to - from > MAX_REGION_BYTES) continue
+            if (existing.any { covers(it, from) } || out.any { covers(it, from) }) continue
+            tried++
+            val windowStart = maxOf(0, from - BLOCK)
+            val windowEnd = minOf(v.size, to + BLOCK)
+            val found = TableDetector.detect(v.copyOfRange(windowStart, windowEnd)) ?: continue
+            val table = found.table
+            // A janela começa um bloco antes da região que mudou: o texto pode começar um pouco antes do primeiro byte novo.
+            val at = windowStart
+            val length = minOf(WINDOW, v.size - at)
+            if (length <= 0) continue
+            val preview = TextDecoder.decode(v.copyOfRange(at, at + length), TextEncoding.TABLE, table).firstOrNull().orEmpty().take(24)
+            out += TextHook("$AUTO_PREFIX$preview", at, length, TextEncoding.TABLE, wordSwap, table, core = core)
+        }
     }
 
     private fun covers(hook: TextHook, address: Int) =
@@ -153,6 +207,10 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         const val AUTO_PREFIX = "Auto: "
         const val MAX_AUTO_HOOKS = 48
         private const val MAX_PER_SCAN = 6
+        private const val BLOCK = 32
+        private const val MAX_CHANGED_BLOCKS = 600
+        private const val MAX_REGIONS = 48
+        private const val MAX_REGION_BYTES = 768
         private const val WINDOW = 256
         private const val MIN_ASCII = 10
         private const val MIN_UTF16 = 6

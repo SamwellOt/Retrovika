@@ -75,3 +75,55 @@ class TextWatcherTest {
         assertTrue(hooks[0].wordSwap)
     }
 }
+
+class TextWatcherTableTest {
+
+    /** Uma tabela como a de vários jogos: minúsculas a partir de 0x80, maiúsculas a partir de 0x60, espaço 0x7F, fim 0x50. */
+    private fun encode(text: String): ByteArray {
+        val out = ArrayList<Byte>()
+        for (c in text) out += when (c) {
+            in 'a'..'z' -> (0x80 + (c - 'a')).toByte()
+            in 'A'..'Z' -> (0x60 + (c - 'A')).toByte()
+            ' ' -> 0x7F.toByte()
+            '.' -> 0xE8.toByte()
+            ',' -> 0xE9.toByte()
+            else -> 0xE0.toByte()
+        }
+        out += 0x50
+        return out.toByteArray()
+    }
+
+    private fun ramWith(text: String): ByteArray {
+        val r = ByteArray(4096)
+        encode(text).copyInto(r, 0x400)
+        return r
+    }
+
+    @Test
+    fun `acha a tabela sozinho quando o dialogo muda`() {
+        val w = TextWatcher("gambatte", false)
+        assertTrue(w.scan(ramWith("The old king said hello to you."), emptyList()).isEmpty())
+        val hooks = w.scan(ramWith("You can find the sword in the cave. Be careful. There is a monster here."), emptyList())
+        val hook = hooks.single { it.encoding == TextEncoding.TABLE }
+        val table = hook.table!!
+        assertEquals(0x80, table.lower)
+        assertEquals(0x60, table.upper)
+        assertEquals(0x7F, table.space)
+        assertEquals(0x50, table.terminator)
+        val decoded = TextDecoder.read(ramWith("You can find the sword in the cave. Be careful. There is a monster here."), hook).joinToString(" ")
+        assertTrue(decoded, decoded.startsWith("You can find the sword in the cave."))
+        assertTrue(decoded, decoded.endsWith("monster here."))
+    }
+
+    @Test
+    fun `texto parado e ruido nao viram tabela`() {
+        val w = TextWatcher(null, false)
+        val same = ramWith("The old king said hello to you.")
+        w.scan(same, emptyList())
+        assertTrue(w.scan(same, emptyList()).none { it.encoding == TextEncoding.TABLE })
+        val rnd = java.util.Random(11)
+        fun noise() = ByteArray(4096).also { rnd.nextBytes(it) }
+        w.scan(noise(), emptyList())
+        assertTrue(w.scan(noise(), emptyList()).isEmpty())
+    }
+}

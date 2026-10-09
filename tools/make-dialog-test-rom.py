@@ -7,6 +7,7 @@ mensagem. Assim, escrever um texto novo na memória muda o que aparece na tela, 
 Uso: python3 -I tools/make-dialog-test-rom.py saida.gb [prévia.png]
 Os glifos vêm da DejaVu Sans Mono (licença livre); não há código de terceiros.
 """
+import os
 import sys
 from PIL import Image, ImageDraw, ImageFont
 
@@ -16,6 +17,9 @@ MESSAGES = [
     "Good morning, friend! Welcome home.",
 ]
 MSG_LEN = 40
+# TABLE_SHIFT=96 guarda o texto com os bytes deslocados (uma tabela de caracteres própria, como a de muitos jogos): o jogo
+# desenha igual, mas na memória não há ASCII.
+SHIFT = int(os.environ.get("TABLE_SHIFT", "0"))
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 
 
@@ -94,8 +98,8 @@ def build():
     a.abs(0xC3, "main")
 
     a.label("drawrow"); a.b(0x06, 20)           # 20 letras de hl para de; byte 0 vira espaço (terminador)
-    a.label("d1"); a.b(0x2A, 0xB7); a.jr(0x20, "d2"); a.b(0x3E, 0x20)
-    a.label("d2"); a.b(0xD6, 0x20, 0x12, 0x13, 0x05); a.jr(0x20, "d1"); a.b(0xC9)
+    a.label("d1"); a.b(0x2A, 0xB7); a.jr(0x20, "d2"); a.b(0x3E, (0x20 + SHIFT) & 0xFF)
+    a.label("d2"); a.b(0xD6, (0x20 + SHIFT) & 0xFF, 0x12, 0x13, 0x05); a.jr(0x20, "d1"); a.b(0xC9)
 
     a.label("loadmsg"); a.b(0xFA, 0x00, 0xC1, 0x47)
     a.b(0x21, MSGS & 0xFF, MSGS >> 8); a.b(0x11, MSG_LEN, 0x00); a.b(0x04, 0x05); a.jr(0x28, "got")
@@ -115,7 +119,7 @@ def build():
     assert 0x150 + len(code) < FONT
     rom[FONT:FONT + len(tiles)] = tiles
     for i, text in enumerate(MESSAGES):
-        data = text.encode("ascii").ljust(MSG_LEN, b"\x00")     # o resto do buffer é o terminador do jogo
+        data = bytes((c + SHIFT) & 0xFF for c in text.encode("ascii")).ljust(MSG_LEN, b"\x00")     # o resto do buffer é o terminador do jogo
         rom[MSGS + i * MSG_LEN:MSGS + (i + 1) * MSG_LEN] = data
     checksum = 0
     for i in range(0x134, 0x14D):
