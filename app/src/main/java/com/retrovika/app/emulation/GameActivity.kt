@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -43,6 +44,7 @@ import com.retrovika.app.core.cheats.RamCheat
 import com.retrovika.app.core.gameconfig.DiscId
 import com.retrovika.app.core.textmem.TextDecoder
 import com.retrovika.app.core.textmem.TextPatcher
+import com.retrovika.app.core.textmem.TextWatcher
 import com.retrovika.app.core.textmem.MemoryAccess
 import com.retrovika.app.core.gameconfig.GameIniFiles
 import com.retrovika.app.core.library.Game
@@ -459,7 +461,7 @@ class GameActivity : ComponentActivity() {
             it.ram.wordSwapSystem = system.id == "n64"
         }
         settings = app.settings.current()
-        autoTranslate = app.settings.gameAutoTranslate(game.id)
+        autoTranslate = app.settings.gameAutoTranslate(game.id) ?: translatesByDefault()
         // A tela acompanha o sensor: girar o celular alterna entre retrato e paisagem em qualquer console.
         requestedOrientation = when (system.orientation) {
             Orientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -1954,10 +1956,7 @@ class GameActivity : ComponentActivity() {
         override fun translation(): TranslationUi? = translation
 
         override fun canTranslate(): Boolean =
-            ::game.isInitialized && (
-                settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true) ||
-                    cheats?.ram?.activeTextHooks?.isNotEmpty() == true
-                )
+            ::game.isInitialized && (translatesByDefault() || cheats?.ram?.activeTextHooks?.isNotEmpty() == true)
 
         override fun translate() = startTranslation()
 
@@ -1966,6 +1965,8 @@ class GameActivity : ComponentActivity() {
         override fun translateInGame() = this@GameActivity.translateInGame()
 
         override fun hasTextHooks(): Boolean = cheats?.ram?.activeTextHooks?.isNotEmpty() == true
+
+        override fun autoTranslateAvailable(): Boolean = canTranslate()
 
         override fun autoTranslate(): Boolean = autoTranslate
 
@@ -2184,6 +2185,41 @@ class GameActivity : ComponentActivity() {
         }
     }
 
+    /** Jogos que o app traduz sem o jogador pedir: japoneses, ou todos se ele ligou a tradução em qualquer jogo. */
+    private fun translatesByDefault(): Boolean =
+        settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true)
+
+    private var discoveryRam: ByteArray? = null
+    private var textWatcher: TextWatcher? = null
+    private var textWatcherView: GLRetroView? = null
+    private var nextScanAt = 0L
+
+    /**
+     * Acha sozinho onde o jogo guarda o texto, sem OCR nem pesquisa: lê a RAM e vê quais textos mudam de lugar fixo
+     * (o buffer do diálogo é reescrito a cada fala). Esses lugares viram fontes de texto do jogo, salvas, e o laço
+     * automático passa a traduzi-las. Devolve quantas fontes novas saíram.
+     */
+    private suspend fun discoverStep(view: GLRetroView): Int {
+        val size = view.systemRamSize()
+        if (size <= 0) return 0
+        val watcher = textWatcher?.takeIf { textWatcherView === view } ?: TextWatcher(cheats?.ram?.coreId, system.id == "n64").also {
+            textWatcher = it
+            textWatcherView = view
+        }
+        val existing = cheats?.ram?.textHooks.orEmpty()
+        if (existing.count { it.name.startsWith(TextWatcher.AUTO_PREFIX) } >= TextWatcher.MAX_AUTO_HOOKS) return 0
+        val hooks = withContext(Dispatchers.Default) {
+            try {
+                val ram = discoveryRam?.takeIf { it.size == size } ?: ByteArray(size).also { discoveryRam = it }
+                if (view.readSystemRamInto(ram) != size) emptyList() else watcher.scan(ram, existing)
+            } catch (e: OutOfMemoryError) {
+                discoveryRam = null
+                emptyList()
+            }
+        }
+        return if (hooks.isEmpty()) 0 else cheats?.ram?.addTextHooks(hooks) ?: 0
+    }
+
     /** Liga ou desliga o laço automático conforme a escolha do jogador. */
     private fun updateAutoTranslate() {
         autoTranslateJob?.cancel()
@@ -2197,6 +2233,11 @@ class GameActivity : ComponentActivity() {
                 val view = retroView ?: continue
                 if (!gameLoaded || !emulationRunning() || translation != null || menuOpen || netplay.playing) continue
                 try {
+                    if (SystemClock.elapsedRealtime() >= nextScanAt) {
+                        discoverStep(view)
+                        // A RAM grande custa mais para ler e varrer: espaça mais.
+                        nextScanAt = SystemClock.elapsedRealtime() + if ((discoveryRam?.size ?: 0) > 8 shl 20) 4_000L else 1_500L
+                    }
                     patchStep(view, force = false)
                     failures = 0
                 } catch (c: kotlinx.coroutines.CancellationException) {
@@ -2769,6 +2810,8 @@ interface MenuActions {
     fun translateInGame()
     fun hasTextHooks(): Boolean
     /** Traduz os diálogos sozinha. Estado do Compose. */
+    /** A chave "traduzir sozinho" aparece: o jogo se traduz (japonês, ou tradução ligada em todos) ou já tem fontes. */
+    fun autoTranslateAvailable(): Boolean
     fun autoTranslate(): Boolean
     fun setAutoTranslate(on: Boolean)
     fun closeTranslation()

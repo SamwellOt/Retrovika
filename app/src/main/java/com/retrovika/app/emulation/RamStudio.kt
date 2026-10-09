@@ -131,6 +131,13 @@ class RamStudio(private val scope: CoroutineScope) {
 
     fun loadTextHooks(hooks: List<TextHook>) { textHooks = hooks }
 
+    /** Várias fontes de uma vez (as que o app achou sozinho): uma só notificação; devolve quantas eram novas. */
+    fun addTextHooks(hooks: List<TextHook>): Int {
+        val added = addNew(hooks)
+        if (added > 0) onTextHooksChanged?.invoke(textHooks)
+        return added
+    }
+
     fun addTextHook(hook: TextHook) {
         if (addNew(listOf(hook)) > 0) onTextHooksChanged?.invoke(textHooks)
     }

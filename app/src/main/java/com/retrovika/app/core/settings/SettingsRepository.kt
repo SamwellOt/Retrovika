@@ -376,10 +376,11 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         }.orEmpty()
 
     /** A tradução dentro do jogo roda sozinha (a cada diálogo novo), em vez de só ao apertar o botão. */
-    suspend fun gameAutoTranslate(gameId: Long): Boolean = data.first()[Keys.gameAutoTranslate(gameId)] == true
+    /** Nulo: o jogador nunca escolheu (vale o padrão do jogo). */
+    suspend fun gameAutoTranslate(gameId: Long): Boolean? = data.first()[Keys.gameAutoTranslate(gameId)]
 
     suspend fun setGameAutoTranslate(gameId: Long, on: Boolean) = context.dataStore.edit { p ->
-        if (on) p[Keys.gameAutoTranslate(gameId)] = true else p.remove(Keys.gameAutoTranslate(gameId))
+        p[Keys.gameAutoTranslate(gameId)] = on
     }
 
     suspend fun setGameTextHooks(gameId: Long, hooks: List<TextHook>) = context.dataStore.edit { p ->

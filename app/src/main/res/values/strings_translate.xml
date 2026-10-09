@@ -46,7 +46,7 @@
     <string name="settings_ocr_pack_delete_message">To use it again you\'ll need to download it again (about %1$d MB).</string>
     <string name="translate_from_memory">Text read straight from the game\'s memory.</string>
     <string name="translate_inplace_auto">Translate dialogs in the game</string>
-    <string name="translate_inplace_auto_subtitle">Rewrites each new dialog in the game\'s own memory as it appears, using your text sources.</string>
+    <string name="translate_inplace_auto_subtitle">Finds the game\'s text in its memory on its own and rewrites each new dialog translated as it appears. No search needed.</string>
     <string name="translate_inplace_now">Translate dialogs now</string>
     <plurals name="translate_inplace_done">
         <item quantity="one">%d text translated in the game</item>

@@ -788,7 +788,7 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                 }
             }
         }
-        if (menu.hasTextHooks()) item {
+        if (menu.autoTranslateAvailable() || menu.hasTextHooks()) item {
             SettingRow(stringResource(R.string.translate_inplace_auto), stringResource(R.string.translate_inplace_auto_subtitle)) {
                 Switch(checked = menu.autoTranslate(), onCheckedChange = { menu.setAutoTranslate(it) })
             }
