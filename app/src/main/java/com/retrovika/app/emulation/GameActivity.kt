@@ -1966,7 +1966,7 @@ class GameActivity : ComponentActivity() {
 
         override fun hasTextHooks(): Boolean = cheats?.ram?.activeTextHooks?.isNotEmpty() == true
 
-        override fun autoTranslateAvailable(): Boolean = canTranslate()
+        override fun autoTranslateAvailable(): Boolean = ::game.isInitialized
 
         override fun autoTranslate(): Boolean = autoTranslate
 
@@ -2810,7 +2810,7 @@ interface MenuActions {
     fun translateInGame()
     fun hasTextHooks(): Boolean
     /** Traduz os diálogos sozinha. Estado do Compose. */
-    /** A chave "traduzir sozinho" aparece: o jogo se traduz (japonês, ou tradução ligada em todos) ou já tem fontes. */
+    /** A chave "traduzir sozinho" aparece em todo jogo: ligar e desligar não depende da região nem dos Ajustes. */
     fun autoTranslateAvailable(): Boolean
     fun autoTranslate(): Boolean
     fun setAutoTranslate(on: Boolean)
