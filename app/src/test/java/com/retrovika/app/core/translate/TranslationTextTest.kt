@@ -83,4 +83,37 @@ class TranslationTextTest {
         assertEquals(1, TranslationText.upscaleFor(1920, 1080))
         assertEquals(1, TranslationText.upscaleFor(0, 0))
     }
+
+    @Test
+    fun `reconhece o que ja esta em portugues e o que nao esta`() {
+        assertTrue(TranslationText.probablyTranslated("Ola mundo, que bom ver você", "pt"))
+        assertTrue(TranslationText.probablyTranslated("O gato sentou em uma esteira para dormir", "pt"))
+        assertTrue(TranslationText.probablyTranslated("(Não) vamos \"agora\"!", "pt"))     // pontuação colada nas palavras
+        assertFalse(TranslationText.probablyTranslated("The cat sat on a mat by the door", "pt"))
+        assertFalse(TranslationText.probablyTranslated("Hello World", "pt"))
+        assertFalse(TranslationText.probablyTranslated("Ola mundo com você", "en"))     // só para quem lê em português
+        assertFalse(TranslationText.probablyTranslated("You are not ready, mundo", "pt"))   // inglês vence
+    }
+
+    @Test
+    fun `uma palavra isolada do portugues dentro de ingles nao basta`() {
+        assertFalse(TranslationText.probablyTranslated("Uma: Let's go!", "pt"))           // nome de personagem
+        assertFalse(TranslationText.probablyTranslated("Ele: I am here, and you are late", "pt"))
+        assertFalse(TranslationText.probablyTranslated("DOS 6.22 is ready. Press any key", "pt"))
+        assertFalse(TranslationText.probablyTranslated("Welcome to Mundo Land with friends", "pt"))
+    }
+
+    @Test
+    fun `quando o ingles vence o portugues nao conta como traduzido`() {
+        // Duas palavras de português (mundo, com) contra três de inglês (what, are, you): o inglês vence
+        assertFalse(TranslationText.probablyTranslated("mundo com what are you doing", "pt"))
+        // Duas contra uma: o português vence
+        assertTrue(TranslationText.probablyTranslated("mundo com you", "pt"))
+    }
+
+    @Test
+    fun `apostrofos e aspas nao atrapalham a contagem`() {
+        assertFalse(TranslationText.probablyTranslated("'Mundo' com don't you’re that's", "pt"))
+        assertTrue(TranslationText.probablyTranslated("'Mundo' com amigos", "pt"))
+    }
 }

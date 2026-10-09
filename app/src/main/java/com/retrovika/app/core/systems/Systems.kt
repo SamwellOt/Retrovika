@@ -285,7 +285,9 @@ object Systems {
                 CoreInfo(
                     "pcsx2", "LRPS2 (PCSX2)", R.string.core_pcsx2, experimental = true, systemAssets = listOf(LRPS2_ASSETS),
                     needsBios = true,
-                    // Lê o disco com o próprio I/O (não chama filestream_vfs_init): o caminho virtual do SAF não abre.
+                    // Lê o disco primeiro com o próprio I/O: o caminho virtual do SAF não abriu no 0.6.3. O binário tem uma VFS
+                    // híbrida (pede GET_VFS_INTERFACE v5..v1 e usa a do frontend como reserva, visto no Ghidra em 2026-10-09);
+                    // se um teste com jogo de pasta SAF e BIOS real mostrar que ela abre o disco, dá para tirar o needsRealPath.
                     needsRealPath = true,
                     // Vulkan pela ponte do LibretroDroid (o quadro vai por um AHardwareBuffer para o GLES): é o renderizador
                     // de GPU do núcleo que o app consegue servir (o OpenGL dele é o de desktop, e exige GL 4.2).
@@ -321,6 +323,30 @@ object Systems {
                     },
                     // Compartilhados, os dois cartões ficam em system/pcsx2/memcards; por jogo, só existe o 1.
                     fixed = mapOf("pcsx2_shared_memory_cards" to "enabled"),
+                ),
+                CoreInfo(
+                    "armsx2", "ARMSX2", R.string.core_armsx2, experimental = true,
+                    // Pede GLES 3.2 mas aceita 3.0: sem isto o LibretroDroid recusa o contexto em aparelhos GLES 3.1 (justo os sem Vulkan 1.1).
+                    relaxedGlesVersion = true,
+                    // Sem BIOS real o PCSX2 não abre jogo nenhum (ele pega a primeira válida de system/pcsx2/bios).
+                    needsBios = true,
+                    // Sem needsRealPath: o núcleo lê o disco pela VFS do frontend (versão 3), feita para o SAF do Android.
+                    // Sem systemAssets: shaders e GameIndex.yaml vêm dentro do .so (lê os de pcsx2/resources só se existirem).
+                    // Os cartões de memória ficam em system/pcsx2/memcards, compartilhados por todos os jogos (o padrão do PCSX2).
+                    // Só existe para arm64-v8a no buildbot: nas outras arquiteturas o download diz que não há versão.
+                    vulkan = true,
+                    // Mesmos níveis do LRPS2, com os valores da lista do ARMSX2 (o salto de ciclos é "mild", não "Mild Underclock").
+                    presets = mapOf(
+                        Preset.PERFORMANCE to mapOf(
+                            "armsx2_upscale" to "1x", "armsx2_blending_accuracy" to "Minimum",
+                            "armsx2_hw_download_mode" to "Unsynchronized", "armsx2_ee_cycle_skip" to "mild",
+                        ),
+                        Preset.BALANCED to mapOf("armsx2_upscale" to "2x", "armsx2_hw_download_mode" to "Unsynchronized"),
+                        Preset.QUALITY to mapOf("armsx2_upscale" to "4x", "armsx2_blending_accuracy" to "Medium"),
+                    ),
+                    // Sem Vulkan, o OpenGL dele roda no GLES do Android (pede 3.2, aceita até 3.0): ao contrário do LRPS2,
+                    // continua na GPU. Se o contexto pedido for recusado, o próprio núcleo tenta o outro.
+                    deviceOptions = { d -> mapOf("armsx2_renderer" to if (d.vulkan) "Vulkan" else "OpenGL") },
                 ),
             ),
             layout = PadLayouts.PS2, accent = 0xFF1E88E5,

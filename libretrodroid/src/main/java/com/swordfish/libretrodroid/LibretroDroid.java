@@ -127,6 +127,13 @@ public class LibretroDroid {
     public static native void setCheat(int index, boolean enable, String code);
     public static native void resetCheat();
 
+    public static native int systemRamSize();
+    public static native int readSystemRamInto(byte[] destination);
+    public static native int readMemoryRange(int offset, int length, byte[] destination);
+    public static native boolean queueMemoryWrite(int offset, byte[] data, boolean wordSwap);
+    public static native int[] memorySegments();
+    public static native void setRamFreezes(int[] addresses, int[] values, int[] widths);
+
     public static native byte[] serializeSRAM();
     public static native boolean unserializeSRAM(byte[] sram);
 

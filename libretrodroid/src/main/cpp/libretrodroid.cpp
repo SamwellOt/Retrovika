@@ -551,6 +551,11 @@ void LibretroDroid::destroy() {
     std::vector<int8_t>().swap(gameData);
     gamePathStorage.clear();
     cheatCodes.clear();
+    setRamFreezes({});
+    {
+        std::lock_guard<std::mutex> lock(ramFreezeLock);
+        pendingWrites.clear();
+    }
 
     capture.release();
     capture.setAudioEnabled(false);
@@ -703,6 +708,11 @@ void LibretroDroid::runFrames(unsigned requestedFrames) {
         }
         core->retro_run();
         runCount++;
+        applyRamFreezes();
+        if (!ramLogged && runCount >= 30) {
+            ramLogged = true;
+            logSystemRam("after 30 frames");
+        }
         if (netplay) {
             netplay->frameDone();
         }
@@ -1055,6 +1065,147 @@ std::vector<int8_t> LibretroDroid::serializeState() {
     return data;
 }
 
+// Diagnóstico: a busca na memória só serve com a RAM do sistema exposta (aparece no relatório de erros).
+void LibretroDroid::logSystemRam(const char* when) {
+    if (!core || !core->retro_get_memory_size || !core->retro_get_memory_data) return;
+    LOGI("System RAM exposed by the core %s: %zu bytes, pointer %s", when,
+         core->retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM),
+         core->retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM) != nullptr ? "ok" : "null");
+    size_t total = 0;
+    for (const auto& seg : memoryView()) total += seg.length;
+    LOGI("Game memory seen by the app %s: %zu bytes in %zu part(s)", when, total, memoryView().size());
+}
+
+std::vector<LibretroDroid::MemorySegment> LibretroDroid::memoryView() {
+    std::vector<MemorySegment> view;
+    size_t total = 0;
+    if (core && core->retro_get_memory_size && core->retro_get_memory_data) {
+        size_t size = core->retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
+        auto* data = (uint8_t*) core->retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+        // Alguns núcleos informam tamanho sem ponteiro.
+        if (data != nullptr && size > 0 && size <= MAX_SYSTEM_RAM) {
+            view.push_back({data, size});
+            total = size;
+        }
+    }
+    for (const auto& region : Environment::getInstance().getMemoryRegions()) {
+        if (total + region.length > MAX_SYSTEM_RAM) continue;
+        bool overlaps = false;
+        for (const auto& seg : view) {
+            if (region.data < seg.data + seg.length && region.data + region.length > seg.data) { overlaps = true; break; }
+        }
+        if (overlaps) continue;
+        view.push_back({region.data, region.length});
+        total += region.length;
+    }
+    return view;
+}
+
+size_t LibretroDroid::systemRamSize() {
+    std::lock_guard<std::mutex> lock(coreLock);
+    size_t total = 0;
+    for (const auto& seg : memoryView()) total += seg.length;
+    return total;
+}
+
+std::vector<size_t> LibretroDroid::memorySegmentLengths() {
+    std::lock_guard<std::mutex> lock(coreLock);
+    std::vector<size_t> lengths;
+    for (const auto& seg : memoryView()) lengths.push_back(seg.length);
+    return lengths;
+}
+
+size_t LibretroDroid::copySystemRam(const std::function<void(size_t, const uint8_t*, size_t)>& copy) {
+    std::lock_guard<std::mutex> lock(coreLock);
+    size_t offset = 0;
+    for (const auto& seg : memoryView()) {
+        copy(offset, seg.data, seg.length);
+        offset += seg.length;
+    }
+    return offset;
+}
+
+size_t LibretroDroid::copyMemoryRange(size_t offset, size_t length, const std::function<void(size_t, const uint8_t*, size_t)>& copy) {
+    std::lock_guard<std::mutex> lock(coreLock);
+    size_t position = 0;     // início do trecho dentro da memória toda
+    size_t delivered = 0;
+    for (const auto& seg : memoryView()) {
+        size_t segEnd = position + seg.length;
+        if (offset + delivered < segEnd && delivered < length) {
+            size_t from = offset + delivered - position;
+            size_t chunk = std::min(seg.length - from, length - delivered);
+            copy(delivered, seg.data + from, chunk);
+            delivered += chunk;
+        }
+        position = segEnd;
+        if (delivered >= length) break;
+    }
+    return delivered;
+}
+
+void LibretroDroid::setRamFreezes(std::vector<RamFreeze> freezes) {
+    std::lock_guard<std::mutex> lock(ramFreezeLock);
+    ramFreezes = std::move(freezes);
+}
+
+bool LibretroDroid::queueMemoryWrite(size_t offset, std::vector<uint8_t> data, bool wordSwap) {
+    if (data.empty()) return true;
+    std::lock_guard<std::mutex> lock(ramFreezeLock);
+    // Uma fila limitada (o app escreve só os textos que acabou de traduzir): passando do limite, a gravação é recusada
+    // e o app a repete no passo seguinte.
+    size_t queued = 0;
+    for (const auto& write : pendingWrites) queued += write.data.size();
+    if (pendingWrites.size() >= MAX_PENDING_WRITES || queued + data.size() > MAX_PENDING_BYTES) return false;
+    pendingWrites.push_back({offset, std::move(data), wordSwap});
+    return true;
+}
+
+// Chamado pela thread de emulação logo depois de cada retro_run, com o coreLock já tomado pelo quadro.
+void LibretroDroid::applyRamFreezes() {
+    std::lock_guard<std::mutex> lock(ramFreezeLock);
+    if ((ramFreezes.empty() && pendingWrites.empty()) || !core) return;
+
+    auto view = memoryView();
+    if (view.empty()) { pendingWrites.clear(); return; }
+
+    // O byte nº [index] da memória do jogo, ou nulo se sai dela.
+    auto locate = [&view](size_t index) -> uint8_t* {
+        for (const auto& seg : view) {
+            if (index < seg.length) return seg.data + index;
+            index -= seg.length;
+        }
+        return nullptr;
+    };
+
+    for (const auto& freeze : ramFreezes) {
+        if (freeze.width == 0 || freeze.width > 4) continue;
+        // positions[i] é onde fica o i-ésimo byte do valor, do mais ao menos significativo.
+        bool inRange = true;
+        uint8_t* positions[4];
+        for (unsigned i = 0; i < freeze.width; i++) {
+            size_t logical = (size_t) freeze.address + (freeze.bigEndian || freeze.wordSwap ? i : freeze.width - 1 - i);
+            size_t physical = freeze.wordSwap ? (logical ^ 3u) : logical;
+            positions[i] = locate(physical);
+            if (positions[i] == nullptr) { inRange = false; break; }
+        }
+        if (!inRange) continue;
+        for (unsigned i = 0; i < freeze.width; i++) {
+            unsigned shift = 8 * (freeze.width - 1 - i);
+            *positions[i] = (uint8_t) ((freeze.value >> shift) & 0xFF);
+        }
+    }
+
+    // Gravações únicas (a tradução): cada byte vai ao lugar do jogo; o que sai da memória é ignorado.
+    for (const auto& write : pendingWrites) {
+        for (size_t i = 0; i < write.data.size(); i++) {
+            size_t logical = write.offset + i;
+            uint8_t* target = locate(write.wordSwap ? (logical ^ 3u) : logical);
+            if (target != nullptr) *target = write.data[i];
+        }
+    }
+    pendingWrites.clear();
+}
+
 void LibretroDroid::resetCheat() {
     std::lock_guard<std::mutex> lock(coreLock);
 
@@ -1092,6 +1243,15 @@ void LibretroDroid::afterGameLoad() {
     core->retro_get_system_av_info(&system_av_info);
 
     contentFps = system_av_info.timing.fps > 0 ? system_av_info.timing.fps : 60.0;
+    // Alguns núcleos (N64, GameCube, PSP) só alocam a RAM depois do carregamento: o diagnóstico sai de novo nos primeiros quadros.
+    ramLogged = false;
+    // Uma gravação ou trava deixada pelo jogo anterior (o singleton vive entre jogos) não vale para este.
+    {
+        std::lock_guard<std::mutex> lock(ramFreezeLock);
+        pendingWrites.clear();
+        ramFreezes.clear();
+    }
+    logSystemRam("at load");
     // Uma mudança de tela anunciada antes do carregamento vale desde o primeiro quadro.
     float pendingRate = pendingScreenRefreshRate.exchange(0.0F);
     if (pendingRate > 0) {

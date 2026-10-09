@@ -74,4 +74,20 @@
     <string name="game_reset_confirm_message">Everything since your last save is lost. You can still undo it from the States tab.</string>
     <string name="game_core_option_default">default</string>
     <string name="game_reset_confirm_message_no_undo">Everything since your last save is lost.</string>
+    <string name="game_core_scope_all">All games</string>
+    <string name="game_core_scope_game">This game only</string>
+    <string name="game_core_scope_hint_all">Changes are saved for every game on this core.</string>
+    <string name="game_core_scope_hint_game">Changes are saved for this game only; other games keep their own.</string>
+    <string name="game_core_option_game_badge">This game</string>
+    <string name="game_core_game_reset">Clear this game\'s options</string>
+    <string name="game_core_game_reset_done">This game\'s options cleared</string>
+    <string name="game_ini_open">Game config file</string>
+    <string name="game_ini_title">Game config file (Dolphin)</string>
+    <string name="game_ini_hint">Dolphin\'s per-game .ini, for what isn\'t a core option (memory card type, video hacks, CPU). It applies the next time you open the game. Example:\n[Core]\nSlotA = 1</string>
+    <string name="game_ini_id">Disc ID: %1$s</string>
+    <string name="game_ini_no_id">Couldn\'t read this disc\'s ID (compressed image), so the file can\'t be placed.</string>
+    <string name="game_ini_blocked">A file with this name already exists in the Dolphin folder and wasn\'t made by Retrovika, so it won\'t be changed.</string>
+    <string name="game_ini_save">Save</string>
+    <string name="game_ini_saved">Saved. It applies the next time you open the game.</string>
+    <string name="game_core_game_reset_partial">This game\'s options were cleared. The running game keeps its values until you reopen it.</string>
 </resources>

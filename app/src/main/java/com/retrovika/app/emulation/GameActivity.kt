@@ -39,6 +39,12 @@ import com.retrovika.app.container
 import com.retrovika.app.core.net.LocalizedException
 import com.retrovika.app.core.net.userMessage
 import com.retrovika.app.core.cores.CoreState
+import com.retrovika.app.core.cheats.RamCheat
+import com.retrovika.app.core.gameconfig.DiscId
+import com.retrovika.app.core.textmem.TextDecoder
+import com.retrovika.app.core.textmem.TextPatcher
+import com.retrovika.app.core.textmem.MemoryAccess
+import com.retrovika.app.core.gameconfig.GameIniFiles
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
 import com.retrovika.app.core.settings.SettingsRepository
@@ -60,8 +66,10 @@ import com.retrovika.app.core.translate.Box
 import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.core.translate.LiveTranslator
 import com.retrovika.app.core.translate.OcrFrame
+import com.retrovika.app.core.translate.TranslationText
 import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
+import com.retrovika.app.core.systems.CoreOptionLayers
 import com.retrovika.app.core.systems.GameSystem
 import com.retrovika.app.core.systems.Orientation
 import com.retrovika.app.core.systems.Preset
@@ -99,6 +107,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -236,7 +245,24 @@ class GameActivity : ComponentActivity() {
     /** Muda a cada ponto novo: a compressão de um ponto antigo que termina depois não o sobrescreve. */
     private var undoGeneration = 0
     /** Gravações das opções do núcleo, na ordem em que foram feitas (ver [MenuActions.setCoreOption]). */
-    private val optionSaves = Channel<Triple<String, String, String>>(Channel.UNLIMITED)
+    private val optionSaves = Channel<OptionSave>(Channel.UNLIMITED)
+    /** [gameId] nulo grava para o núcleo todo; com valor, só para aquele jogo. */
+    private class OptionSave(val coreId: String, val gameId: Long?, val key: String?, val value: String = "", val remove: Boolean = false)
+    /** A última lista de fontes de texto a gravar (conflada: só a mais nova importa), gravada uma por vez e em ordem. */
+    private val hookSaves = Channel<List<com.retrovika.app.core.textmem.TextHook>>(Channel.CONFLATED)
+
+    /** A aba Núcleo grava só para este jogo (em vez de para o núcleo todo). */
+    private var perGameOptions by mutableStateOf(false)
+    /** Opções que este jogo tem só dele (com o núcleo de agora), para a aba Núcleo marcá-las. */
+    private var gameOptionKeys by mutableStateOf<Set<String>>(emptySet())
+    /** Traduz os diálogos do jogo sozinha, escrevendo a tradução na memória dele (ver [TextPatcher]). */
+    private var autoTranslate by mutableStateOf(false)
+    private var autoTranslateJob: kotlinx.coroutines.Job? = null
+    private var textPatcher: TextPatcher? = null
+    private var textPatcherView: GLRetroView? = null
+    private val patchLock = kotlinx.coroutines.sync.Mutex()
+    /** ID do disco (GameCube/Wii) lido na abertura, para o arquivo de configuração do jogo; nulo se não deu para ler. */
+    private var discId by mutableStateOf<String?>(null)
     /** Quadros rodados quando o salvamento automático foi gravado pela última vez nesta sessão; -1 = nunca/desatualizado. */
     private var lastAutoFrames = -1L
     /** O salvamento automático lido antes da hora, enquanto o núcleo carrega (ver [prepare]); nulo se não se aplica. */
@@ -370,7 +396,19 @@ class GameActivity : ComponentActivity() {
 
         // Uma gravação por vez e na ordem: tocadas rápidas (ou ← → do controle) lançavam gravações em paralelo, e uma
         // intermediária podia terminar por último e voltar na próxima abertura. No escopo do app: sair do jogo não as perde.
-        app.scope.launch { for ((coreId, key, value) in optionSaves) runCatching { app.settings.setCoreOption(coreId, key, value) } }
+        // O jogo só existe depois do prepare, e as fontes só mudam depois dele: o id é lido na hora de gravar.
+        app.scope.launch { for (hooks in hookSaves) runCatching { app.settings.setGameTextHooks(game.id, hooks) } }
+        app.scope.launch {
+            for (save in optionSaves) runCatching {
+                when {
+                    // O "limpar as opções do jogo" entra na mesma fila: vale depois das gravações que o antecederam.
+                    save.key == null -> save.gameId?.let { app.settings.resetGameCoreOptions(it, save.coreId) }
+                    save.remove && save.gameId != null -> app.settings.removeGameCoreOption(save.gameId, save.coreId, save.key)
+                    save.gameId != null -> app.settings.setGameCoreOption(save.gameId, save.coreId, save.key, save.value)
+                    else -> app.settings.setCoreOption(save.coreId, save.key, save.value)
+                }
+            }
+        }
 
         lifecycleScope.launch {
             // Qualquer falha inesperada na preparação vira a tela de erro com o motivo, em vez de fechar o app.
@@ -406,8 +444,22 @@ class GameActivity : ComponentActivity() {
         game = app.library.get(gameId) ?: return fail(getString(R.string.game_not_found), getString(R.string.game_not_found_message))
         system = Systems.byId(game.systemId) ?: return fail(getString(R.string.game_unknown_system), game.systemId)
         states = SaveStates(app.paths, game)
-        cheats = CheatSession(app.cheats, game, lifecycleScope, this).also { it.restore() }
+        cheats = CheatSession(app.cheats, game, lifecycleScope, this).also {
+            it.restore()
+            it.ram.loadTextHooks(app.settings.gameTextHooks(game.id))
+            it.ram.onTextHooksChanged = { hooks ->
+                textPatcher?.reset()
+                // Uma fila que guarda só a última lista: gravações seguidas não chegam fora de ordem ao DataStore.
+                hookSaves.trySend(hooks)
+            }
+            // A busca na memória lê a RAM do núcleo pela vista de agora (que só existe depois do carregamento).
+            it.ram.reader = { buffer -> retroView?.readSystemRamInto(buffer) ?: 0 }
+            it.ram.sizeProvider = { retroView?.systemRamSize() ?: 0 }
+            // O RDRAM do N64 fica em palavras invertidas: os dois núcleos de N64 entregam a memória assim.
+            it.ram.wordSwapSystem = system.id == "n64"
+        }
         settings = app.settings.current()
+        autoTranslate = app.settings.gameAutoTranslate(game.id)
         // A tela acompanha o sensor: girar o celular alterna entre retrato e paisagem em qualquer console.
         requestedOrientation = when (system.orientation) {
             Orientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -467,6 +519,10 @@ class GameActivity : ComponentActivity() {
                 core = system.core(chosen)
             }
         }
+
+        gameOptionKeys = app.settings.gameCoreOptions(game.id, core.id).keys
+        cheats?.ram?.coreId = core.id
+        syncGameIni()
 
         // 2b. Nível de qualidade: mede neste aparelho o maior que roda com folga (ou refaz só para este jogo).
         val retune = intent.getBooleanExtra(EXTRA_RETUNE, false)
@@ -798,6 +854,19 @@ class GameActivity : ComponentActivity() {
         data.gameVirtualFiles = emptyList()
     }
 
+    /**
+     * Dolphin: grava (ou tira) o `GameSettings/<ID>.ini` do jogo antes de o núcleo abrir. O núcleo o lê ao começar a
+     * partida e ele vale para o que não é opção de núcleo (cartão de memória, truques de vídeo, CPU…).
+     */
+    private suspend fun syncGameIni() {
+        if (core.id != DOLPHIN_CORE || guestSession) return
+        val id = DiscId.read(this, game)
+        discId = id
+        if (id == null) return
+        val text = app.settings.gameIni(game.id)
+        withContext(Dispatchers.IO) { runCatching { GameIniFiles.sync(app.paths.savesFor(system.id), id, text) } }
+    }
+
     /** A predefinição que vale agora para [core] neste jogo e aparelho, e por quê; nulo se o núcleo não tem predefinições. */
     private suspend fun effectivePreset(core: CoreInfo): EffectivePreset? = Tuning.effective(
         core, app.deviceProfile.await(), app.settings.presetChoice(system.id).first(),
@@ -805,14 +874,17 @@ class GameActivity : ComponentActivity() {
     )
 
     /** [preset] força um nível (o teste de qualidade); sem ele vale o [effectivePreset]. */
-    private suspend fun optionsFor(core: CoreInfo, preset: Preset? = null): Map<String, String> {
+    private suspend fun optionsFor(core: CoreInfo, preset: Preset? = null, withGameLayer: Boolean = true): Map<String, String> {
         val level = preset ?: effectivePreset(core)?.preset
         // Sem Vulkan para este núcleo (o aparelho não tem, ou ele falhou), o perfil diz isso e o núcleo escolhe outro renderizador.
         val allowed = vulkanAllowed(core)
         val profile = app.deviceProfile.await().let { if (it.vulkan && !allowed) it.copy(vulkan = false) else it }
         val device = core.deviceOptions?.invoke(profile).orEmpty()
         val user = app.settings.coreOptions(core.id).let { if (core.vulkan && !allowed) withoutVulkan(core, profile, it) else it }
-        return core.defaults + level?.let { core.presets[it] }.orEmpty() + device + user + core.fixed
+        // As escolhas só deste jogo vencem as do usuário para o núcleo (e só perdem para as fixas).
+        val own = if (!withGameLayer) emptyMap() else
+            app.settings.gameCoreOptions(game.id, core.id).let { if (core.vulkan && !allowed) withoutVulkan(core, profile, it) else it }
+        return CoreOptionLayers.merge(core.defaults, level?.let { core.presets[it] }.orEmpty(), device, user, own, core.fixed)
     }
 
     /**
@@ -1165,7 +1237,7 @@ class GameActivity : ComponentActivity() {
         // Carrega o salvamento automático assim que o primeiro quadro é desenhado.
         lifecycleScope.launch {
             view.getGLRetroEvents().filterIsInstance<GLRetroView.GLRetroEvents.FrameRendered>().first()
-            if (retroView === view) gameLoaded = true
+            if (retroView === view) { gameLoaded = true; updateAutoTranslate() }
             // A cobertura segue até o salvamento automático ser aplicado (senão o jogador veria a tela de início e,
             // de repente, o ponto onde parou); sem carregamento automático nenhum, sai agora.
             if (!autoLoadsState()) loading = null
@@ -1393,6 +1465,7 @@ class GameActivity : ComponentActivity() {
         sharing?.server?.close()
         netplay.end()
         translateJob?.cancel()
+        autoTranslateJob?.cancel()
         translator?.let { runCatching { it.close() } }
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
@@ -1409,6 +1482,7 @@ class GameActivity : ComponentActivity() {
         // O que ficou na fila ainda é gravado; depois o consumidor termina.
         padSaves.close()
         optionSaves.close()
+        hookSaves.close()
         super.onDestroy()
     }
 
@@ -1749,8 +1823,67 @@ class GameActivity : ComponentActivity() {
             if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return false }
             val view = retroView ?: return false
             view.updateVariables(Variable(option.key, value))
-            optionSaves.trySend(Triple(core.id, option.key, value))
+            if (perGameOptions) {
+                optionSaves.trySend(OptionSave(core.id, game.id, option.key, value))
+                gameOptionKeys = gameOptionKeys + option.key
+            } else {
+                optionSaves.trySend(OptionSave(core.id, null, option.key, value))
+                // Escolher para todos os jogos uma opção que este jogo tem só dele: a dele sairia na próxima abertura.
+                if (option.key in gameOptionKeys) {
+                    gameOptionKeys = gameOptionKeys - option.key
+                    optionSaves.trySend(OptionSave(core.id, game.id, option.key, remove = true))
+                }
+            }
             return true
+        }
+
+        override fun coreOptionsPerGame(): Boolean = perGameOptions
+
+        override fun setCoreOptionsPerGame(perGame: Boolean) { perGameOptions = perGame }
+
+        override fun gameOptionKeys(): Set<String> = gameOptionKeys
+
+        override fun resetGameOptions() {
+            val view = retroView ?: return
+            if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
+            // As chaves que o jogo tem só dele, incluindo as que ainda esperam na fila de gravação.
+            val own = gameOptionKeys.associateWith { "" }
+            optionSaves.trySend(OptionSave(core.id, game.id, key = null))
+            lifecycleScope.launch {
+                var done = false
+                try {
+                    // O que cada opção vale sem a camada do jogo: as outras camadas, ou o padrão do próprio núcleo.
+                    val others = optionsFor(core, withGameLayer = false)
+                    val defaults = view.getVariables().mapNotNull(CoreOption::parse).associate { it.key to it.default }
+                    CoreOptionLayers.withoutGame(own, others).forEach { (key, value) ->
+                        (value ?: defaults[key])?.let { view.updateVariables(Variable(key, it)) }
+                    }
+                    done = true
+                } catch (c: kotlinx.coroutines.CancellationException) {
+                    throw c
+                } catch (e: Exception) {
+                    // O núcleo ficou com os valores de antes até a próxima abertura; o que está salvo já foi limpo.
+                } finally {
+                    // Só agora a tela relê a lista (os valores já estão no núcleo); o que o jogador marcou depois fica marcado.
+                    gameOptionKeys = gameOptionKeys - own.keys
+                }
+                // Só avisa que limpou se os valores voltaram ao núcleo; o que está salvo já foi limpo de qualquer jeito.
+                toast = getString(if (done) R.string.game_core_game_reset_done else R.string.game_core_game_reset_partial)
+            }
+        }
+
+        override fun gameIniSupported(): Boolean = core.id == DOLPHIN_CORE && !guestSession
+
+        override fun gameIniId(): String? = discId
+
+        override fun gameIniBlocked(): Boolean =
+            discId?.let { GameIniFiles.blockedByUserFile(app.paths.savesFor(system.id), it) } == true
+
+        override suspend fun gameIni(): String = app.settings.gameIni(game.id)
+
+        override fun saveGameIni(text: String) {
+            app.scope.launch { runCatching { app.settings.setGameIni(game.id, text) } }
+            toast = getString(R.string.game_ini_saved)
         }
 
         override fun disks(): Pair<Int, Int> {
@@ -1821,9 +1954,26 @@ class GameActivity : ComponentActivity() {
         override fun translation(): TranslationUi? = translation
 
         override fun canTranslate(): Boolean =
-            ::game.isInitialized && (settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true))
+            ::game.isInitialized && (
+                settings.translateEverywhere || game.region == "Japão" || game.rawName.contains("(Japan", ignoreCase = true) ||
+                    cheats?.ram?.activeTextHooks?.isNotEmpty() == true
+                )
 
         override fun translate() = startTranslation()
+
+        override fun translateQuick() = translateInGame()
+
+        override fun translateInGame() = this@GameActivity.translateInGame()
+
+        override fun hasTextHooks(): Boolean = cheats?.ram?.activeTextHooks?.isNotEmpty() == true
+
+        override fun autoTranslate(): Boolean = autoTranslate
+
+        override fun setAutoTranslate(on: Boolean) {
+            autoTranslate = on
+            app.scope.launch { runCatching { app.settings.setGameAutoTranslate(game.id, on) } }
+            updateAutoTranslate()
+        }
 
         override fun closeTranslation() {
             translateJob?.cancel()
@@ -1845,7 +1995,10 @@ class GameActivity : ComponentActivity() {
             // Trapaças ligadas só aqui desencontrariam os jogos: saem durante a partida e voltam depois.
             if (cheats?.state?.enabled?.isNotEmpty() == true) {
                 cheats?.dirty = true
-                lifecycleScope.launch(Dispatchers.Default) { view.resetCheat() }
+                lifecycleScope.launch(Dispatchers.Default) {
+                    view.resetCheat()
+                    view.setRamFreezes(IntArray(0), IntArray(0), IntArray(0))
+                }
             }
             if (fastForward) toggleFastForward()
             netplay.startHosting(StatePackage.manifestFor(game, core.id, System.currentTimeMillis()), game.title)
@@ -1939,12 +2092,22 @@ class GameActivity : ComponentActivity() {
         val session = cheats ?: return
         session.dirty = false
         autoSaveStale()
-        val codes = session.state.enabled.map { it.code }
+        val enabled = session.state.enabled.map { it.code }
+        // Os códigos de memória não passam pelo núcleo: o LibretroDroid os grava na RAM depois de cada quadro.
+        val (ramCodes, codes) = enabled.partition { RamCheat.isRam(it) }
+        val freezes = ramCodes.mapNotNull { RamCheat.parse(it) }.filter { it.appliesTo(core.id) }
         lifecycleScope.launch(Dispatchers.Default) {
             view.resetCheat()
             codes.forEachIndexed { i, code -> view.setCheat(i, true, code) }
+            view.setRamFreezes(
+                IntArray(freezes.size) { freezes[it].address },
+                IntArray(freezes.size) { freezes[it].value.toInt() },
+                IntArray(freezes.size) { freezes[it].nativeWidth() },
+            )
         }
-        if (codes.isNotEmpty()) toast = resources.getQuantityString(R.plurals.cheats_applied, codes.size, codes.size)
+        // Só os que valem para este núcleo contam (um cheat de memória achado em outro não é aplicado).
+        val applied = codes.size + freezes.size
+        if (applied > 0) toast = resources.getQuantityString(R.plurals.cheats_applied, applied, applied)
     }
 
     private fun sendPadSave(save: Pair<Boolean, PadProfile?>) {
@@ -1961,6 +2124,115 @@ class GameActivity : ComponentActivity() {
             delay(50)
         }
         return emulationRunning()
+    }
+
+    private fun memoryAccess(view: GLRetroView) = object : MemoryAccess {
+        override fun read(offset: Int, length: Int): ByteArray? {
+            if (length <= 0) return null
+            val buffer = ByteArray(length)
+            return if (view.readMemoryRange(offset, length, buffer) == length) buffer else null
+        }
+
+        override fun write(offset: Int, data: ByteArray, wordSwap: Boolean) = view.queueMemoryWrite(offset, data, wordSwap)
+    }
+
+    /**
+     * Um passo da tradução dentro do jogo: lê os textos dos ganchos, traduz e escreve a tradução na memória, no lugar do
+     * original. [force] (o botão) traduz tudo o que há agora; o automático espera o texto ficar estável. Nulo se o jogo não
+     * tem ganchos.
+     */
+    private suspend fun patchStep(view: GLRetroView, force: Boolean): TextPatcher.Report? {
+        val hooks = cheats?.ram?.activeTextHooks.orEmpty()
+        if (hooks.isEmpty()) return null
+        val target = uiLanguage()
+        val patcher = textPatcher?.takeIf { textPatcherView === view } ?: TextPatcher(memoryAccess(view)) { text ->
+            TranslationText.probablyTranslated(text, uiLanguage())
+        }.also {
+            textPatcher = it
+            textPatcherView = view
+        }
+        val tr = translator ?: LiveTranslator(app.ocrPack).also { translator = it }
+        // Fora da thread principal: ler a memória espera o quadro em curso (o núcleo segura o lock durante ele).
+        return patchLock.withLock {
+            withContext(Dispatchers.Default) {
+                patcher.step(hooks, force) { texts -> tr.translateTexts(texts, target) {}.blocks.associate { it.original to it.translated } }
+            }
+        }
+    }
+
+    /** O botão: traduz os diálogos de agora e os escreve no jogo (ou, sem ganchos, mostra a tradução da tela). */
+    private fun translateInGame() {
+        val view = retroView ?: return
+        if (cheats?.ram?.activeTextHooks.isNullOrEmpty()) { startTranslation(); return }
+        if (netplay.playing) { toast = getString(R.string.netplay_unavailable); return }
+        lifecycleScope.launch {
+            toast = try {
+                val report = patchStep(view, force = true)
+                when {
+                    report == null -> return@launch
+                    report.written > 0 && report.truncated > 0 ->
+                        resources.getQuantityString(R.plurals.translate_inplace_done_cut, report.written, report.written, report.truncated)
+                    report.written > 0 -> resources.getQuantityString(R.plurals.translate_inplace_done, report.written, report.written)
+                    report.unreadable -> getString(R.string.translate_inplace_unreadable)
+                    else -> getString(R.string.translate_inplace_none)
+                }
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                getString(R.string.translate_failed, t.userMessage(this@GameActivity))
+            }
+        }
+    }
+
+    /** Liga ou desliga o laço automático conforme a escolha do jogador. */
+    private fun updateAutoTranslate() {
+        autoTranslateJob?.cancel()
+        autoTranslateJob = null
+        if (!autoTranslate) return
+        autoTranslateJob = lifecycleScope.launch {
+            var failures = 0
+            while (true) {
+                // Sem rede (ou tradutor recusando): o intervalo dobra a cada falha, até meio minuto, e volta ao normal no primeiro acerto.
+                delay(AUTO_TRANSLATE_INTERVAL_MS shl failures.coerceAtMost(6))
+                val view = retroView ?: continue
+                if (!gameLoaded || !emulationRunning() || translation != null || menuOpen || netplay.playing) continue
+                try {
+                    patchStep(view, force = false)
+                    failures = 0
+                } catch (c: kotlinx.coroutines.CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    failures++
+                }
+            }
+        }
+    }
+
+    /**
+     * Os ganchos de texto do jogo lidos da RAM e traduzidos: a lista pronta, ou nulo se o jogo não tem ganchos, o núcleo
+     * não expõe a RAM, nada legível saiu ou não deu memória (aí a tradução segue pelo OCR).
+     */
+    private suspend fun memoryTranslation(view: GLRetroView, frame: Bitmap, tr: LiveTranslator, target: String): TranslationUi? {
+        val hooks = cheats?.ram?.activeTextHooks.orEmpty()
+        if (hooks.isEmpty()) return null
+        val texts = withContext(Dispatchers.Default) {
+            try {
+                val size = view.systemRamSize()
+                if (size <= 0) return@withContext emptyList<String>()
+                val ram = ByteArray(size)
+                if (view.readSystemRamInto(ram) != size) emptyList() else hooks.flatMap { hook ->
+                    // Os mesmos segmentos que a tradução dentro do jogo usa (linhas de tela, texto plausível, janela inteira).
+                    TextDecoder.slice(ram, hook.address, hook.length, hook.wordSwap)?.let { TextDecoder.segments(it, hook) }.orEmpty().map { it.text }
+                }
+            } catch (e: OutOfMemoryError) {
+                emptyList()
+            }
+        }
+        if (texts.isEmpty()) return null
+        val result = tr.translateTexts(texts, target) { stage ->
+            if (translation is TranslationUi.Working) translation = TranslationUi.Working(frame, stage)
+        }
+        return if (result.blocks.isEmpty()) null else TranslationUi.Ready(frame, result.blocks, fromMemory = true)
     }
 
     /**
@@ -2010,18 +2282,21 @@ class GameActivity : ComponentActivity() {
                 val target = uiLanguage()
                 translateJob = lifecycleScope.launch {
                     translation = try {
-                        val frame = nativeFrame(full) ?: OcrFrame(full, Box(0, 0, full.width, full.height))
-                        val current = app.settings.current()
-                        val ai = current.geminiKey?.takeIf { it.isNotBlank() }?.let { AiConfig(it, current.geminiModel) }
                         val tr = translator ?: LiveTranslator(app.ocrPack).also { translator = it }
-                        val result = tr.translate(frame, target, ai, GeminiText.GameContext(game.title, system.name)) { stage ->
-                            if (translation is TranslationUi.Working) translation = TranslationUi.Working(full, stage)
+                        // Com ganchos de texto o jogo entrega o texto sem OCR (exato e na hora); sem eles, ou se nada saiu, vale a tela.
+                        memoryTranslation(view, full, tr, target) ?: run {
+                            val frame = nativeFrame(full) ?: OcrFrame(full, Box(0, 0, full.width, full.height))
+                            val current = app.settings.current()
+                            val ai = current.geminiKey?.takeIf { it.isNotBlank() }?.let { AiConfig(it, current.geminiModel) }
+                            val result = tr.translate(frame, target, ai, GeminiText.GameContext(game.title, system.name)) { stage ->
+                                if (translation is TranslationUi.Working) translation = TranslationUi.Working(full, stage)
+                            }
+                            TranslationUi.Ready(
+                                full, result.blocks,
+                                aiError = result.aiError?.userMessage(this@GameActivity),
+                                suggestPack = result.suggestPack,
+                            )
                         }
-                        TranslationUi.Ready(
-                            full, result.blocks,
-                            aiError = result.aiError?.userMessage(this@GameActivity),
-                            suggestPack = result.suggestPack,
-                        )
                     } catch (c: kotlinx.coroutines.CancellationException) {
                         throw c
                     } catch (t: Throwable) {
@@ -2351,6 +2626,8 @@ class GameActivity : ComponentActivity() {
     }
 
     companion object {
+        /** O único núcleo que lê um `GameSettings/<ID>.ini` por jogo na pasta de usuário (ver [GameIniFiles]). */
+        private const val DOLPHIN_CORE = "dolphin"
         private const val EXTRA_GAME_ID = "game_id"
         private const val BLACK_SCREEN_CHECKS = 4
         private const val BLACK_SCREEN_INTERVAL_MS = 8_000L
@@ -2360,6 +2637,8 @@ class GameActivity : ComponentActivity() {
         private const val THUMB_WIDTH = 320
         /** Cópias da tela tentadas ao abrir a tradução, cada uma depois de a emulação desenhar quadros novos. */
         private const val TRANSLATE_CAPTURE_ATTEMPTS = 2
+        /** Quanto tempo entre uma leitura e outra dos textos do jogo no modo automático. */
+        private const val AUTO_TRANSLATE_INTERVAL_MS = 500L
         private const val SRAM_SAVE_INTERVAL_MS = 30_000L
         /** Uns 5 minutos de jogo a 60 quadros por segundo. */
         private const val UNDO_MAX_FRAMES = 60L * 60 * 5
@@ -2456,6 +2735,19 @@ interface MenuActions {
     fun coreOptions(): List<CoreOption>
     /** Falso se a opção não foi aplicada (partida em rede): a tela não deve mostrar o valor novo. */
     fun setCoreOption(option: CoreOption, value: String): Boolean
+    /** A aba Núcleo grava só para este jogo (e não para o núcleo todo). Estado do Compose. */
+    fun coreOptionsPerGame(): Boolean
+    fun setCoreOptionsPerGame(perGame: Boolean)
+    /** As opções que este jogo tem só dele. Estado do Compose. */
+    fun gameOptionKeys(): Set<String>
+    fun resetGameOptions()
+    /** Só o Dolphin lê um arquivo de configuração por jogo. */
+    fun gameIniSupported(): Boolean
+    fun gameIniId(): String?
+    /** Há um arquivo com o mesmo nome que o usuário pôs à mão: o Retrovika não o sobrescreve. */
+    fun gameIniBlocked(): Boolean
+    suspend fun gameIni(): String
+    fun saveGameIni(text: String)
     fun disks(): Pair<Int, Int>
     fun changeDisk(index: Int)
     fun reset()
@@ -2472,6 +2764,13 @@ interface MenuActions {
     fun translation(): TranslationUi?
     fun canTranslate(): Boolean
     fun translate()
+    /** O botão da tela: com ganchos de texto, traduz os diálogos e os escreve no jogo; sem eles, mostra a tradução da tela. */
+    fun translateQuick()
+    fun translateInGame()
+    fun hasTextHooks(): Boolean
+    /** Traduz os diálogos sozinha. Estado do Compose. */
+    fun autoTranslate(): Boolean
+    fun setAutoTranslate(on: Boolean)
     fun closeTranslation()
     fun setPadProfile(profile: PadProfile)
     fun padForGame(): Boolean

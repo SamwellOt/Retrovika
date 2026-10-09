@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,6 +61,7 @@ internal fun CheatsTab(session: CheatSession) {
     var query by remember { mutableStateOf("") }
     var picking by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
     val state = session.state
     val shown = remember(state, query) {
         val q = query.trim()
@@ -70,9 +72,14 @@ internal fun CheatsTab(session: CheatSession) {
         FilePicker(session, onDone = { picking = false })
         return
     }
+    if (searching) {
+        RamSearchPanel(session, onClose = { searching = false })
+        return
+    }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
+        // Consoles sem pasta na libretro-database só têm os códigos próprios e a busca na memória.
+        if (session.supported) item {
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.SurfaceHigh)
                     .border(1.dp, Palette.Outline, RoundedCornerShape(16.dp)).padding(12.dp),
@@ -114,7 +121,7 @@ internal fun CheatsTab(session: CheatSession) {
                 if (state.enabled.isNotEmpty()) TextButton(onClick = session::disableAll) { Text(stringResource(R.string.cheats_disable_all)) }
             }
         }
-        if (!session.loading && state.cheats.isEmpty() && session.error == null) item {
+        if (session.supported && !session.loading && state.cheats.isEmpty() && session.error == null) item {
             Text(
                 stringResource(if (state.file == null) R.string.cheats_not_found else R.string.cheats_empty_file),
                 style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary,
@@ -124,6 +131,10 @@ internal fun CheatsTab(session: CheatSession) {
         itemsIndexed(shown, key = { i, c -> "$i:${c.custom}:${c.code}:${c.description}" }) { _, cheat -> CheatRow(cheat, session) }
         item {
             GhostButton(stringResource(R.string.cheats_add_code), { adding = true }, icon = Icons.Rounded.Add, tint = Palette.Cyan)
+        }
+        item {
+            GhostButton(stringResource(R.string.ram_open), { searching = true }, icon = Icons.Rounded.Memory, tint = Palette.Neon)
+            Text(stringResource(R.string.ram_open_hint), style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted, modifier = Modifier.padding(top = 4.dp))
         }
     }
 

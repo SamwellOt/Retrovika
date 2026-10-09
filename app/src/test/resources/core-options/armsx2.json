@@ -1,0 +1,130 @@
+{
+"armsx2_renderer": [
+"Vulkan",
+"OpenGL",
+"Software"
+],
+"armsx2_upscale": [
+"1x",
+"2x",
+"3x",
+"4x"
+],
+"armsx2_aspect_ratio": [
+"Auto 4:3/3:2",
+"4:3",
+"16:9",
+"Stretch"
+],
+"armsx2_deinterlacing": [
+"Automatic",
+"Off",
+"Weave TFF",
+"Weave BFF",
+"Bob TFF",
+"Bob BFF",
+"Blend TFF",
+"Blend BFF",
+"Adaptive TFF",
+"Adaptive BFF"
+],
+"armsx2_no_interlacing_patches": [
+"disabled",
+"enabled"
+],
+"armsx2_widescreen_patches": [
+"disabled",
+"enabled"
+],
+"armsx2_blending_accuracy": [
+"Minimum",
+"Basic",
+"Medium",
+"High",
+"Full",
+"Maximum"
+],
+"armsx2_dithering": [
+"Unscaled",
+"Off",
+"Scaled"
+],
+"armsx2_trilinear_filtering": [
+"Automatic",
+"Off",
+"Trilinear (PS2)",
+"Trilinear (Forced)"
+],
+"armsx2_mipmapping": [
+"enabled",
+"disabled"
+],
+"armsx2_fxaa": [
+"disabled",
+"enabled"
+],
+"armsx2_texture_filtering": [
+"Nearest",
+"Bilinear (Forced)",
+"Bilinear (PS2)",
+"Bilinear (Forced excluding sprites)"
+],
+"armsx2_anisotropic_filtering": [
+"0",
+"2",
+"4",
+"8",
+"16"
+],
+"armsx2_sw_threads": [
+"0",
+"1",
+"2",
+"3",
+"4"
+],
+"armsx2_show_fps": [
+"disabled",
+"enabled"
+],
+"armsx2_ee_cycle_rate": [
+"50%",
+"60%",
+"75%",
+"100%",
+"130%",
+"180%",
+"300%"
+],
+"armsx2_ee_cycle_skip": [
+"disabled",
+"mild",
+"moderate",
+"maximum"
+],
+"armsx2_hw_download_mode": [
+"Accurate",
+"Disable Readbacks",
+"Unsynchronized",
+"Disabled"
+],
+"armsx2_mtvu": [
+"enabled",
+"disabled"
+],
+"armsx2_instant_vu1": [
+"enabled",
+"disabled"
+],
+"armsx2_bios": [
+"auto"
+],
+"armsx2_fast_boot": [
+"enabled",
+"disabled"
+],
+"armsx2_cheats": [
+"disabled",
+"enabled"
+]
+}

@@ -44,4 +44,18 @@
     <string name="remote_zip_invalid">O pacote baixado não é um arquivo compactado válido</string>
     <string name="settings_ocr_pack_delete_title">Apagar o pacote de OCR?</string>
     <string name="settings_ocr_pack_delete_message">Para usá-lo de novo, será preciso baixá-lo outra vez (cerca de %1$d MB).</string>
+    <string name="translate_from_memory">Texto lido direto da memória do jogo.</string>
+    <string name="translate_inplace_auto">Traduzir os diálogos dentro do jogo</string>
+    <string name="translate_inplace_auto_subtitle">Reescreve cada diálogo novo na própria memória do jogo, conforme ele aparece, usando as suas fontes de texto.</string>
+    <string name="translate_inplace_now">Traduzir os diálogos agora</string>
+    <plurals name="translate_inplace_done">
+        <item quantity="one">%d texto traduzido no jogo</item>
+        <item quantity="other">%d textos traduzidos no jogo</item>
+    </plurals>
+    <plurals name="translate_inplace_done_cut">
+        <item quantity="one">%1$d texto traduzido no jogo (%2$d encurtado para caber)</item>
+        <item quantity="other">%1$d textos traduzidos no jogo (%2$d encurtados para caber)</item>
+    </plurals>
+    <string name="translate_inplace_none">Nada novo para traduzir aqui.</string>
+    <string name="translate_inplace_unreadable">Não deu para ler a memória do jogo para as fontes de texto.</string>
 </resources>

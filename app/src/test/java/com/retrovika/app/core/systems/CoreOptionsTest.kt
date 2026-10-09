@@ -56,7 +56,7 @@ class CoreOptionsTest {
         val ids = cores.map { it.id }.toSet()
         listOf(
             "pcsx2", "play", "mupen64plus_next_gles3", "pcsx_rearmed", "swanstation", "ppsspp", "flycast", "genesis_plus_gx", "picodrive",
-            "mgba", "snes9x2010", "gpsp", "handy", "desmume", "dolphin", "citra", "yabasanshiro",
+            "mgba", "snes9x2010", "gpsp", "handy", "desmume", "dolphin", "citra", "yabasanshiro", "armsx2",
         ).forEach { id ->
             assertTrue("$id: sem JSON de opções", declared(id) != null)
             assertTrue("$id: JSON de um núcleo que o catálogo não tem", id in ids)
@@ -157,7 +157,7 @@ class CoreOptionsTest {
 
     @Test
     fun `os nucleos de PS2 tem os tres niveis e cada um muda alguma coisa`() {
-        listOf("play", "pcsx2").forEach { id ->
+        listOf("play", "pcsx2", "armsx2").forEach { id ->
             val core = Systems.byId("ps2")!!.core(id)
             assertEquals(Preset.entries.toSet(), core.presets.keys)
             assertTrue("$id: níveis iguais", core.presets.values.toSet().size > 1)
@@ -180,8 +180,16 @@ class CoreOptionsTest {
     }
 
     @Test
+    fun `ARMSX2 usa Vulkan quando o aparelho tem e o OpenGL ES quando nao`() {
+        val armsx2 = Systems.byId("ps2")!!.core("armsx2")
+        assertEquals("Vulkan", armsx2.deviceOptions!!(profile(8, 6, vulkan = true))["armsx2_renderer"])
+        // Ao contrário do LRPS2, sem Vulkan ele continua na GPU.
+        assertEquals("OpenGL", armsx2.deviceOptions!!(profile(8, 6, vulkan = false))["armsx2_renderer"])
+    }
+
+    @Test
     fun `nucleos com Vulkan escolhem outro renderizador quando o aparelho nao tem`() {
-        assertEquals(setOf("pcsx2", "ppsspp"), cores.filter { it.vulkan }.map { it.id }.toSet())
+        assertEquals(setOf("pcsx2", "ppsspp", "armsx2"), cores.filter { it.vulkan }.map { it.id }.toSet())
         // Sem Vulkan o núcleo nunca pode pedir Vulkan (o PPSSPP aborta se pedir e a ponte não existir).
         cores.filter { it.vulkan }.forEach { core ->
             val without = core.deviceOptions!!(profile(8, 6, vulkan = false))

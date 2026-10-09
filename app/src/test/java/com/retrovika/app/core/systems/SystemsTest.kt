@@ -113,7 +113,7 @@ class SystemsTest {
         needing.forEach { (sys, core) -> assertTrue("${sys.id}/${core.id}: needsBios sem BIOS no console", sys.bios.isNotEmpty()) }
         // E o primeiro (o padrão do console) nunca depende dela: o que o teste pula precisa ter um reserva.
         needing.forEach { (sys, core) -> assertTrue("${sys.id}: o núcleo padrão não pode exigir BIOS", sys.defaultCore.id != core.id || sys.cores.size == 1) }
-        assertEquals(setOf("swanstation", "pcsx2"), needing.map { it.second.id }.toSet())
+        assertEquals(setOf("swanstation", "pcsx2", "armsx2"), needing.map { it.second.id }.toSet())
     }
 
     @Test

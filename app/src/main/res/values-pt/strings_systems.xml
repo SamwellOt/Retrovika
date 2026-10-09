@@ -22,7 +22,7 @@
     <string name="bios_neocd_000_lo_lo">Tabela de zoom (obrigatória)</string>
     <string name="bios_neogeo_zip">BIOS Neo Geo (colocar na pasta de ROMs ou system)</string>
     <string name="bios_panafz10_bin">BIOS Panasonic FZ-10 (recomendada)</string>
-    <string name="bios_pcsx2_bios_scph39001_bin">BIOS PS2 (necessária para LRPS2)</string>
+    <string name="bios_pcsx2_bios_scph39001_bin">BIOS PS2 (necessária para LRPS2 e ARMSX2)</string>
     <string name="bios_saturn_bios_bin">BIOS Saturn (YabaSanshiro)</string>
     <string name="bios_scph5500_bin">BIOS PS1 (Japão)</string>
     <string name="bios_scph5501_bin">BIOS PS1 (EUA) — recomendada</string>
@@ -35,6 +35,7 @@
     <string name="core_a5200">Núcleo dedicado ao 5200.</string>
     <string name="core_ardens">Mais novo e rápido.</string>
     <string name="core_arduous">Emulador do Arduboy.</string>
+    <string name="core_armsx2">PCSX2 adaptado para celulares ARM (só 64 bits). Desenha com Vulkan, ou com OpenGL ES nos aparelhos sem ele.</string>
     <string name="core_atari800_a5200">Alternativa com suporte à família 8-bit.</string>
     <string name="core_atari800_a800">Computadores Atari 8-bit; START/SELECT/OPTION no controle.</string>
     <string name="core_bluemsx">Usa o C-BIOS livre; nada a importar.</string>

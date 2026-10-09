@@ -74,4 +74,20 @@
     <string name="game_reset_confirm_message">Tudo desde o último save se perde. Ainda dá para desfazer pela aba Estados.</string>
     <string name="game_core_option_default">padrão</string>
     <string name="game_reset_confirm_message_no_undo">Tudo desde o último save se perde.</string>
+    <string name="game_core_scope_all">Todos os jogos</string>
+    <string name="game_core_scope_game">Só este jogo</string>
+    <string name="game_core_scope_hint_all">As mudanças valem para todos os jogos deste núcleo.</string>
+    <string name="game_core_scope_hint_game">As mudanças valem só para este jogo; os outros mantêm as suas.</string>
+    <string name="game_core_option_game_badge">Este jogo</string>
+    <string name="game_core_game_reset">Limpar as opções deste jogo</string>
+    <string name="game_core_game_reset_done">Opções deste jogo limpas</string>
+    <string name="game_ini_open">Arquivo de configuração do jogo</string>
+    <string name="game_ini_title">Arquivo de configuração do jogo (Dolphin)</string>
+    <string name="game_ini_hint">O .ini por jogo do Dolphin, para o que não é opção de núcleo (tipo do cartão de memória, truques de vídeo, CPU). Vale na próxima vez que abrir o jogo. Exemplo:\n[Core]\nSlotA = 1</string>
+    <string name="game_ini_id">ID do disco: %1$s</string>
+    <string name="game_ini_no_id">Não deu para ler o ID deste disco (imagem comprimida), então o arquivo não tem onde ficar.</string>
+    <string name="game_ini_blocked">Já existe um arquivo com esse nome na pasta do Dolphin que não foi feito pelo Retrovika, então ele não será alterado.</string>
+    <string name="game_ini_save">Salvar</string>
+    <string name="game_ini_saved">Salvo. Vale na próxima vez que abrir o jogo.</string>
+    <string name="game_core_game_reset_partial">As opções deste jogo foram limpas. O jogo aberto mantém os valores até você reabri-lo.</string>
 </resources>

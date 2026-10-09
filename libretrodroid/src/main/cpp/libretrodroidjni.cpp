@@ -20,6 +20,7 @@
 
 #include <EGL/egl.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -323,6 +324,129 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setCheat(
     } catch (std::exception &exception) {
         LOGE("Error in setCheat: %s", exception.what());
         JavaUtils::throwRetroException(env, ERROR_CHEAT);
+    }
+}
+
+JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_systemRamSize(
+    JNIEnv* env,
+    jclass obj
+) {
+    try {
+        return (jint) LibretroDroid::getInstance().systemRamSize();
+    } catch (std::exception &exception) {
+        LOGE("Error in systemRamSize: %s", exception.what());
+    }
+    return 0;
+}
+
+// Copia a memória do jogo para o array recebido (que o Kotlin dimensiona com systemRamSize e reaproveita entre as leituras).
+// Devolve quantos bytes copiou; 0 se o núcleo não expõe memória ou o array é menor que ela.
+JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_readSystemRamInto(
+    JNIEnv* env,
+    jclass obj,
+    jbyteArray destination
+) {
+    try {
+        if (destination == nullptr) return 0;
+        const jsize capacity = env->GetArrayLength(destination);
+        bool tooSmall = false;
+        size_t copied = LibretroDroid::getInstance().copySystemRam([&](size_t offset, const uint8_t* source, size_t size) {
+            if (tooSmall || offset + size > (size_t) capacity) { tooSmall = true; return; }
+            env->SetByteArrayRegion(destination, (jsize) offset, (jsize) size, reinterpret_cast<const jbyte*>(source));
+        });
+        return tooSmall ? 0 : (jint) copied;
+    } catch (std::exception &exception) {
+        LOGE("Error in readSystemRamInto: %s", exception.what());
+    }
+    return 0;
+}
+
+// Copia [length] bytes a partir de [offset] da memória do jogo para o início de [destination]; devolve quantos entregou.
+JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_readMemoryRange(
+    JNIEnv* env,
+    jclass obj,
+    jint offset,
+    jint length,
+    jbyteArray destination
+) {
+    try {
+        if (destination == nullptr || offset < 0 || length <= 0 || length > env->GetArrayLength(destination)) return 0;
+        size_t copied = LibretroDroid::getInstance().copyMemoryRange((size_t) offset, (size_t) length, [&](size_t at, const uint8_t* source, size_t size) {
+            env->SetByteArrayRegion(destination, (jsize) at, (jsize) size, reinterpret_cast<const jbyte*>(source));
+        });
+        return (jint) copied;
+    } catch (std::exception &exception) {
+        LOGE("Error in readMemoryRange: %s", exception.what());
+    }
+    return 0;
+}
+
+// Grava [data] na memória do jogo, uma vez, depois do próximo quadro. Devolve se entrou na fila.
+JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_queueMemoryWrite(
+    JNIEnv* env,
+    jclass obj,
+    jint offset,
+    jbyteArray data,
+    jboolean wordSwap
+) {
+    try {
+        if (data == nullptr || offset < 0) return JNI_FALSE;
+        jsize size = env->GetArrayLength(data);
+        std::vector<uint8_t> bytes((size_t) size);
+        if (size > 0) env->GetByteArrayRegion(data, 0, size, reinterpret_cast<jbyte*>(bytes.data()));
+        return LibretroDroid::getInstance().queueMemoryWrite((size_t) offset, std::move(bytes), wordSwap == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+    } catch (std::exception &exception) {
+        LOGE("Error in queueMemoryWrite: %s", exception.what());
+    }
+    return JNI_FALSE;
+}
+
+// Tamanho de cada trecho da memória do jogo (o primeiro é a RAM do sistema), para o app saber o que há além dela.
+JNIEXPORT jintArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_memorySegments(
+    JNIEnv* env,
+    jclass obj
+) {
+    try {
+        auto lengths = LibretroDroid::getInstance().memorySegmentLengths();
+        jintArray result = env->NewIntArray((jsize) lengths.size());
+        if (result != nullptr && !lengths.empty()) {
+            std::vector<jint> values(lengths.begin(), lengths.end());
+            env->SetIntArrayRegion(result, 0, (jsize) values.size(), values.data());
+        }
+        return result;
+    } catch (std::exception &exception) {
+        LOGE("Error in memorySegments: %s", exception.what());
+    }
+    return nullptr;
+}
+
+// Três vetores do mesmo tamanho: endereços, valores e "largura | 0x100 se big-endian | 0x200 se palavras invertidas (N64)".
+JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRamFreezes(
+    JNIEnv* env,
+    jclass obj,
+    jintArray addresses,
+    jintArray values,
+    jintArray widths
+) {
+    try {
+        std::vector<LibretroDroid::RamFreeze> freezes;
+        if (addresses != nullptr && values != nullptr && widths != nullptr) {
+            jsize count = std::min({env->GetArrayLength(addresses), env->GetArrayLength(values), env->GetArrayLength(widths)});
+            std::vector<jint> a(count), v(count), w(count);
+            if (count > 0) {
+                env->GetIntArrayRegion(addresses, 0, count, a.data());
+                env->GetIntArrayRegion(values, 0, count, v.data());
+                env->GetIntArrayRegion(widths, 0, count, w.data());
+            }
+            for (jsize i = 0; i < count; i++) {
+                freezes.push_back(LibretroDroid::RamFreeze {
+                    (uint32_t) a[i], (uint32_t) v[i], (uint8_t) (w[i] & 0xFF), (w[i] & 0x100) != 0, (w[i] & 0x200) != 0
+                });
+            }
+        }
+        LibretroDroid::getInstance().setRamFreezes(std::move(freezes));
+    } catch (std::exception &exception) {
+        LOGE("Error in setRamFreezes: %s", exception.what());
     }
 }
 

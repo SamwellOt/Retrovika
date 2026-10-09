@@ -44,4 +44,18 @@
     <string name="remote_zip_invalid">The downloaded package is not a valid archive</string>
     <string name="settings_ocr_pack_delete_title">Delete the OCR pack?</string>
     <string name="settings_ocr_pack_delete_message">To use it again you\'ll need to download it again (about %1$d MB).</string>
+    <string name="translate_from_memory">Text read straight from the game\'s memory.</string>
+    <string name="translate_inplace_auto">Translate dialogs in the game</string>
+    <string name="translate_inplace_auto_subtitle">Rewrites each new dialog in the game\'s own memory as it appears, using your text sources.</string>
+    <string name="translate_inplace_now">Translate dialogs now</string>
+    <plurals name="translate_inplace_done">
+        <item quantity="one">%d text translated in the game</item>
+        <item quantity="other">%d texts translated in the game</item>
+    </plurals>
+    <plurals name="translate_inplace_done_cut">
+        <item quantity="one">%1$d text translated in the game (%2$d shortened to fit)</item>
+        <item quantity="other">%1$d texts translated in the game (%2$d shortened to fit)</item>
+    </plurals>
+    <string name="translate_inplace_none">Nothing new to translate here.</string>
+    <string name="translate_inplace_unreadable">Couldn\'t read the game\'s memory for the text sources.</string>
 </resources>

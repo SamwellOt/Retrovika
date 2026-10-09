@@ -84,6 +84,33 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
         }
     }
 
+    /**
+     * Traduz textos que já são texto (lidos da memória do jogo, sem OCR): cada um vai ao Google Tradutor, e ao ML Kit
+     * sem internet. Os trechos não têm posição na tela ([Box] vazio): a tela mostra a lista. Textos que já estão no
+     * idioma de quem lê, ou que não têm palavras, ficam de fora.
+     */
+    suspend fun translateTexts(texts: List<String>, target: String, onStage: (Stage) -> Unit): Result {
+        synchronized(lifecycle) {
+            if (closed) throw CancellationException("tradutor fechado")
+            running++
+        }
+        try {
+            onStage(Stage.TRANSLATING)
+            // Poucos pedidos de uma vez: uma janela com muitos trechos curtos não vira dezenas de requisições em paralelo.
+            val pending = texts.distinct().mapNotNull { text -> TranslationText.sourceFor(text, target)?.let { text to it } }.take(MAX_TEXTS)
+            val blocks = coroutineScope {
+                pending.map { (text, source) ->
+                    async { TranslatedBlock(Box(0, 0, 0, 0), text, translateText(text, source, target, onStage)) }
+                }.awaitAll()
+            }
+            remember(blocks.map { "${it.original} → ${it.translated}" })
+            return Result(blocks)
+        } finally {
+            val release = synchronized(lifecycle) { running--; closed && running == 0 }
+            if (release) releaseAll()
+        }
+    }
+
     private suspend fun translateOpen(
         frame: OcrFrame, target: String, ai: AiConfig?, game: GeminiText.GameContext, onStage: (Stage) -> Unit,
     ): Result {
@@ -243,6 +270,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
         private const val WEB_TIMEOUT_MS = 8_000L
         private const val MIN_CONFIDENCE = 0.35f
         private const val HISTORY = 12
+        private const val MAX_TEXTS = 24
     }
 }
 

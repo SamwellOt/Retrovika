@@ -62,6 +62,7 @@ void Environment::deinitialize() {
     useVulkan = false;
     relaxedGlesVersion = false;
     frameTimeCallback = {};
+    memoryRegions.clear();
     audioBufferStatusCallback = {};
     minimumAudioLatencyMs = 0;
     targetRefreshRate = 60.0f;
@@ -117,44 +118,122 @@ bool Environment::environment_handle_set_variables(const struct retro_variable* 
             continue;
         }
         LOGD("Received variable %s: %s", received[count].key, received[count].value);
-
-        std::string key(received[count].key);
-        std::string description(received[count].value);
-        std::string value(received[count].value);
-
-        // "Description; first|second|...": the first value is the default.
-        auto separator = value.find(';');
-        auto valuesStart = separator == std::string::npos ? 0 : value.find_first_not_of(' ', separator + 1);
-        if (valuesStart == std::string::npos) valuesStart = value.size();
-        std::vector<std::string> allowed;
-        for (size_t start = valuesStart; start <= value.size();) {
-            auto end = value.find('|', start);
-            if (end == std::string::npos) end = value.size();
-            allowed.push_back(value.substr(start, end - start));
-            start = end + 1;
-        }
-        value = allowed.empty() ? std::string() : allowed.front();
-
-        auto currentVariable = variables[key];
-        currentVariable.key = key;
-        currentVariable.description = description;
-
-        // A value the core does not offer (a wrong preset, or a saved choice from an older version of
-        // the core) would reach it as-is: cores then keep an undefined setting. Fall back to the default.
-        bool known = std::find(allowed.begin(), allowed.end(), currentVariable.value) != allowed.end();
-        if (currentVariable.value.empty() || !known) {
-            if (!currentVariable.value.empty()) {
-                LOGW("Value %s is not valid for %s: using %s", currentVariable.value.c_str(), key.c_str(), value.c_str());
-            }
-            currentVariable.value = value;
-        }
-
-        variables[key] = currentVariable;
-        LOGD("Assigning variable %s: %s", currentVariable.key.c_str(), currentVariable.value.c_str());
-
+        registerVariable(received[count].key, received[count].value);
         count++;
     }
 
+    return true;
+}
+
+// Guarda as regiões de memória que o núcleo descreve: as que o jogo pode mudar e que não são memória de vídeo. Serve à
+// busca na memória e à tradução dentro do jogo (a EWRAM do GBA, por exemplo, não é a RAM do sistema).
+bool Environment::environment_handle_set_memory_maps(const struct retro_memory_map* received) {
+    memoryRegions.clear();
+    if (received == nullptr || received->descriptors == nullptr) return true;
+    for (unsigned i = 0; i < received->num_descriptors; i++) {
+        const auto& d = received->descriptors[i];
+        if (d.ptr == nullptr || d.len == 0) continue;
+        if (d.flags & (RETRO_MEMDESC_CONST | RETRO_MEMDESC_VIDEO_RAM)) continue;
+        auto* base = static_cast<uint8_t*>(d.ptr) + d.offset;
+        // Espelhos do mesmo trecho vêm como descritores com o mesmo ponteiro.
+        bool duplicate = false;
+        for (const auto& r : memoryRegions) {
+            if (base < r.data + r.length && base + d.len > r.data) { duplicate = true; break; }
+        }
+        if (duplicate) continue;
+        LOGI("Memory map: region start=0x%zx length=%zu flags=0x%llx", d.start, d.len, (unsigned long long) d.flags);
+        memoryRegions.push_back({base, d.len, d.flags, d.start});
+    }
+    return true;
+}
+
+// "Description; first|second|...": the first value is the default.
+void Environment::registerVariable(const std::string& key, const std::string& description) {
+    std::string value(description);
+
+    auto separator = value.find(';');
+    auto valuesStart = separator == std::string::npos ? 0 : value.find_first_not_of(' ', separator + 1);
+    if (valuesStart == std::string::npos) valuesStart = value.size();
+    std::vector<std::string> allowed;
+    for (size_t start = valuesStart; start <= value.size();) {
+        auto end = value.find('|', start);
+        if (end == std::string::npos) end = value.size();
+        allowed.push_back(value.substr(start, end - start));
+        start = end + 1;
+    }
+    value = allowed.empty() ? std::string() : allowed.front();
+
+    auto currentVariable = variables[key];
+    currentVariable.key = key;
+    currentVariable.description = description;
+
+    // A value the core does not offer (a wrong preset, or a saved choice from an older version of
+    // the core) would reach it as-is: cores then keep an undefined setting. Fall back to the default.
+    bool known = std::find(allowed.begin(), allowed.end(), currentVariable.value) != allowed.end();
+    if (currentVariable.value.empty() || !known) {
+        if (!currentVariable.value.empty()) {
+            LOGW("Value %s is not valid for %s: using %s", currentVariable.value.c_str(), key.c_str(), value.c_str());
+        }
+        currentVariable.value = value;
+    }
+
+    variables[key] = currentVariable;
+    LOGD("Assigning variable %s: %s", currentVariable.key.c_str(), currentVariable.value.c_str());
+}
+
+// Core options v1/v2 carry the values as an array; they are folded into the legacy
+// "Description; default|other" form so that a single path feeds the pause menu and the saved choices.
+void Environment::registerOption(
+    const char* key,
+    const char* desc,
+    const struct retro_core_option_value* values,
+    const char* defaultValue
+) {
+    if (key == nullptr || values == nullptr) return;
+
+    std::string text(desc != nullptr ? desc : key);
+    // The legacy form splits at the first ';': a free-text description may contain one ("Foo (a; b)").
+    std::replace(text.begin(), text.end(), ';', ',');
+    text += "; ";
+
+    // The declared default goes first; without a valid one, the first value stays the default.
+    bool hasDefault = false;
+    if (defaultValue != nullptr) {
+        for (unsigned i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && values[i].value != nullptr; i++) {
+            if (strcmp(values[i].value, defaultValue) == 0) { hasDefault = true; break; }
+        }
+    }
+
+    // A value with '|' cannot be told apart from two values in the legacy form: it is left out.
+    auto usable = [](const char* value) { return strchr(value, '|') == nullptr; };
+    std::string joined;
+    if (hasDefault && usable(defaultValue)) joined += defaultValue;
+    else hasDefault = false;
+    for (unsigned i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && values[i].value != nullptr; i++) {
+        if (!usable(values[i].value)) continue;
+        if (hasDefault && strcmp(values[i].value, defaultValue) == 0) continue;
+        if (!joined.empty()) joined += "|";
+        joined += values[i].value;
+    }
+    if (joined.empty()) return;
+
+    registerVariable(key, text + joined);
+}
+
+bool Environment::environment_handle_set_core_options(const struct retro_core_option_definition* received) {
+    if (received == nullptr) return true;
+    for (unsigned i = 0; received[i].key != nullptr; i++) {
+        registerOption(received[i].key, received[i].desc, received[i].values, received[i].default_value);
+    }
+    return true;
+}
+
+bool Environment::environment_handle_set_core_options_v2(const struct retro_core_options_v2* received) {
+    if (received == nullptr || received->definitions == nullptr) return true;
+    for (unsigned i = 0; received->definitions[i].key != nullptr; i++) {
+        const auto& definition = received->definitions[i];
+        registerOption(definition.key, definition.desc, definition.values, definition.default_value);
+    }
     return true;
 }
 
@@ -422,6 +501,36 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
         case RETRO_ENVIRONMENT_SET_VARIABLES:
             LOGD("Called RETRO_ENVIRONMENT_SET_VARIABLES");
             return environment_handle_set_variables(static_cast<const struct retro_variable*>(data));
+
+        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+            LOGD("Called RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION");
+            *((unsigned*) data) = 2;
+            return true;
+
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+            LOGD("Called RETRO_ENVIRONMENT_SET_CORE_OPTIONS");
+            return environment_handle_set_core_options(static_cast<const struct retro_core_option_definition*>(data));
+
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
+            LOGD("Called RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL");
+            // Only the English table ("us"): the pause menu is localized by the app, not by the core.
+            auto* intl = static_cast<const struct retro_core_options_intl*>(data);
+            return environment_handle_set_core_options(intl != nullptr ? intl->us : nullptr);
+        }
+
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+            LOGD("Called RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2");
+            return environment_handle_set_core_options_v2(static_cast<const struct retro_core_options_v2*>(data));
+
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+            LOGD("Called RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL");
+            auto* intl = static_cast<const struct retro_core_options_v2_intl*>(data);
+            return environment_handle_set_core_options_v2(intl != nullptr ? intl->us : nullptr);
+        }
+
+        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+            LOGD("Called RETRO_ENVIRONMENT_SET_MEMORY_MAPS");
+            return environment_handle_set_memory_maps(static_cast<const struct retro_memory_map*>(data));
 
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: {
             LOGD("Called RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE. Is dirty?: %d", dirtyVariables);

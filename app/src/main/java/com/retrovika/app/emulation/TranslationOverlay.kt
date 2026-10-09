@@ -61,6 +61,8 @@ sealed interface TranslationUi {
     data class Ready(
         override val frame: Bitmap, val blocks: List<TranslatedBlock>,
         val aiError: String? = null, val suggestPack: Boolean = false,
+        /** O texto veio da memória do jogo (sem posição na tela): a lista sai por cima da captura em vez de cada trecho no seu lugar. */
+        val fromMemory: Boolean = false,
     ) : TranslationUi
     data class Failed(override val frame: Bitmap, val message: String) : TranslationUi
 }
@@ -84,7 +86,9 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
         Image(state.frame.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)))
 
-        if (state is TranslationUi.Ready) {
+        if (state is TranslationUi.Ready && state.fromMemory) {
+            MemoryTextCards(state.blocks, Modifier.align(Alignment.TopCenter))
+        } else if (state is TranslationUi.Ready) {
             state.blocks.forEach { block ->
                 val pad = 3f
                 val x = with(density) { ((block.box.left - pad) * sx).toDp() }
@@ -130,7 +134,11 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
                                 LiveTranslator.Stage.TRANSLATING -> R.string.translate_translating
                             },
                         )
-                        is TranslationUi.Ready -> if (state.blocks.isEmpty()) stringResource(R.string.translate_nothing) else stringResource(R.string.translate_hint)
+                        is TranslationUi.Ready -> when {
+                            state.blocks.isEmpty() -> stringResource(R.string.translate_nothing)
+                            state.fromMemory -> stringResource(R.string.translate_from_memory)
+                            else -> stringResource(R.string.translate_hint)
+                        }
                         is TranslationUi.Failed -> stringResource(R.string.translate_failed, state.message)
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -159,6 +167,23 @@ internal fun TranslationOverlay(state: TranslationUi, onClose: () -> Unit, modif
                 Text(block.original, style = MaterialTheme.typography.bodySmall, color = Palette.TextMuted)
                 Spacer(Modifier.height(4.dp))
                 Text(block.translated, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, textAlign = TextAlign.Start)
+            }
+        }
+    }
+}
+
+/** O texto lido da memória do jogo: um cartão por trecho, o original pequeno e a tradução em cima dele. */
+@Composable
+private fun MemoryTextCards(blocks: List<TranslatedBlock>, modifier: Modifier) {
+    Column(modifier.padding(10.dp).widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        blocks.forEach { block ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xF20B0714))
+                    .border(1.dp, Palette.Cyan.copy(alpha = 0.55f), RoundedCornerShape(12.dp)).padding(12.dp),
+            ) {
+                Text(block.translated, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+                Spacer(Modifier.height(4.dp))
+                Text(block.original, style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
             }
         }
     }

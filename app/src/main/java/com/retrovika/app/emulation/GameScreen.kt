@@ -23,6 +23,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
+import com.retrovika.app.ui.theme.MonoFamily
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -204,7 +208,7 @@ fun GameScreen(
                         fastForward = fastForward,
                         onMenu = menu::open,
                         onFastForward = menu::toggleFastForward,
-                        onTranslate = if (menu.canTranslate()) menu::translate else null,
+                        onTranslate = if (menu.canTranslate()) menu::translateQuick else null,
                         modifier = if (!fullVideo) {
                             Modifier.align(Alignment.TopCenter).padding(top = maxHeight * VIDEO_SPLIT + 4.dp)
                         } else {
@@ -499,7 +503,8 @@ private fun PauseMenu(
             Spacer(Modifier.height(16.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val cheats = menu.cheats()
-                MenuTab.entries.filter { it != MenuTab.CHEATS || cheats?.supported == true }
+                // A busca na memória não depende da libretro-database: a aba existe em qualquer console.
+                MenuTab.entries.filter { it != MenuTab.CHEATS || cheats != null }
                     .forEach { t -> SelectChip(stringResource(t.label), tab == t, onClick = { onTab(t) }) }
             }
             Spacer(Modifier.height(16.dp))
@@ -783,6 +788,14 @@ private fun OptionsTab(menu: MenuActions, fastForward: Boolean, shader: ShaderOp
                 }
             }
         }
+        if (menu.hasTextHooks()) item {
+            SettingRow(stringResource(R.string.translate_inplace_auto), stringResource(R.string.translate_inplace_auto_subtitle)) {
+                Switch(checked = menu.autoTranslate(), onCheckedChange = { menu.setAutoTranslate(it) })
+            }
+        }
+        if (menu.hasTextHooks()) item {
+            GhostButton(stringResource(R.string.translate_inplace_now), { menu.close(); menu.translateInGame() }, icon = Icons.Rounded.Translate, enabled = ready)
+        }
         item {
             GhostButton(stringResource(R.string.translate_screen), { menu.close(); menu.translate() }, icon = Icons.Rounded.Translate, enabled = ready)
         }
@@ -824,12 +837,27 @@ private fun CoreTab(menu: MenuActions) {
             options = options.map { if (it.key == opt.key) it.copy(value = value) else it }
         }
     }
+    val perGame = menu.coreOptionsPerGame()
+    val gameKeys = menu.gameOptionKeys()
+    var editingIni by remember { mutableStateOf(false) }
+    // "Limpar as opções deste jogo" devolve os valores no núcleo de forma assíncrona: a lista é relida quando o conjunto muda.
+    LaunchedEffect(gameKeys.size) { options = menu.coreOptions() }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
-            Text(
-                stringResource(R.string.game_core_options_hint),
-                style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectChip(stringResource(R.string.game_core_scope_all), !perGame, { menu.setCoreOptionsPerGame(false) })
+                    SelectChip(stringResource(R.string.game_core_scope_game), perGame, { menu.setCoreOptionsPerGame(true) })
+                }
+                Text(
+                    stringResource(if (perGame) R.string.game_core_scope_hint_game else R.string.game_core_scope_hint_all),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.Cyan,
+                )
+                Text(
+                    stringResource(R.string.game_core_options_hint),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
+                )
+            }
         }
         items(options, key = { it.key }) { opt ->
             val shape = RoundedCornerShape(12.dp)
@@ -857,15 +885,65 @@ private fun CoreTab(menu: MenuActions) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(opt.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                if (opt.key in gameKeys) {
+                    Spacer(Modifier.width(8.dp))
+                    Badge(stringResource(R.string.game_core_option_game_badge), Palette.Violet)
+                }
                 Spacer(Modifier.width(10.dp))
                 Text(opt.value, style = MaterialTheme.typography.labelMedium, color = Palette.Neon, fontWeight = FontWeight.Bold)
             }
         }
         item { TextButton(onClick = { options = menu.coreOptions() }) { Text(stringResource(R.string.game_refresh_list)) } }
+        if (gameKeys.isNotEmpty()) item {
+            TextButton(onClick = {
+                menu.resetGameOptions()
+                options = menu.coreOptions()
+            }) { Text(stringResource(R.string.game_core_game_reset)) }
+        }
+        if (menu.gameIniSupported()) item {
+            TextButton(onClick = { editingIni = true }) { Text(stringResource(R.string.game_ini_open)) }
+        }
     }
+    if (editingIni) GameIniDialog(menu, onDismiss = { editingIni = false })
     picking?.let { opt ->
         CoreOptionSheet(opt, onPick = { set(opt, it); picking = null }, onDismiss = { picking = null })
     }
+}
+
+/** O `GameSettings/<ID>.ini` do jogo no Dolphin: um texto livre que o Retrovika grava antes de abrir o jogo. */
+@Composable
+private fun GameIniDialog(menu: MenuActions, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { text = menu.gameIni() }
+    val id = menu.gameIniId()
+    // Lê o disco uma vez, não a cada recomposição.
+    val blocked = remember { menu.gameIniBlocked() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.game_ini_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    if (id != null) stringResource(R.string.game_ini_id, id) else stringResource(R.string.game_ini_no_id),
+                    style = MaterialTheme.typography.labelMedium, color = if (id != null) Palette.Cyan else Palette.Coral,
+                )
+                if (blocked) Text(stringResource(R.string.game_ini_blocked), style = MaterialTheme.typography.bodySmall, color = Palette.Coral)
+                OutlinedTextField(
+                    value = text.orEmpty(), onValueChange = { text = it }, enabled = text != null && id != null && !blocked,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = MonoFamily),
+                )
+                Text(stringResource(R.string.game_ini_hint), style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { menu.saveGameIni(text.orEmpty()); onDismiss() }, enabled = text != null && id != null && !blocked) {
+                Text(stringResource(R.string.game_ini_save))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
+        containerColor = Palette.SurfaceHigh,
+    )
 }
 
 /** Todos os valores de uma opção do núcleo; o primeiro da lista é o padrão do núcleo (formato libretro v0). */

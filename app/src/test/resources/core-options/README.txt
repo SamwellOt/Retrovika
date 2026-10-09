@@ -14,3 +14,10 @@ não dos binários: genesis_plus_gx, picodrive, mgba, snes9x2010, gpsp, handy, d
   A ordem dos valores é a da fonte (o primeiro é o padrão nos núcleos de tabela v1: citra, yabasanshiro). Onde a fonte
   tem #if, entram os valores dos dois ramos. A presença das chaves tocadas pelo Systems.kt foi conferida nos
   binários arm64 do buildbot de 2026-10-05 (strings). Quando o JSON for refeito dos binários, vale o do binário.
+
+armsx2 (2026-10-09): da tabela de opções v2 (kOptionDefinitions) de pcsx2-libretro/Main.cpp do ARMSX2/ARMSX2 (main,
+e327f0d), no ramo com Vulkan e OpenGL; as chaves e os valores conferem com as strings "Desc; a|b" (v1) do binário arm64
+do buildbot de 2026-10-09. armsx2_bios só lista "auto" aqui: os outros valores são os nomes das BIOS achadas em pcsx2/bios.
+
+Para conferir os JSONs contra binários baixados: tools/check-core-options.py <pasta com *_libretro_android.so> (lista as chaves
+ausentes e falha se o Systems.kt usar uma delas).

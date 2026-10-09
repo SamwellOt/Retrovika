@@ -33,6 +33,18 @@ mesmo submódulo do LibretroDroid 0.13.2.
 - **Proporção `<= 0` usa `base_width / base_height`**, como manda a API. Só `< 0` era tratado: os núcleos
   que informam 0 (Gearsystem, Fuse, Ardens) ficavam com imagem de largura zero, tela preta.
 - **`SET_VARIABLES` robusto**: entradas sem valor (LRPS2) derrubavam o app no `strlen`.
+- **Opções de núcleo v1 e v2** (`environment.cpp`): `GET_CORE_OPTIONS_VERSION` responde 2 e `SET_CORE_OPTIONS`, `SET_CORE_OPTIONS_INTL`,
+  `SET_CORE_OPTIONS_V2` e `SET_CORE_OPTIONS_V2_INTL` (só a tabela `us`) são aceitos. Cada definição vira a forma antiga
+  `"Descrição; padrão|outro"`, com o padrão declarado em primeiro lugar, e passa pela mesma lógica de `SET_VARIABLES`
+  (`registerVariable`): o menu e as escolhas salvas não mudam. Antes a versão era recusada (versão 0) e um núcleo que só
+  declara opções v2, sem alternativa por `SET_VARIABLES`, ficava sem opções. Categorias e textos de ajuda ainda não chegam ao menu.
+- **Memória do jogo, travas e gravações** (`libretrodroid.cpp`, `environment.cpp`, `LibretroDroid.systemRamSize/readSystemRamInto/readMemoryRange/
+  queueMemoryWrite/memorySegments/setRamFreezes`): a memória que o app vê é a `RETRO_MEMORY_SYSTEM_RAM` seguida das regiões graváveis que o núcleo
+  descreve em `SET_MEMORY_MAPS` (sem as `CONST` nem as de vídeo, e sem as que sobrepõem trechos já vistos; até 64 MB). `readSystemRamInto` copia tudo
+  direto para um array do app, `readMemoryRange` só uma janela (um buffer de texto). As travas (endereço, valor, 1/2/4 bytes, ordem dos bytes e,
+  no N64, palavras invertidas: o byte lógico N fica em N ^ 3) e as gravações de `queueMemoryWrite` (a tradução dentro do jogo) são aplicadas depois de
+  cada `retro_run`, com o `coreLock` tomado pelo quadro; o que sai da memória é ignorado. O log "System RAM exposed by the core" e "Game memory seen
+  by the app" sai ao carregar e depois de 30 quadros, porque N64, GameCube e PSP só alocam a RAM depois do carregamento.
 - **`SET_INPUT_DESCRIPTORS` aceito** (o Ardens não carregava) e **`SET_FRAME_TIME_CALLBACK` implementado**,
   chamado antes de cada `retro_run` com a duração de referência do quadro (o TIC-80 não carregava).
 - **Valor de opção fora da lista do núcleo volta ao padrão** (`SET_VARIABLES`): um preset errado ou uma

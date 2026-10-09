@@ -100,6 +100,16 @@ public:
     bool isHwContextAccepted() const;
     const retro_frame_time_callback& getFrameTimeCallback() const { return frameTimeCallback; }
 
+    /** Uma região de memória do jogo que o núcleo descreveu em SET_MEMORY_MAPS (só as graváveis e que não são vídeo). */
+    struct MemoryRegion {
+        uint8_t* data;
+        size_t length;
+        uint64_t flags;
+        /** Endereço do console onde a região começa (para o log e o diagnóstico; a busca usa a ordem). */
+        size_t start;
+    };
+    const std::vector<MemoryRegion>& getMemoryRegions() const { return memoryRegions; }
+
     /** Medidor da fila de áudio pedido pelo núcleo (callback nulo se não pediu). */
     const retro_audio_buffer_status_callback& getAudioBufferStatusCallback() const { return audioBufferStatusCallback; }
     /** Latência mínima de áudio pedida pelo núcleo, em ms (0 = a padrão). */
@@ -142,6 +152,11 @@ public:
 
 private:
     bool environment_handle_set_variables(const struct retro_variable* received);
+    bool environment_handle_set_memory_maps(const struct retro_memory_map* received);
+    bool environment_handle_set_core_options(const struct retro_core_option_definition* received);
+    bool environment_handle_set_core_options_v2(const struct retro_core_options_v2* received);
+    void registerVariable(const std::string& key, const std::string& description);
+    void registerOption(const char* key, const char* desc, const struct retro_core_option_value* values, const char* defaultValue);
     bool environment_handle_get_variable(struct retro_variable* requested);
     bool environment_handle_set_controller_info(const struct retro_controller_info* received);
     bool environment_handle_set_hw_render(struct retro_hw_render_callback* hw_render_callback);
@@ -168,6 +183,7 @@ private:
     bool useVulkan = false;
     bool relaxedGlesVersion = false;
     retro_frame_time_callback frameTimeCallback {};
+    std::vector<MemoryRegion> memoryRegions;
     retro_audio_buffer_status_callback audioBufferStatusCallback {};
     unsigned minimumAudioLatencyMs = 0;
     // Lidos dentro do retro_run, que alguns núcleos (Dolphin, PPSSPP) rodam em threads próprias.

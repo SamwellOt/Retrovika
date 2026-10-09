@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <functional>
 #include <mutex>
 #include <memory>
 #include <optional>
@@ -70,6 +71,37 @@ private:
 public:
     void setCheat(unsigned index, bool enabled, const std::string& code);
     void resetCheat();
+
+    // A memória do jogo que o app enxerga: a RAM do sistema (RETRO_MEMORY_SYSTEM_RAM) seguida das outras regiões graváveis
+    // que o núcleo descreve em SET_MEMORY_MAPS (a EWRAM do GBA, por exemplo) e que não a sobrepõem. Os endereços do app
+    // são posições nessa sequência. O tamanho é 0 quando o núcleo não expõe nada (ou passa de [MAX_SYSTEM_RAM]).
+    size_t systemRamSize();
+    // Tamanho de cada trecho da memória, na ordem (o primeiro é a RAM do sistema, se houver).
+    std::vector<size_t> memorySegmentLengths();
+    // Copia a memória toda para o destino, trecho a trecho, com o coreLock tomado e sem cópia intermediária: a RAM de um
+    // PS2 tem 32 MB. O callback recebe o deslocamento e o trecho. Devolve o total copiado (0 se não há memória).
+    size_t copySystemRam(const std::function<void(size_t, const uint8_t*, size_t)>& copy);
+    // Copia só [offset, offset + length) (um buffer de texto): devolve quantos bytes entregou.
+    size_t copyMemoryRange(size_t offset, size_t length, const std::function<void(size_t, const uint8_t*, size_t)>& copy);
+    // Valores gravados na RAM depois de cada quadro do núcleo ("travar o valor"). Cada entrada: endereço, valor, largura
+    // (1, 2 ou 4 bytes), ordem dos bytes e, no N64, a inversão por palavra. Troca a lista inteira; lista vazia desliga.
+    struct RamFreeze {
+        uint32_t address;
+        uint32_t value;
+        uint8_t width;
+        bool bigEndian;
+        // O RDRAM do N64 fica em palavras de 4 bytes na ordem do processador: o byte lógico N está em N ^ 3. O valor é
+        // gravado do byte mais significativo para o menos, nessa numeração.
+        bool wordSwap;
+    };
+    void setRamFreezes(std::vector<RamFreeze> freezes);
+    // Grava [data] a partir de [offset] uma vez, depois do próximo quadro (a tradução dentro do jogo). Com [wordSwap] o
+    // byte lógico N vai para N ^ 3.
+    // Devolve se entrou na fila (cheia, ela recusa).
+    bool queueMemoryWrite(size_t offset, std::vector<uint8_t> data, bool wordSwap);
+    static constexpr size_t MAX_SYSTEM_RAM = 64u * 1024u * 1024u;
+    static constexpr size_t MAX_PENDING_WRITES = 4096;
+    static constexpr size_t MAX_PENDING_BYTES = 1024u * 1024u;
 
     // Vazio quando o núcleo não consegue gerar o estado (o Kotlin trata como falha).
     std::vector<int8_t> serializeState();
@@ -252,6 +284,25 @@ private:
     std::vector<int8_t> gameData;
     std::string gamePathStorage;
     std::list<std::string> cheatCodes;
+    // Trava de valores na RAM. Tomado depois do coreLock (o quadro aplica as travas) e solto antes de qualquer outro.
+    std::mutex ramFreezeLock;
+    std::vector<RamFreeze> ramFreezes;
+    struct PendingWrite {
+        size_t offset;
+        std::vector<uint8_t> data;
+        bool wordSwap;
+    };
+    std::vector<PendingWrite> pendingWrites;
+    struct MemorySegment {
+        uint8_t* data;
+        size_t length;
+    };
+    // Os trechos da memória do jogo agora; quem chama segura o coreLock.
+    std::vector<MemorySegment> memoryView();
+    void applyRamFreezes();
+    void logSystemRam(const char* when);
+    // Só os núcleos que alocam a RAM tarde precisam do segundo registro; uma vez por jogo carregado.
+    bool ramLogged = true;
     std::unique_ptr<Audio> audio;
     // Protege a troca do [audio] (recriado no step quando o núcleo muda a taxa de amostragem) para quem o usa
     // na thread principal (pause/resume/setFrameSpeed). Ordem: coreLock antes deste; nunca o contrário.

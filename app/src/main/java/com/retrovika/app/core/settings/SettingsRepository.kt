@@ -15,6 +15,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.retrovika.app.core.net.Http
+import com.retrovika.app.core.textmem.TextHook
 import com.retrovika.app.core.systems.Preset
 import com.retrovika.app.core.tuning.TuneResult
 import com.retrovika.app.core.cores.SystemBenchmark
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.io.IOException
@@ -125,6 +127,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         fun tuning(systemId: String, coreId: String) = stringPreferencesKey("$TUNE_PREFIX${systemId}_$coreId")
         fun gameTuning(gameId: Long) = stringPreferencesKey("$GAME_TUNE_PREFIX$gameId")
         fun coreOptions(coreId: String) = stringPreferencesKey("core_options_$coreId")
+        fun gameCoreOptions(gameId: Long, coreId: String) = stringPreferencesKey("$GAME_OPTIONS_PREFIX${gameId}_$coreId")
+        fun gameIni(gameId: Long) = stringPreferencesKey("$GAME_INI_PREFIX$gameId")
+        fun gameTextHooks(gameId: Long) = stringPreferencesKey("$GAME_HOOKS_PREFIX$gameId")
+        fun gameAutoTranslate(gameId: Long) = booleanPreferencesKey("$GAME_AUTO_PREFIX$gameId")
         fun padProfile(systemId: String) = stringPreferencesKey("pad_console_$systemId")
         fun gamePadProfile(gameId: Long) = stringPreferencesKey("$GAME_PAD_PREFIX$gameId")
     }
@@ -313,6 +319,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     suspend fun forgetGame(gameId: Long) = context.dataStore.edit { p ->
         p.remove(Keys.gamePadProfile(gameId))
         p.remove(Keys.gameTuning(gameId))
+        p.remove(Keys.gameIni(gameId))
+        p.remove(Keys.gameTextHooks(gameId))
+        p.remove(Keys.gameAutoTranslate(gameId))
+        p.asMap().keys.filter { it.name.startsWith("$GAME_OPTIONS_PREFIX${gameId}_") }.toList().forEach { p.remove(it) }
     }
 
     private fun decodeTuning(raw: String?): TuneResult? =
@@ -334,6 +344,52 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
     }
 
     suspend fun resetCoreOptions(coreId: String) = context.dataStore.edit { it.remove(Keys.coreOptions(coreId)) }
+
+    /** Opções de núcleo só deste jogo: vencem as do usuário para o núcleo todo e só perdem para as fixas do app. */
+    suspend fun gameCoreOptions(gameId: Long, coreId: String): Map<String, String> =
+        decodeOptions(data.first()[Keys.gameCoreOptions(gameId, coreId)])
+
+    suspend fun setGameCoreOption(gameId: Long, coreId: String, key: String, value: String) {
+        context.dataStore.edit { p ->
+            val updated = decodeOptions(p[Keys.gameCoreOptions(gameId, coreId)]) + (key to value)
+            p[Keys.gameCoreOptions(gameId, coreId)] = Http.json.encodeToString(optionsSerializer, updated)
+        }
+    }
+
+    suspend fun removeGameCoreOption(gameId: Long, coreId: String, key: String) {
+        context.dataStore.edit { p ->
+            val left = decodeOptions(p[Keys.gameCoreOptions(gameId, coreId)]) - key
+            if (left.isEmpty()) p.remove(Keys.gameCoreOptions(gameId, coreId))
+            else p[Keys.gameCoreOptions(gameId, coreId)] = Http.json.encodeToString(optionsSerializer, left)
+        }
+    }
+
+    suspend fun resetGameCoreOptions(gameId: Long, coreId: String) = context.dataStore.edit { it.remove(Keys.gameCoreOptions(gameId, coreId)) }
+
+    /** Texto do arquivo de configuração próprio do jogo (Dolphin: `GameSettings/<ID>.ini`); vazio se não há. */
+    suspend fun gameIni(gameId: Long): String = data.first()[Keys.gameIni(gameId)].orEmpty()
+
+    /** Onde o texto do jogo está na memória (ver [TextHook]): criados pelo jogador na busca de texto, um conjunto por jogo. */
+    suspend fun gameTextHooks(gameId: Long): List<TextHook> =
+        data.first()[Keys.gameTextHooks(gameId)]?.let {
+            runCatching { Http.json.decodeFromString(ListSerializer(TextHook.serializer()), it) }.getOrNull()
+        }.orEmpty()
+
+    /** A tradução dentro do jogo roda sozinha (a cada diálogo novo), em vez de só ao apertar o botão. */
+    suspend fun gameAutoTranslate(gameId: Long): Boolean = data.first()[Keys.gameAutoTranslate(gameId)] == true
+
+    suspend fun setGameAutoTranslate(gameId: Long, on: Boolean) = context.dataStore.edit { p ->
+        if (on) p[Keys.gameAutoTranslate(gameId)] = true else p.remove(Keys.gameAutoTranslate(gameId))
+    }
+
+    suspend fun setGameTextHooks(gameId: Long, hooks: List<TextHook>) = context.dataStore.edit { p ->
+        if (hooks.isEmpty()) p.remove(Keys.gameTextHooks(gameId))
+        else p[Keys.gameTextHooks(gameId)] = Http.json.encodeToString(ListSerializer(TextHook.serializer()), hooks)
+    }
+
+    suspend fun setGameIni(gameId: Long, text: String) = context.dataStore.edit { p ->
+        if (text.isBlank()) p.remove(Keys.gameIni(gameId)) else p[Keys.gameIni(gameId)] = text
+    }
 
     /**
      * Controle virtual do console [systemId] (visível, tamanho, posições…); o padrão quando nunca foi ajustado.
@@ -378,6 +434,10 @@ class SettingsRepository(private val context: Context, scope: CoroutineScope) {
         private const val PAD_PREFIX = "pad_console_"
         private const val OLD_PAD_PREFIX = "pad_profile_"
         private const val GAME_PAD_PREFIX = "pad_game_"
+        private const val GAME_OPTIONS_PREFIX = "game_opts_"
+        private const val GAME_INI_PREFIX = "game_ini_"
+        private const val GAME_HOOKS_PREFIX = "game_hooks_"
+        private const val GAME_AUTO_PREFIX = "game_auto_translate_"
         private const val BENCH_PREFIX = "bench_"
         private const val TUNE_PREFIX = "tune_"
         private const val GAME_TUNE_PREFIX = "tune_game_"

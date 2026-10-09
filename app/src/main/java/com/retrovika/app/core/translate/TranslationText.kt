@@ -17,6 +17,41 @@ object TranslationText {
     fun hasLatinWords(text: String): Boolean =
         Regex("""[A-Za-z]{2,}""").findAll(text).count() >= 2 || Regex("""[A-Za-z]{4,}""").containsMatchIn(text)
 
+    /** Palavras de função que quase só existem em português (nada que também seja nome ou palavra comum em inglês). */
+    private val portugueseWords = setOf(
+        "que", "não", "nao", "para", "você", "voce", "está", "são", "dos", "das", "pelo", "pela", "muito", "seu", "sua", "meu",
+        "minha", "nós", "vamos", "obrigado", "obrigada", "então", "entao", "agora", "foi", "tem", "mundo", "com", "em", "da", "de",
+        "uma", "ao", "mais", "é", "também", "tambem", "aqui", "olá",
+    )
+    private val englishWords = setOf(
+        "the", "and", "you", "your", "is", "are", "to", "of", "this", "that", "have", "what", "will", "was", "for", "not", "but",
+        "his", "her", "they", "from", "can", "we", "it", "in", "on", "at", "i", "he", "she", "my", "me", "be", "so", "if", "an",
+        "all", "go", "here", "there", "let's", "its", "no", "as", "by", "up", "out", "just", "like", "get", "got", "how", "who",
+        "why", "when", "where", "which", "then", "them", "their", "our", "us", "now", "yes", "with", "do", "does", "did",
+        "don't", "i'm", "it's", "can't", "you're", "that's", "what's", "i'll", "we're", "isn't", "won't",
+    )
+
+    /**
+     * O trecho já parece estar em português (o próprio texto traduzido que a memória do jogo guarda, por exemplo depois de
+     * carregar um save feito com a tradução ligada)? Conta palavras de função de cada língua (só as letras, sem pontuação) e
+     * só afirma com pelo menos duas de português que vencem as de inglês: uma palavra isolada ("Uma:" como rótulo de um
+     * personagem) não basta. Só serve para quem lê em português: para os outros destinos, nunca.
+     */
+    fun probablyTranslated(text: String, target: String): Boolean {
+        if (target != "pt") return false
+        val words = ArrayList<String>()
+        val current = StringBuilder()
+        // O apóstrofo tipográfico vale como o simples; um apóstrofo no fim de uma palavra é aspa, não parte dela.
+        for (c in text.lowercase().replace('’', '\'')) {
+            if (c.isLetter() || (c == '\'' && current.isNotEmpty())) current.append(c)
+            else if (current.isNotEmpty()) { words += current.toString().trimEnd('\''); current.setLength(0) }
+        }
+        if (current.isNotEmpty()) words += current.toString().trimEnd('\'')
+        val pt = words.count { it in portugueseWords }
+        val en = words.count { it in englishWords }
+        return pt >= 2 && pt > en
+    }
+
     /**
      * Idioma de origem do trecho, ou nulo se não há o que traduzir para [target] ("pt"/"en"): japonês
      * sempre; inglês só para quem lê em português (menus e diálogos de jogos americanos também contam).

@@ -39,7 +39,7 @@
     <string name="bios_panafz10_bin">Panasonic FZ-10 BIOS (recommended)</string>
     <string name="bios_panafz1_bin" translatable="false">BIOS Panasonic FZ-1</string>
     <string name="bios_pcfx_rom" translatable="false">BIOS PC-FX</string>
-    <string name="bios_pcsx2_bios_scph39001_bin">PS2 BIOS (required for LRPS2)</string>
+    <string name="bios_pcsx2_bios_scph39001_bin">PS2 BIOS (required for LRPS2 and ARMSX2)</string>
     <string name="bios_saturn_bios_bin">Saturn BIOS (YabaSanshiro)</string>
     <string name="bios_scph5500_bin">PS1 BIOS (Japan)</string>
     <string name="bios_scph5501_bin">PS1 BIOS (USA) — recommended</string>
@@ -52,6 +52,7 @@
     <string name="core_a5200">Dedicated 5200 core.</string>
     <string name="core_ardens">Newer and faster.</string>
     <string name="core_arduous">Arduboy emulator.</string>
+    <string name="core_armsx2">PCSX2 tuned for ARM phones (64-bit only). Draws with Vulkan, or with OpenGL ES on devices without it.</string>
     <string name="core_atari800_a5200">Alternative that also covers the 8-bit family.</string>
     <string name="core_atari800_a800">Atari 8-bit computers; START/SELECT/OPTION on the pad.</string>
     <string name="core_bluemsx">Uses the free C-BIOS; nothing to import.</string>

@@ -400,6 +400,38 @@ class GLRetroView(
         }
     }
 
+    /** Tamanho da RAM do jogo que o núcleo expõe; 0 se não expõe (ou passa de 64 MB). Qualquer thread. */
+    fun systemRamSize(): Int = runCatching { LibretroDroid.systemRamSize() }.getOrDefault(0)
+
+    /**
+     * Copia a RAM do jogo para [destination] (dimensionado com [systemRamSize]) e devolve quantos bytes copiou; 0 se o núcleo
+     * não a expõe ou o array é pequeno. Qualquer thread: pega o lock do núcleo, então espera o quadro em curso.
+     */
+    fun readSystemRamInto(destination: ByteArray): Int =
+        runCatching { LibretroDroid.readSystemRamInto(destination) }.onFailure { Log.e(TAG_LOG, "readSystemRamInto", it) }.getOrDefault(0)
+
+    /** Copia [length] bytes da memória do jogo a partir de [offset] para o início de [destination]; devolve quantos entregou. */
+    fun readMemoryRange(offset: Int, length: Int, destination: ByteArray): Int =
+        runCatching { LibretroDroid.readMemoryRange(offset, length, destination) }.onFailure { Log.e(TAG_LOG, "readMemoryRange", it) }.getOrDefault(0)
+
+    /**
+     * Grava [data] na memória do jogo a partir de [offset], uma vez, depois do próximo quadro ([wordSwap]: RDRAM do N64).
+     * Devolve se a gravação entrou na fila (cheia, ela a recusa).
+     */
+    fun queueMemoryWrite(offset: Int, data: ByteArray, wordSwap: Boolean = false): Boolean =
+        runCatching { LibretroDroid.queueMemoryWrite(offset, data, wordSwap) }.onFailure { Log.e(TAG_LOG, "queueMemoryWrite", it) }.getOrDefault(false)
+
+    /** O tamanho de cada trecho da memória do jogo, na ordem: o primeiro é a RAM do sistema, os outros vêm de SET_MEMORY_MAPS. */
+    fun memorySegments(): IntArray = runCatching { LibretroDroid.memorySegments() }.getOrNull() ?: IntArray(0)
+
+    /**
+     * Valores gravados na RAM depois de cada quadro. Cada trio é endereço, valor e largura (1, 2 ou 4), com 0x100 somado
+     * à largura para big-endian e 0x200 para as palavras invertidas do N64. Troca a lista inteira; vazia desliga.
+     */
+    fun setRamFreezes(addresses: IntArray, values: IntArray, widths: IntArray) {
+        runCatching { LibretroDroid.setRamFreezes(addresses, values, widths) }.onFailure { Log.e(TAG_LOG, "setRamFreezes", it) }
+    }
+
     fun resetCheat(useEmulationThread: Boolean = true) {
         runOnEmulationThread(useEmulationThread) {
             runCatching { LibretroDroid.resetCheat() }.onFailure { Log.e(TAG_LOG, "resetCheat", it) }

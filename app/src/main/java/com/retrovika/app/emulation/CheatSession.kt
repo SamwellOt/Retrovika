@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.retrovika.app.core.cheats.Cheat
 import com.retrovika.app.core.cheats.CheatRepository
 import com.retrovika.app.core.cheats.GameCheats
+import com.retrovika.app.core.cheats.RamCheat
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.net.userMessage
 import kotlinx.coroutines.CancellationException
@@ -25,6 +26,9 @@ class CheatSession(
     private val scope: CoroutineScope,
     private val context: Context,
 ) {
+    /** Busca de valores na RAM do jogo (a atividade liga o leitor da memória quando a vista existe). */
+    val ram = RamStudio(scope)
+
     var state by mutableStateOf(GameCheats())
         private set
     var loading by mutableStateOf(false)
@@ -98,6 +102,11 @@ class CheatSession(
             return
         }
         update(state.copy(cheats = state.cheats + c))
+    }
+
+    /** Trava [cheat] (da busca na memória): entra na lista como código próprio e já ligado. */
+    fun addRam(cheat: RamCheat, description: String) {
+        addCustom(description.ifBlank { "0x${cheat.address.toString(16).uppercase()} = ${cheat.value}" }, cheat.code())
     }
 
     fun remove(cheat: Cheat) = update(state.copy(cheats = state.cheats.filterNot { it === cheat }))
