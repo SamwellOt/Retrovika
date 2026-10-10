@@ -88,23 +88,47 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
      * Traduz textos que já são texto (lidos da memória do jogo, sem OCR): cada um vai ao Google Tradutor, e ao ML Kit
      * sem internet. Os trechos não têm posição na tela ([Box] vazio): a tela mostra a lista. Textos que já estão no
      * idioma de quem lê, ou que não têm palavras, ficam de fora.
+     * Com [ai] e [game], uma só requisição ao Gemini traduz tudo com o contexto do jogo e o [limits] (caracteres por
+     * texto); o que ele deixar de fora, ou tudo se ele falhar, segue pelo caminho comum.
+     * [onStage] vai por último para que as chamadas com lambda final continuem compilando.
      */
-    suspend fun translateTexts(texts: List<String>, target: String, onStage: (Stage) -> Unit): Result {
+    suspend fun translateTexts(
+        texts: List<String>, target: String,
+        ai: AiConfig? = null, game: GeminiText.GameContext? = null, limits: Map<String, Int> = emptyMap(),
+        onStage: (Stage) -> Unit,
+    ): Result {
         synchronized(lifecycle) {
             if (closed) throw CancellationException("tradutor fechado")
             running++
         }
         try {
-            onStage(Stage.TRANSLATING)
             // Poucos pedidos de uma vez: uma janela com muitos trechos curtos não vira dezenas de requisições em paralelo.
             val pending = texts.distinct().mapNotNull { text -> TranslationText.sourceFor(text, target)?.let { text to it } }.take(MAX_TEXTS)
-            val blocks = coroutineScope {
-                pending.map { (text, source) ->
-                    async { TranslatedBlock(Box(0, 0, 0, 0), text, translateText(text, source, target, onStage)) }
-                }.awaitAll()
+            var aiError: Throwable? = null
+            val byAi = mutableMapOf<String, String>()
+            if (ai != null && game != null && pending.isNotEmpty()) {
+                onStage(Stage.ASKING_AI)
+                try {
+                    val items = pending.mapIndexed { i, (text, _) -> GeminiText.TextItem(i, text, limits[text]) }
+                    byAi += GeminiTranslator(ai.apiKey, ai.model)
+                        .translateTexts(items, target, game, synchronized(history) { history.toList() })
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    aiError = t
+                }
             }
+            val rest = pending.filter { (text, _) -> text !in byAi }
+            if (ai == null || rest.isNotEmpty()) onStage(Stage.TRANSLATING)
+            val regular = coroutineScope {
+                rest.map { (text, source) ->
+                    async { text to translateText(text, source, target, onStage) }
+                }.awaitAll().toMap()
+            }
+            val all = byAi + regular
+            val blocks = pending.mapNotNull { (text, _) -> all[text]?.let { TranslatedBlock(Box(0, 0, 0, 0), text, it) } }
             remember(blocks.map { "${it.original} → ${it.translated}" })
-            return Result(blocks)
+            return Result(blocks, aiError)
         } finally {
             val release = synchronized(lifecycle) { running--; closed && running == 0 }
             if (release) releaseAll()

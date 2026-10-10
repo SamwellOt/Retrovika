@@ -57,6 +57,49 @@ class GeminiTextTest {
         assertNull(GeminiText.errorMessage("<html>"))
     }
 
+    private val items = listOf(
+        GeminiText.TextItem(0, "HELLO WORLD", 8),
+        GeminiText.TextItem(1, "NAME ENTRY", null),
+    )
+
+    @Test
+    fun `pedido de textos so tem texto e o esquema de items`() {
+        val body = Json.parseToJsonElement(GeminiText.textRequest(items, "pt", game, listOf("PRESS START → APERTE START"))).jsonObject
+        val parts = body["contents"]!!.jsonArray[0].jsonObject["parts"]!!.jsonArray
+        assertEquals(1, parts.size)
+        assertNull(parts[0].jsonObject["inline_data"])
+        val prompt = parts[0].jsonObject["text"]!!.jsonPrimitive.content
+        assertTrue("HELLO WORLD" in prompt)
+        assertTrue("\"max_chars\": 8" in prompt)
+        assertTrue("\"max_chars\": none" in prompt)
+        assertTrue("PRESS START → APERTE START" in prompt)
+        val config = body["generationConfig"]!!.jsonObject
+        assertEquals(JsonPrimitive(0.2), config["temperature"])
+        assertEquals(JsonPrimitive("application/json"), config["responseMimeType"])
+        val schema = config["responseSchema"]!!.jsonObject
+        assertTrue("items" in schema["properties"]!!.jsonObject)
+        assertEquals(JsonPrimitive("items"), schema["required"]!!.jsonArray[0])
+    }
+
+    @Test
+    fun `le a resposta dos textos ignorando o raciocinio, ids invalidos e traducoes vazias`() {
+        val answer = """{"items":[{"id":0,"translation":"Olá"},{"id":5,"translation":"x"},{"id":1,"translation":"  "}]}"""
+        val body = """{"candidates":[{"content":{"parts":[{"text":"pensando","thought":true},{"text":${JsonPrimitive(answer)}}]}}]}"""
+        assertEquals(mapOf("HELLO WORLD" to "Olá"), GeminiText.parseTexts(body, items))
+    }
+
+    @Test
+    fun `le a resposta dos textos dentro de cerca json`() {
+        val answer = "```json\n{\"items\":[{\"id\":1,\"translation\":\"Nome\"}]}\n```"
+        val body = """{"candidates":[{"content":{"parts":[{"text":${JsonPrimitive(answer)}}]}}]}"""
+        assertEquals(mapOf("NAME ENTRY" to "Nome"), GeminiText.parseTexts(body, items))
+    }
+
+    @Test
+    fun `resposta de textos sem candidatos e vazia`() {
+        assertEquals(emptyMap<String, String>(), GeminiText.parseTexts("""{"candidates":[]}""", items))
+    }
+
     @Test
     fun `id do modelo sem o prefixo models e sem espacos`() {
         assertEquals("gemini-2.5-flash", GeminiText.modelId("  models/gemini-2.5-flash "))

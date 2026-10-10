@@ -98,12 +98,7 @@ object GeminiText {
      * união das linhas do OCR citadas; sem elas, a box_2d do modelo. Trecho sem caixa nenhuma é descartado.
      */
     fun parse(body: String, lines: List<OcrLine>, width: Int, height: Int): List<AiBlock> {
-        val root = Json.parseToJsonElement(body).jsonObject
-        val parts = root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts")?.jsonArray.orEmpty()
-        val text = parts.mapNotNull { part ->
-            val obj = part.jsonObject
-            if (obj["thought"]?.jsonPrimitive?.booleanOrNull == true) null else obj["text"]?.jsonPrimitive?.contentOrNull
-        }.joinToString("").trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        val text = answerText(body)
         if (text.isEmpty()) return emptyList()
         val blocks = Json.parseToJsonElement(text).jsonObject["blocks"]?.jsonArray.orEmpty()
         return blocks.mapNotNull { element ->
@@ -124,6 +119,88 @@ object GeminiText {
             }
             AiBlock(box, original, translated)
         }
+    }
+
+    /** O texto da resposta, sem o raciocínio (partes "thought") e sem a cerca ```json. */
+    private fun answerText(body: String): String {
+        val root = Json.parseToJsonElement(body).jsonObject
+        val parts = root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject?.get("content")?.jsonObject?.get("parts")?.jsonArray.orEmpty()
+        return parts.mapNotNull { part ->
+            val obj = part.jsonObject
+            if (obj["thought"]?.jsonPrimitive?.booleanOrNull == true) null else obj["text"]?.jsonPrimitive?.contentOrNull
+        }.joinToString("").trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    }
+
+    /** Um texto lido da memória do jogo: [maxChars] é o espaço que o jogo deixa para a tradução (nulo = sem limite). */
+    data class TextItem(val id: Int, val text: String, val maxChars: Int?)
+
+    /** Pedido só de texto (sem imagem) para os textos lidos da memória: o jogo, o histórico e o limite de cada trecho. */
+    fun textPrompt(items: List<TextItem>, target: String, game: GameContext, history: List<String>): String = buildString {
+        val language = languageName(target)
+        appendLine("These are text strings read from the memory of the video game \"${game.title}\" (${game.system}). Translate each one into $language as a natural game localization.")
+        appendLine()
+        appendLine("Items (id, max chars, text). The game leaves a limited space for each one:")
+        items.forEach { item ->
+            appendLine("{\"id\": ${item.id}, \"max_chars\": ${item.maxChars ?: "none"}, \"text\": ${JsonPrimitive(item.text)}}")
+        }
+        if (history.isNotEmpty()) {
+            appendLine()
+            appendLine("Text translated earlier in this session (for context and consistent names only; do not repeat it):")
+            history.forEach { appendLine("- $it") }
+        }
+        appendLine()
+        appendLine("Rules:")
+        appendLine("- Keep each translation within its max chars: shorten or rephrase it naturally, abbreviate if needed, never cut a word in the middle.")
+        appendLine("- Keep character names and game terms consistent with the earlier text.")
+        appendLine("- Keep each translation on a single line, without line breaks.")
+        appendLine("- If an item is already in $language, or is not natural language (numbers, codes, garbage), return it unchanged.")
+    }
+
+    fun textRequest(items: List<TextItem>, target: String, game: GameContext, history: List<String>): String =
+        buildJsonObject {
+            putJsonArray("contents") {
+                addJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        addJsonObject { put("text", textPrompt(items, target, game, history)) }
+                    }
+                }
+            }
+            putJsonObject("generationConfig") {
+                put("temperature", 0.2)
+                put("responseMimeType", "application/json")
+                put("responseSchema", TEXT_SCHEMA)
+            }
+        }.toString()
+
+    private val TEXT_SCHEMA: JsonObject = Json.parseToJsonElement(
+        """
+        {"type":"OBJECT","properties":{"items":{"type":"ARRAY","items":{"type":"OBJECT","properties":{
+          "id":{"type":"INTEGER"},
+          "translation":{"type":"STRING"}},
+          "required":["id","translation"]}}},"required":["items"]}
+        """.trimIndent(),
+    ).jsonObject
+
+    /**
+     * Lê a resposta dos textos: texto original -> tradução. Ids desconhecidos e traduções vazias são ignorados;
+     * a tradução vem sem espaços nas pontas.
+     */
+    fun parseTexts(body: String, items: List<TextItem>): Map<String, String> {
+        val text = answerText(body)
+        if (text.isEmpty()) return emptyMap()
+        val answers = Json.parseToJsonElement(text).jsonObject["items"]?.jsonArray.orEmpty()
+        val byId = items.associateBy { it.id }
+        val out = LinkedHashMap<String, String>()
+        answers.forEach { element ->
+            val obj = element as? JsonObject ?: return@forEach
+            val id = (obj["id"] as? JsonPrimitive)?.intOrNull ?: return@forEach
+            val item = byId[id] ?: return@forEach
+            val translated = obj["translation"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (translated.isEmpty()) return@forEach
+            out[item.text] = translated
+        }
+        return out
     }
 
     /** A mensagem de erro da API ({"error": {"message": …}}), quando houver. */

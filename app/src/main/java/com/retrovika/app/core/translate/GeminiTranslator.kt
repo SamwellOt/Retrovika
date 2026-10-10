@@ -23,8 +23,18 @@ class GeminiTranslator(private val apiKey: String, private val model: String) {
     suspend fun translate(
         png: ByteArray, width: Int, height: Int, lines: List<OcrLine>,
         target: String, game: GeminiText.GameContext, history: List<String>,
-    ): List<GeminiText.AiBlock> = withContext(Dispatchers.IO) {
-        val body = GeminiText.request(Base64.encodeToString(png, Base64.NO_WRAP), width, height, lines, target, game, history)
+    ): List<GeminiText.AiBlock> = generate(
+        { GeminiText.request(Base64.encodeToString(png, Base64.NO_WRAP), width, height, lines, target, game, history) },
+    ) { GeminiText.parse(it, lines, width, height) }
+
+    /** Textos lidos da memória do jogo, sem imagem: uma só requisição, com o limite de cada trecho. */
+    suspend fun translateTexts(
+        items: List<GeminiText.TextItem>, target: String, game: GeminiText.GameContext, history: List<String>,
+    ): Map<String, String> = generate({ GeminiText.textRequest(items, target, game, history) }) { GeminiText.parseTexts(it, items) }
+
+    /** A chamada HTTP e o erro da API: [body] monta o pedido e [read] lê a resposta, ambos fora da thread principal. */
+    private suspend fun <T> generate(body: () -> String, read: (String) -> T): T = withContext(Dispatchers.IO) {
+        val json = body()
         // O nome vem digitado pelo usuário: vai como um trecho do caminho, codificado (uma "/" ou "?" a mais não
         // muda o endereço chamado).
         val url = "https://generativelanguage.googleapis.com/v1beta/models".toHttpUrl().newBuilder()
@@ -32,7 +42,7 @@ class GeminiTranslator(private val apiKey: String, private val model: String) {
             .build()
         val request = Request.Builder().url(url)
             .header("x-goog-api-key", apiKey.trim())
-            .post(body.toRequestBody("application/json".toMediaType()))
+            .post(json.toRequestBody("application/json".toMediaType()))
             .build()
         with(Http) { aiClient.newCall(request).executeCancellable { res ->
             val text = res.body?.string().orEmpty()
@@ -47,7 +57,7 @@ class GeminiTranslator(private val apiKey: String, private val model: String) {
                     else -> HttpStatusException(res.code, url.toString())
                 }
             }
-            GeminiText.parse(text, lines, width, height)
+            read(text)
         } }
     }
 
