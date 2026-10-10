@@ -6,8 +6,10 @@ import org.junit.Test
 
 class TextWatcherTest {
 
-    private fun ram(vararg parts: Pair<Int, ByteArray>): ByteArray {
-        val r = ByteArray(4096)
+    private fun ram(vararg parts: Pair<Int, ByteArray>): ByteArray = ramOf(4096, *parts)
+
+    private fun ramOf(size: Int, vararg parts: Pair<Int, ByteArray>): ByteArray {
+        val r = ByteArray(size)
         parts.forEach { (at, bytes) -> bytes.copyInto(r, at) }
         return r
     }
@@ -73,6 +75,54 @@ class TextWatcherTest {
         assertEquals(1, hooks.size)
         assertEquals(0x300, hooks[0].address)
         assertTrue(hooks[0].wordSwap)
+    }
+
+    @Test
+    fun `dialogo que some e volta com outro texto vira fonte`() {
+        val w = TextWatcher(null, false)
+        w.scan(ram(0x300 to "Hello traveler, welcome!".toByteArray()), emptyList())
+        assertTrue(w.scan(ram(), emptyList()).isEmpty())
+        val hooks = w.scan(ram(0x300 to "The king awaits you now".toByteArray()), emptyList())
+        assertEquals(1, hooks.size)
+        assertEquals(0x300, hooks[0].address)
+        assertEquals(TextEncoding.ASCII, hooks[0].encoding)
+    }
+
+    @Test
+    fun `trecho que comeca antes do bloco que mudou e achado no comeco`() {
+        val w = TextWatcher(null, false)
+        val head = "The old king walked slowly through the quiet halls of the castle while the rain kept falling "
+        w.scan(ramOf(8192, 0x1000 to (head + "sleeping in the town").toByteArray()), emptyList())
+        val hooks = w.scan(ramOf(8192, 0x1000 to (head + "singing in the wood!").toByteArray()), emptyList())
+        assertEquals(1, hooks.size)
+        assertEquals(0x1000, hooks[0].address)
+    }
+
+    @Test
+    fun `varredura incremental acha o mesmo que a completa`() {
+        val w = TextWatcher(null, false)
+        fun scene(a: String, b: String, c: String) = ramOf(
+            16384,
+            0x200 to a.toByteArray(),
+            0x800 to utf16le(b),
+            0x1400 to sjis(c),
+            0x2000 to "Static item names table".toByteArray(),
+            0x2A00 to utf16le("Quiet village square"),
+        )
+        w.scan(scene("Hello traveler, welcome!", "Hello there friend", "こんにちは、勇者よ"), emptyList())
+        val hooks = w.scan(scene("The king awaits you now", "Good bye my friend", "さようなら、勇者よ"), emptyList())
+        assertEquals(3, hooks.size)
+        assertEquals(setOf(0x200, 0x800, 0x1400), hooks.map { it.address }.toSet())
+    }
+
+    @Test
+    fun `ram que muda de tamanho recomeca`() {
+        val w = TextWatcher(null, false)
+        w.scan(ramOf(4096, 0x300 to "Hello traveler, welcome!".toByteArray()), emptyList())
+        assertTrue(w.scan(ramOf(8192, 0x300 to "The king awaits you now".toByteArray()), emptyList()).isEmpty())
+        val hooks = w.scan(ramOf(8192, 0x300 to "Dark forest ahead, beware".toByteArray()), emptyList())
+        assertEquals(1, hooks.size)
+        assertEquals(0x300, hooks[0].address)
     }
 }
 

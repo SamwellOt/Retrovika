@@ -11,7 +11,11 @@ import java.nio.charset.Charset
  */
 class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
 
-    private var previous: HashMap<Long, Int>? = null
+    /** Último hash de cada trecho já visto, por endereço e codificação. Não se apaga quando o trecho some: é isso que pega o buffer limpo e refeito. */
+    private val seen = HashMap<Long, Int>()
+    private var blockHashes: IntArray? = null
+    private var viewSize = -1
+    private var primed = false
 
     /**
      * Varre [ram] e devolve as fontes novas: os trechos de texto cujo conteúdo mudou desde a varredura anterior, fora das
@@ -19,32 +23,95 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
      */
     fun scan(ram: ByteArray, existing: List<TextHook>): List<TextHook> {
         val view = if (wordSwap) TextDecoder.slice(ram, 0, ram.size and 3.inv(), true) ?: return emptyList() else ram
-        val current = HashMap<Long, Int>()
-        val found = mutableListOf<Run>()
-        scanAscii(view, found)
-        scanUtf16(view, found)
-        scanShiftJis(view, found)
-        val before = previous
-        previous = current
+        // Outro tamanho de RAM é outra memória: recomeça como primeira varredura.
+        if (view.size != viewSize) {
+            viewSize = view.size
+            seen.clear()
+            blockHashes = null
+            primed = false
+        }
+        val first = !primed
+        primed = true
+        val changed = changedBlocks(view)
         val out = mutableListOf<TextHook>()
-        val changedBlocks = changedBlocks(view)
+        val found = mutableListOf<Run>()
+        if (first) {
+            scanAll(view, 0, view.size, found)
+            for (run in found) seen[keyOf(run)] = run.hash
+            return out
+        }
+        // Só o que mudou pode ter virado texto novo: varre as faixas em volta dos blocos alterados.
+        for ((from, to) in textRanges(view, changed)) scanAll(view, from, to, found)
         for (run in found) {
-            val key = (run.address.toLong() shl 3) or run.encoding.ordinal.toLong()
-            current[key] = run.hash
-            if (before == null || out.size >= MAX_PER_SCAN) continue
-            val old = before[key] ?: continue
-            if (old == run.hash) continue
+            val old = seen.put(keyOf(run), run.hash) ?: continue
+            if (old == run.hash || out.size >= MAX_PER_SCAN) continue
             if (existing.any { covers(it, run.address) } || out.any { covers(it, run.address) }) continue
             val length = minOf(WINDOW, view.size - run.address)
             if (length <= 0) continue
             val preview = run.preview.take(24)
             out += TextHook("$AUTO_PREFIX$preview", run.address, length, run.encoding, wordSwap, null, core = core)
         }
-        if (before != null) tableHooks(view, changedBlocks, existing, out)
+        tableHooks(view, changed, existing, out)
+        if (seen.size > MAX_SEEN) seen.clear()
         return out
     }
 
-    private var blockHashes: IntArray? = null
+    private fun keyOf(run: Run) = (run.address.toLong() shl 3) or run.encoding.ordinal.toLong()
+
+    /**
+     * Faixas [from, to) da RAM para varrer depois de uma mudança: cada bloco alterado se estende até o `00 00` mais
+     * próximo dos dois lados (texto nunca contém `00 00`), blocos com até dois blocos inalterados no meio são uma faixa só
+     * e faixas que se sobrepõem depois de estendidas viram uma.
+     */
+    private fun textRanges(v: ByteArray, changed: List<Int>): List<Pair<Int, Int>> {
+        if (changed.isEmpty()) return emptyList()
+        val spans = mutableListOf<Pair<Int, Int>>()
+        var start = changed[0]
+        var end = changed[0]
+        for (b in changed.drop(1)) {
+            if (b - end <= 3) end = b else { spans += start to end; start = b; end = b }
+        }
+        spans += start to end
+        val ranges = spans.map { (s, e) ->
+            val from = extendBack(v, s * BLOCK) and 1.inv()
+            from to extendForward(v, (e + 1) * BLOCK)
+        }.sortedBy { it.first }
+        val merged = mutableListOf<Pair<Int, Int>>()
+        for ((from, to) in ranges) {
+            val last = merged.lastOrNull()
+            if (last != null && from <= last.second) merged[merged.size - 1] = last.first to maxOf(last.second, to)
+            else merged += from to to
+        }
+        return merged
+    }
+
+    /** Começo do texto que termina antes de [at]: logo depois do `00 00` mais próximo, até [MAX_EXTEND] bytes para trás. */
+    private fun extendBack(v: ByteArray, at: Int): Int {
+        val limit = maxOf(0, at - MAX_EXTEND)
+        var k = at - 2
+        while (k >= limit) {
+            if (v[k].toInt() == 0 && v[k + 1].toInt() == 0) return k + 2
+            k--
+        }
+        return limit
+    }
+
+    /** Fim do texto que começa em [at] ou depois: o primeiro `00 00`, até [MAX_EXTEND] bytes para frente. */
+    private fun extendForward(v: ByteArray, at: Int): Int {
+        val limit = minOf(v.size, at + MAX_EXTEND)
+        var k = at
+        while (k + 1 < limit) {
+            if (v[k].toInt() == 0 && v[k + 1].toInt() == 0) return k
+            k++
+        }
+        return limit
+    }
+
+    private fun scanAll(v: ByteArray, from: Int, to: Int, out: MutableList<Run>) {
+        scanAscii(v, from, to, out)
+        scanUtf16(v, from, to, out)
+        scanShiftJis(v, from, to, out)
+    }
 
     /** Os blocos de [BLOCK] bytes que mudaram desde a varredura anterior (vazio na primeira). */
     private fun changedBlocks(v: ByteArray): List<Int> {
@@ -109,13 +176,12 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
 
     private fun printable(b: Int) = b in 0x20..0x7E || b == 0x0A
 
-    private fun scanAscii(v: ByteArray, out: MutableList<Run>) {
-        var i = 0
-        val n = v.size
-        while (i < n) {
+    private fun scanAscii(v: ByteArray, from: Int, to: Int, out: MutableList<Run>) {
+        var i = from
+        while (i < to) {
             if (!printable(v[i].toInt() and 0xFF)) { i++; continue }
             var j = i
-            while (j < n && printable(v[j].toInt() and 0xFF)) j++
+            while (j < to && printable(v[j].toInt() and 0xFF)) j++
             if (j - i >= MIN_ASCII && looksLikeSentence(v, i, j)) {
                 out += Run(i, TextEncoding.ASCII, hashOf(v, i, j), String(v, i, j - i, Charsets.ISO_8859_1))
             }
@@ -140,10 +206,10 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         return spaces >= 1 && words >= 2 && letters * 100 >= total * 60
     }
 
-    private fun scanUtf16(v: ByteArray, out: MutableList<Run>) {
+    private fun scanUtf16(v: ByteArray, from: Int, to: Int, out: MutableList<Run>) {
         for (bigEndian in booleanArrayOf(false, true)) {
-            var i = 0
-            val n = v.size and 1.inv()
+            var i = from
+            val n = to and 1.inv()
             while (i < n) {
                 if (!unitOk(v, i, bigEndian)) { i += 2; continue }
                 var j = i
@@ -170,9 +236,9 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         return u in 0x20..0x7E || u == 0x0A || u in 0x3000..0x30FF || u in 0x4E00..0x9FFF || u in 0xFF01..0xFF9F
     }
 
-    private fun scanShiftJis(v: ByteArray, out: MutableList<Run>) {
-        var i = 0
-        val n = v.size - 1
+    private fun scanShiftJis(v: ByteArray, from: Int, to: Int, out: MutableList<Run>) {
+        var i = from
+        val n = to - 1
         while (i < n) {
             val lead = v[i].toInt() and 0xFF
             // Só começa em kana (hiragana 0x82 0x9F-0xF1, katakana 0x83 0x40-0x96): o resto do texto pode ter kanji.
@@ -211,6 +277,10 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         private const val MAX_CHANGED_BLOCKS = 600
         private const val MAX_REGIONS = 48
         private const val MAX_REGION_BYTES = 768
+        /** Quantos trechos lembrados antes de esquecer tudo (repovoa nas próximas varreduras). */
+        private const val MAX_SEEN = 200_000
+        /** Até onde procurar `00 00` para os lados de uma faixa alterada. */
+        private const val MAX_EXTEND = 4096
         private const val WINDOW = 256
         private const val MIN_ASCII = 10
         private const val MIN_UTF16 = 6
