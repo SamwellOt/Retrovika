@@ -34,8 +34,14 @@ class TextPatcher(
     private val ours = LinkedHashSet<String>()
     private var lastCandidates: Set<String> = emptySet()
 
-    /** Pedido de [reset]: quem o usa é outra thread, e as tabelas só podem ser mexidas pelo passo em andamento. */
+    /** Protege tudo o que é lido ou gravado aqui: um passo com rede e um [applyKnown] rápido podem correr juntos. */
+    private val lock = Any()
+
+    /** Pedido de [reset]: quem o usa é outra thread, e as tabelas só podem ser mexidas sob [lock]. */
     @Volatile private var resetRequested = false
+
+    /** O reset já limpou as traduções, mas o [step] ainda não esqueceu os candidatos da leitura anterior. */
+    private var candidatesStale = false
 
     /** Esquece as traduções guardadas (os ganchos mudaram); vale no começo do próximo passo. */
     fun reset() {
@@ -46,67 +52,110 @@ class TextPatcher(
      * [force]: traduz tudo o que há agora (o botão); sem ele, só o que ficou igual desde o passo anterior (automático).
      * [translate] recebe os textos e o limite de caracteres de cada um ([limits]: o que o jogo deixa cabe nele) e devolve
      * a tradução de cada um (os que não precisam de tradução ficam de fora).
+     *
+     * A chamada de [translate] roda sem o lock: enquanto a rede responde, [applyKnown] pode gravar as traduções guardadas.
      */
     suspend fun step(
         hooks: List<TextHook>,
         force: Boolean,
         translate: suspend (texts: List<String>, limits: Map<String, Int>) -> Map<String, String>,
     ): Report {
-        if (resetRequested) {
-            resetRequested = false
-            // O que escrevemos continua na memória do jogo e não vira "original" porque as fontes mudaram: `ours` fica.
-            translations.clear()
-            lastCandidates = emptySet()
-        }
-        var scan = scan(hooks)
-        if (scan.unreadable && scan.found.isEmpty()) return Report(unreadable = true)
+        // Fase A: lê a memória, preenche com o que já se sabe e escolhe o que vai ao tradutor.
+        val plan = synchronized(lock) { plan(hooks, force) }
+        plan.early?.let { return it }
+        val result = translate(plan.candidates, plan.limits)
+        // Fase C: grava o resultado e relê a memória, porque o jogo andou durante a tradução.
+        return synchronized(lock) { finish(hooks, plan, result) }
+    }
 
+    /**
+     * Grava as traduções já conhecidas (sessão ou [store]) nos textos que estiverem na memória agora. Não usa rede e não
+     * mexe em [lastCandidates]: a regra de estabilidade do modo automático continua sendo do [step].
+     */
+    fun applyKnown(hooks: List<TextHook>): Report = synchronized(lock) {
+        consumeReset()
+        val scan = scan(hooks)
+        fillFromStore(scan)
+        val (written, truncated) = applyFound(scan.found.filter { differs(it.segment.text) })
+        Report(written, truncated, scan.unreadable, waiting = 0)
+    }
+
+    /** Fase A do [step]: tudo o que pode ser feito sem rede. Sob [lock]. */
+    private fun plan(hooks: List<TextHook>, force: Boolean): Plan {
+        consumeReset()
+        if (candidatesStale) { candidatesStale = false; lastCandidates = emptySet() }
+        val scan = scan(hooks)
+        if (scan.unreadable && scan.found.isEmpty()) return Plan(early = Report(unreadable = true))
         // As traduções guardadas entram antes de qualquer pedido: o que já está na memória do app não vai ao tradutor.
-        scan.found.forEach { f ->
-            val text = f.segment.text
-            if (text !in translations && text !in ours) store?.get(text)?.let { translations[text] = it }
-        }
-
-        var written = 0
-        var truncated = 0
-        fun apply(found: List<Found>): Pair<Int, Int> {
-            var w = 0
-            var t = 0
-            for (f in found) {
-                val translated = translations[f.segment.text] ?: continue
-                val result = write(f.hook, f.segment, translated) ?: continue
-                w++
-                if (result) t++
-            }
-            return w to t
-        }
-
+        fillFromStore(scan)
         // O que já foi traduzido volta ao jogo sem esperar a rede.
-        apply(scan.found.filter { differs(it.segment.text) }).let { written += it.first; truncated += it.second }
+        val (written, truncated) = applyFound(scan.found.filter { differs(it.segment.text) })
 
         val need = scan.found.map { it.segment.text }.filter { it !in translations && it !in ours }.distinct()
         // Poucos textos por passo: um buffer cheio de lixo plausível não vira dezenas de pedidos de uma vez ao tradutor.
         val candidates = (if (force) need else need.filter { it in lastCandidates }).take(MAX_PER_STEP)
         lastCandidates = need.toSet()
-        if (candidates.isEmpty()) return Report(written, truncated, scan.unreadable, waiting = need.size)
-
+        if (candidates.isEmpty()) {
+            return Plan(early = Report(written, truncated, scan.unreadable, waiting = need.size))
+        }
         val limits = candidates.associateWith { text -> scan.found.filter { it.segment.text == text }.minOf { limitOf(it) } }
-        val result = translate(candidates, limits)
+        return Plan(null, written, truncated, candidates, limits)
+    }
+
+    /** Fase C do [step]: guarda o resultado do tradutor e grava o que ainda é o mesmo texto. Sob [lock]. */
+    private fun finish(hooks: List<TextHook>, plan: Plan, result: Map<String, String>): Report {
         if (translations.size > MAX_CACHE) translations.clear()
         // Tradução vazia não é tradução: gravá-la apagaria o diálogo.
         val added = result.filterValues { it.isNotBlank() }
         translations.putAll(added)
         // Os textos que o tradutor deixou de fora (já no idioma de quem lê) não voltam a ser pedidos.
-        val identity = candidates.filter { result[it].isNullOrBlank() }.associateWith { it }
+        val identity = plan.candidates.filter { result[it].isNullOrBlank() }.associateWith { it }
         translations.putAll(identity)
         (added + identity).forEach { (original, translated) -> store?.put(original, translated) }
 
-        // O jogo andou durante a tradução: lê de novo e só grava o que ainda é o mesmo texto.
-        scan = scan(hooks)
-        apply(scan.found.filter { it.segment.text in candidates && differs(it.segment.text) })
-            .let { written += it.first; truncated += it.second }
-        return Report(written, truncated, scan.unreadable, waiting = 0)
+        val scan = scan(hooks)
+        val (written, truncated) = applyFound(scan.found.filter { it.segment.text in plan.candidates && differs(it.segment.text) })
+        return Report(plan.written + written, plan.truncated + truncated, scan.unreadable, waiting = 0)
     }
+
+    /** Pedido de reset: esquece as traduções. Sob [lock]. */
+    private fun consumeReset() {
+        if (!resetRequested) return
+        resetRequested = false
+        // O que escrevemos continua na memória do jogo e não vira "original" porque as fontes mudaram: `ours` fica.
+        translations.clear()
+        candidatesStale = true
+    }
+
+    /** Preenche as traduções que ainda não conhecemos a partir do [store]. Sob [lock]. */
+    private fun fillFromStore(scan: Scan) {
+        scan.found.forEach { f ->
+            val text = f.segment.text
+            if (text !in translations && text !in ours) store?.get(text)?.let { translations[text] = it }
+        }
+    }
+
+    /** Escreve as traduções dos trechos achados; devolve (escritos, encurtados). Sob [lock]. */
+    private fun applyFound(found: List<Found>): Pair<Int, Int> {
+        var w = 0
+        var t = 0
+        for (f in found) {
+            val translated = translations[f.segment.text] ?: continue
+            val result = write(f.hook, f.segment, translated) ?: continue
+            w++
+            if (result) t++
+        }
+        return w to t
+    }
+
+    /** Resultado da fase A: ou já termina ([early]), ou traz o que pedir ao tradutor. */
+    private class Plan(
+        val early: Report? = null,
+        val written: Int = 0,
+        val truncated: Int = 0,
+        val candidates: List<String> = emptyList(),
+        val limits: Map<String, Int> = emptyMap(),
+    )
 
     /** Há tradução guardada para [text] e ela não é o próprio texto (o tradutor devolveu algo diferente). */
     private fun differs(text: String): Boolean = translations[text]?.let { it != text } == true

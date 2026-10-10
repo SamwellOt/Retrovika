@@ -2155,14 +2155,7 @@ class GameActivity : ComponentActivity() {
         val hooks = cheats?.ram?.activeTextHooks.orEmpty()
         if (hooks.isEmpty()) return null
         val target = uiLanguage()
-        val patcher = textPatcher?.takeIf { textPatcherView === view && textPatcherTarget == target }
-            ?: TextPatcher(memoryAccess(view), translationMemory(target)) { text ->
-                TranslationText.probablyTranslated(text, uiLanguage())
-            }.also {
-                textPatcher = it
-                textPatcherView = view
-                textPatcherTarget = target
-            }
+        val patcher = patcherFor(view, target)
         val tr = translator ?: LiveTranslator(app.ocrPack).also { translator = it }
         val ai = aiConfig()
         val context = GeminiText.GameContext(game.title, system.name)
@@ -2175,6 +2168,17 @@ class GameActivity : ComponentActivity() {
             }
         }
     }
+
+    /** O patcher da tela [view] no idioma [target]: o mesmo enquanto a tela e o idioma não mudarem. */
+    private fun patcherFor(view: GLRetroView, target: String): TextPatcher =
+        textPatcher?.takeIf { textPatcherView === view && textPatcherTarget == target }
+            ?: TextPatcher(memoryAccess(view), translationMemory(target)) { text ->
+                TranslationText.probablyTranslated(text, uiLanguage())
+            }.also {
+                textPatcher = it
+                textPatcherView = view
+                textPatcherTarget = target
+            }
 
     /** A memória de traduções deste jogo no idioma [target]; trocar de idioma grava a anterior e abre outra. */
     private fun translationMemory(target: String): TranslationMemory {
@@ -2263,9 +2267,11 @@ class GameActivity : ComponentActivity() {
         if (!autoTranslate) return
         autoTranslateJob = lifecycleScope.launch {
             var failures = 0
+            // Só o passo de rede pode esperar o tradutor; o de traduções já conhecidas roda a cada tick.
+            var networkJob: kotlinx.coroutines.Job? = null
+            var nextNetworkAt = 0L
             while (true) {
-                // Sem rede (ou tradutor recusando): o intervalo dobra a cada falha, até meio minuto, e volta ao normal no primeiro acerto.
-                delay(AUTO_TRANSLATE_INTERVAL_MS shl failures.coerceAtMost(6))
+                delay(AUTO_TRANSLATE_INTERVAL_MS)
                 val view = retroView ?: continue
                 if (!gameLoaded || !emulationRunning() || translation != null || menuOpen || netplay.playing) continue
                 try {
@@ -2274,8 +2280,32 @@ class GameActivity : ComponentActivity() {
                         // A RAM grande custa mais para ler e varrer: espaça mais.
                         nextScanAt = SystemClock.elapsedRealtime() + if ((discoveryRam?.size ?: 0) > 8 shl 20) 4_000L else 1_500L
                     }
-                    patchStep(view, force = false)
-                    failures = 0
+                    val hooks = cheats?.ram?.activeTextHooks.orEmpty()
+                    if (hooks.isNotEmpty()) {
+                        // Sem rede: nunca falha por causa do tradutor, então não entra em `failures`.
+                        val patcher = patcherFor(view, uiLanguage())
+                        try {
+                            withContext(Dispatchers.Default) { patcher.applyKnown(hooks) }
+                        } catch (c: kotlinx.coroutines.CancellationException) {
+                            throw c
+                        } catch (t: Throwable) {
+                            // Falha local (a memória sumiu, por exemplo): tenta de novo no próximo tick.
+                        }
+                    }
+                    // Sem rede (ou tradutor recusando): o intervalo dobra a cada falha, até meio minuto, e volta ao normal no primeiro acerto.
+                    if (networkJob?.isCompleted != false && SystemClock.elapsedRealtime() >= nextNetworkAt) {
+                        networkJob = launch {
+                            try {
+                                patchStep(view, force = false)
+                                failures = 0
+                            } catch (c: kotlinx.coroutines.CancellationException) {
+                                throw c
+                            } catch (t: Throwable) {
+                                failures++
+                                nextNetworkAt = SystemClock.elapsedRealtime() + (AUTO_TRANSLATE_INTERVAL_MS shl failures.coerceAtMost(6))
+                            }
+                        }
+                    }
                 } catch (c: kotlinx.coroutines.CancellationException) {
                     throw c
                 } catch (t: Throwable) {
@@ -2321,8 +2351,23 @@ class GameActivity : ComponentActivity() {
         val (stored, rest) = read
         val ai = aiConfig()
         val context = GeminiText.GameContext(game.title, system.name)
-        val result = if (rest.isEmpty()) null else tr.translateTexts(rest, target, ai, context) { stage ->
-            if (translation is TranslationUi.Working) translation = TranslationUi.Working(frame, stage)
+        // Com traduções guardadas na mão, a rede não as segura: depois do prazo (ou de uma falha) vale só o que já há.
+        val result = when {
+            rest.isEmpty() -> null
+            stored.isEmpty() -> tr.translateTexts(rest, target, ai, context) { stage ->
+                if (translation is TranslationUi.Working) translation = TranslationUi.Working(frame, stage)
+            }
+            else -> try {
+                withTimeoutOrNull(MEMORY_TRANSLATION_TIMEOUT_MS) {
+                    tr.translateTexts(rest, target, ai, context) { stage ->
+                        if (translation is TranslationUi.Working) translation = TranslationUi.Working(frame, stage)
+                    }
+                }
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                null
+            }
         }
         val fresh = result?.blocks.orEmpty()
         fresh.forEach { memory.put(it.original, it.translated) }
@@ -2735,6 +2780,8 @@ class GameActivity : ComponentActivity() {
         private const val TRANSLATE_CAPTURE_ATTEMPTS = 2
         /** Quanto tempo entre uma leitura e outra dos textos do jogo no modo automático. */
         private const val AUTO_TRANSLATE_INTERVAL_MS = 500L
+        /** Quanto a tradução da memória espera a rede quando já há textos guardados para mostrar. */
+        private const val MEMORY_TRANSLATION_TIMEOUT_MS = 20_000L
         private const val SRAM_SAVE_INTERVAL_MS = 30_000L
         /** Uns 5 minutos de jogo a 60 quadros por segundo. */
         private const val UNDO_MAX_FRAMES = 60L * 60 * 5

@@ -1,5 +1,8 @@
 package com.retrovika.app.core.textmem
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -464,5 +467,55 @@ class TextPatcherTest {
         TextPatcher(mem2).step(listOf(uh), true) { t, limits -> seen2 += limits; t.associateWith { "x" } }
         // (20 - 2) / 2 = 9 caracteres
         assertEquals(9, seen2["Hello"])
+    }
+
+    @Test
+    fun `applyKnown escreve o texto que so existe no armazenamento sem chamar tradutor nenhum`() = runBlocking {
+        val mem = FakeMemory(512).also { it.put(0x100, "Hello World!") }
+        val store = MapStore().also { it.put("Hello World!", "Ola mundo!") }
+        val report = TextPatcher(mem, store).applyKnown(listOf(hook))
+        assertEquals(1, report.written)
+        assertEquals("Ola mundo!", mem.text(0x100, 20))
+    }
+
+    @Test
+    fun `applyKnown reescreve a traducao da sessao depois que o jogo recarregou o original`() = runBlocking {
+        val mem = FakeMemory(512).also { it.put(0x100, "Hello World!") }
+        val patcher = TextPatcher(mem)
+        patcher.step(listOf(hook), true, translate)
+        mem.bytes.fill(0, 0x100, 0x140); mem.put(0x100, "Hello World!")     // o jogo reescreveu o original
+        val report = patcher.applyKnown(listOf(hook))
+        assertEquals(1, report.written)
+        assertEquals("Ola mundo!", mem.text(0x100, 20))
+    }
+
+    @Test
+    fun `applyKnown grava a traducao guardada de outro gancho enquanto um passo espera a rede`() = runBlocking {
+        val hookB = TextHook("b", 0x200, 128, TextEncoding.ASCII)
+        val mem = FakeMemory(1024).also {
+            it.put(0x100, "Hello World!")
+            it.put(0x200, "Welcome to the village of Lakeside")
+        }
+        val store = MapStore().also { it.put("Welcome to the village of Lakeside", "Bem-vindo a vila de Lakeside") }
+        val patcher = TextPatcher(mem, store)
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val job = launch(Dispatchers.Default) {
+            patcher.step(listOf(hook), force = true) { texts, _ ->
+                entered.complete(Unit)
+                gate.await()                                  // a rede demora
+                texts.associateWith { "Ola mundo!" }
+            }
+        }
+        entered.await()
+        // Com o passo suspenso dentro do tradutor, a tradução guardada do outro gancho sai na hora.
+        val report = patcher.applyKnown(listOf(hookB))
+        assertEquals(1, report.written)
+        assertEquals("Bem-vindo a vila de Lakeside", mem.text(0x200, 60))
+        assertEquals("Hello World!", mem.text(0x100, 20))     // o passo ainda não gravou o seu
+        gate.complete(Unit)
+        job.join()
+        assertEquals("Ola mundo!", mem.text(0x100, 20))       // e, terminando, grava o resultado dele
+        assertEquals("Bem-vindo a vila de Lakeside", mem.text(0x200, 60))
     }
 }
