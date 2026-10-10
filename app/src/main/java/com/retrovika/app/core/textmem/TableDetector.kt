@@ -14,23 +14,23 @@ object TableDetector {
     /** Palavras de 3 letras ou mais (as de 2 acertam demais por acaso). */
     private val dictionary: Set<String> = (
         "the and you that for are was but not have with this from they will would there their what about which when your " +
-            "can said each she how him his her has had were been one all out other then them these some could into time two " +
-            "more write see him now than like only come over think also back after use work first well way even new want " +
-            "because any give day most our may get good know take people year just see look made find going where here " +
-            "much let did own too off tell hello thank thanks please yes why who help need must should never always again " +
-            "world world town city king queen hero sword magic master power home door room house road forest cave castle " +
-            "village night away down live love life dead death fire water earth wind mountain person friend enemy monster " +
-            "battle fight win lost story begin start end stop wait run come go gone stay left right front long little big " +
-            "old young great small many few every very quite still once ever before while through under between both " +
-            "something nothing everything someone anyone people name place thing man woman boy girl child father mother " +
-            "brother sister cat dog bird sat mat nearby welcome traveler adventure quest item found treasure gold money " +
-            "buy sell shop inn rest sleep health strength attack defense level exp experience learned lost defeated " +
-            "morning evening afternoon today tomorrow yesterday goodbye sorry okay really maybe together remember believe " +
-            "special strange dangerous legend journey princess dragon wizard knight ghost secret key book map letter " +
-            "friend friends meet meeting thank welcome trouble problem danger safe save lead follow carry bring open close " +
-            "stone river island ocean sea ship boat bridge tower temple church school market garden field farm animal " +
-            "pokemon trainer gym badge ball potion medicine heal cure poison sleep wake strong weak fast slow hard easy " +
-            "angry happy sad scared afraid brave kind smart funny strange beautiful powerful ancient holy dark light"
+        "can said each she how him his her has had were been one all out other then them these some could into time two " +
+        "more write see now than like only come over think also back after use work first well way even new want because " +
+        "any give day most our may get good know take people year just look made find going where here much let did own " +
+        "too off tell hello thank thanks please yes why who help need must should never always again world town city " +
+        "king queen hero sword magic master power home door room house road forest cave castle village night away down " +
+        "live love life dead death fire water earth wind mountain person friend enemy monster battle fight win lost " +
+        "story begin start end stop wait run go gone stay left right front long little big old young great small many " +
+        "few every very quite still once ever before while through under between both something nothing everything " +
+        "someone anyone name place thing man woman boy girl child father mother brother sister cat dog bird sat mat " +
+        "nearby welcome traveler adventure quest item found treasure gold money buy sell shop inn rest sleep health " +
+        "strength attack defense level exp experience learned defeated morning evening afternoon today tomorrow " +
+        "yesterday goodbye sorry okay really maybe together remember believe special strange dangerous legend journey " +
+        "princess dragon wizard knight ghost secret key book map letter friends meet meeting trouble problem danger safe " +
+        "save lead follow carry bring open close stone river island ocean sea ship boat bridge tower temple church " +
+        "school market garden field farm animal pokemon trainer gym badge ball potion medicine heal cure poison wake " +
+        "strong weak fast slow hard easy angry happy sad scared afraid brave kind smart funny beautiful powerful ancient " +
+        "holy dark light"
         ).split(' ').filter { it.length >= 3 }.toSet()
 
     /** "ood" -> "good": a inicial maiúscula tem um byte que ainda não se conhece; o resto da palavra vale como prova. */
@@ -42,9 +42,18 @@ object TableDetector {
     /** Lê [window] como uma tabela linear de inglês; nulo se nada nele forma palavras. */
     fun detect(window: ByteArray): Detected? {
         if (window.size < MIN_CHARS) return null
+        // Histograma e soma acumulada: quantos bytes da janela caem num bloco de 26 sem varrer a janela de novo.
+        val prefix = IntArray(257)
+        for (raw in window) prefix[(raw.toInt() and 0xFF) + 1]++
+        for (b in 0 until 256) prefix[b + 1] += prefix[b]
+        fun inBlock(x: Int) = prefix[minOf(x + 26, 256)] - prefix[x]
         var bestLower = -1
         var base: Score? = null
         for (lower in 0..230) {
+            // Cada byte rende uma letra, e uma palavra de sufixo rende uma a mais por três bytes (ver [score]): abaixo disso
+            // o bloco nunca chega a MIN_CHARS.
+            val n = inBlock(lower)
+            if (n + n / 3 < MIN_CHARS) continue
             val score = score(window, lower, null)
             if (score.chars >= MIN_CHARS && score.words.size >= MIN_WORDS && (base == null || score.chars > base.chars)) {
                 bestLower = lower
@@ -68,7 +77,8 @@ object TableDetector {
         var upper: Int? = null
         var bestChars = score(window, lower, null, suffix = false).chars
         for (u in listOf(lower - 26, lower + 26, lower - 32, lower + 32) + (0..230)) {
-            if (u < 0 || u > 230 || u == space || u in lower - 25..lower + 25) continue
+            // Sem nenhuma maiúscula na janela, a pontuação não muda: o bloco não pode ganhar nada.
+            if (u < 0 || u > 230 || u == space || u in lower - 25..lower + 25 || inBlock(u) == 0) continue
             val s = score(window, lower, u)
             if (s.chars > bestChars) { bestChars = s.chars; upper = u }
         }
@@ -108,7 +118,19 @@ object TableDetector {
             i++
         }
         val terminator = enders.maxByOrNull { it.value }?.key ?: 0xFF
-        val table = LinearTable(upper = upper, lower = lower, space = space, terminator = terminator, extra = extra)
+        // ASCII deslocado (byte = ASCII + constante): o layout e o espaço batem com o ASCII, então os dígitos e a
+        // pontuação que faltam seguem a mesma constante. O que já foi aprendido (".", ",") não se troca.
+        var digit: Int? = null
+        if (upper != null && lower - upper == 32 && space == upper - 0x21) {
+            val shift = upper - 0x41
+            if (0x30 + shift in 0..246) digit = 0x30 + shift
+            for (c in "!\"'(),-.:;?") {
+                val b = c.code + shift
+                if (b !in 0..255 || b == terminator || c.toString() in extra) continue
+                extra[c.toString()] = b
+            }
+        }
+        val table = LinearTable(upper = upper, lower = lower, digit = digit, space = space, terminator = terminator, extra = extra)
         return Detected(table, base.words.size)
     }
 
