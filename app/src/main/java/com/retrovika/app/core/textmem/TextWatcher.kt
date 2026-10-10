@@ -52,7 +52,8 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
             out += TextHook("$AUTO_PREFIX$preview", run.address, length, run.encoding, wordSwap, null, core = core)
         }
         tableHooks(view, changed, existing, out)
-        if (seen.size > MAX_SEEN) seen.clear()
+        // Esquecendo tudo, a próxima varredura é completa (só registra): as regiões paradas também voltam ao mapa.
+        if (seen.size > MAX_SEEN) { seen.clear(); primed = false }
         return out
     }
 
@@ -277,7 +278,7 @@ class TextWatcher(private val core: String?, private val wordSwap: Boolean) {
         private const val MAX_CHANGED_BLOCKS = 600
         private const val MAX_REGIONS = 48
         private const val MAX_REGION_BYTES = 768
-        /** Quantos trechos lembrados antes de esquecer tudo (repovoa nas próximas varreduras). */
+        /** Quantos trechos lembrados antes de esquecer tudo (a varredura seguinte é completa e repovoa). */
         private const val MAX_SEEN = 200_000
         /** Até onde procurar `00 00` para os lados de uma faixa alterada. */
         private const val MAX_EXTEND = 4096
