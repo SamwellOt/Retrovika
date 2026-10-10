@@ -46,6 +46,7 @@ import com.retrovika.app.core.textmem.TextDecoder
 import com.retrovika.app.core.textmem.TextPatcher
 import com.retrovika.app.core.textmem.TextWatcher
 import com.retrovika.app.core.textmem.MemoryAccess
+import com.retrovika.app.core.textmem.TranslationMemory
 import com.retrovika.app.core.gameconfig.GameIniFiles
 import com.retrovika.app.core.library.Game
 import com.retrovika.app.core.settings.AppSettings
@@ -68,6 +69,7 @@ import com.retrovika.app.core.translate.Box
 import com.retrovika.app.core.translate.GeminiText
 import com.retrovika.app.core.translate.LiveTranslator
 import com.retrovika.app.core.translate.OcrFrame
+import com.retrovika.app.core.translate.TranslatedBlock
 import com.retrovika.app.core.translate.TranslationText
 import com.retrovika.app.core.share.RetrovikaLink
 import com.retrovika.app.core.systems.CoreInfo
@@ -262,6 +264,11 @@ class GameActivity : ComponentActivity() {
     private var autoTranslateJob: kotlinx.coroutines.Job? = null
     private var textPatcher: TextPatcher? = null
     private var textPatcherView: GLRetroView? = null
+    /** O idioma para o qual [textPatcher] foi criado: outro idioma pede outro patcher, com a memória dele. */
+    private var textPatcherTarget: String? = null
+    /** Traduções deste jogo gravadas em disco, no idioma de [translationMemoryTarget]. */
+    private var translationMemory: TranslationMemory? = null
+    private var translationMemoryTarget: String? = null
     private val patchLock = kotlinx.coroutines.sync.Mutex()
     /** ID do disco (GameCube/Wii) lido na abertura, para o arquivo de configuração do jogo; nulo se não deu para ler. */
     private var discId by mutableStateOf<String?>(null)
@@ -1446,6 +1453,7 @@ class GameActivity : ComponentActivity() {
         // Fora da frente, uma morte do processo (o sistema liberando memória) não diz nada do jogo. Saindo da tela, o
         // registro fica até o núcleo ser descarregado no onDestroy: uma queda ao fechar o Vulkan também conta.
         if (!isFinishing && !isChangingConfigurations) closeSession()
+        flushTranslations()
         super.onPause()
     }
 
@@ -1469,6 +1477,7 @@ class GameActivity : ComponentActivity() {
         translateJob?.cancel()
         autoTranslateJob?.cancel()
         translator?.let { runCatching { it.close() } }
+        flushTranslations()
         // O InputManager é global: sem remover o listener, cada jogo aberto vazaria esta Activity.
         getSystemService(InputManager::class.java).unregisterInputDeviceListener(inputDeviceListener)
         unwatchThermal()
@@ -2146,19 +2155,46 @@ class GameActivity : ComponentActivity() {
         val hooks = cheats?.ram?.activeTextHooks.orEmpty()
         if (hooks.isEmpty()) return null
         val target = uiLanguage()
-        val patcher = textPatcher?.takeIf { textPatcherView === view } ?: TextPatcher(memoryAccess(view)) { text ->
-            TranslationText.probablyTranslated(text, uiLanguage())
-        }.also {
-            textPatcher = it
-            textPatcherView = view
-        }
+        val patcher = textPatcher?.takeIf { textPatcherView === view && textPatcherTarget == target }
+            ?: TextPatcher(memoryAccess(view), translationMemory(target)) { text ->
+                TranslationText.probablyTranslated(text, uiLanguage())
+            }.also {
+                textPatcher = it
+                textPatcherView = view
+                textPatcherTarget = target
+            }
         val tr = translator ?: LiveTranslator(app.ocrPack).also { translator = it }
+        val ai = aiConfig()
+        val context = GeminiText.GameContext(game.title, system.name)
         // Fora da thread principal: ler a memória espera o quadro em curso (o núcleo segura o lock durante ele).
         return patchLock.withLock {
             withContext(Dispatchers.Default) {
-                patcher.step(hooks, force) { texts -> tr.translateTexts(texts, target) {}.blocks.associate { it.original to it.translated } }
+                patcher.step(hooks, force) { texts, limits ->
+                    tr.translateTexts(texts, target, ai, context, limits) {}.blocks.associate { it.original to it.translated }
+                }
             }
         }
+    }
+
+    /** A memória de traduções deste jogo no idioma [target]; trocar de idioma grava a anterior e abre outra. */
+    private fun translationMemory(target: String): TranslationMemory {
+        translationMemory?.takeIf { translationMemoryTarget == target }?.let { return it }
+        translationMemory?.let { old -> app.scope.launch(Dispatchers.IO) { old.flush() } }
+        return TranslationMemory(app.paths.translationsFor(system.id, game.id, target)).also {
+            translationMemory = it
+            translationMemoryTarget = target
+        }
+    }
+
+    /** Grava no disco o que a memória de traduções ganhou (fora da thread principal). */
+    private fun flushTranslations() {
+        translationMemory?.let { m -> app.scope.launch(Dispatchers.IO) { m.flush() } }
+    }
+
+    /** A chave do Gemini do usuário, se ele tem uma; sem ela a tradução segue só pelo Google e pelo ML Kit. */
+    private suspend fun aiConfig(): AiConfig? {
+        val current = app.settings.current()
+        return current.geminiKey?.takeIf { it.isNotBlank() }?.let { AiConfig(it, current.geminiModel) }
     }
 
     /** O botão: traduz os diálogos de agora e os escreve no jogo (ou, sem ganchos, mostra a tradução da tela). */
@@ -2256,24 +2292,43 @@ class GameActivity : ComponentActivity() {
     private suspend fun memoryTranslation(view: GLRetroView, frame: Bitmap, tr: LiveTranslator, target: String): TranslationUi? {
         val hooks = cheats?.ram?.activeTextHooks.orEmpty()
         if (hooks.isEmpty()) return null
-        val texts = withContext(Dispatchers.Default) {
+        val memory = translationMemory(target)
+        // Lê só a janela de cada gancho (não a RAM inteira), e separa o que já está traduzido na memória do que falta.
+        val read = withContext(Dispatchers.Default) {
             try {
-                val size = view.systemRamSize()
-                if (size <= 0) return@withContext emptyList<String>()
-                val ram = ByteArray(size)
-                if (view.readSystemRamInto(ram) != size) emptyList() else hooks.flatMap { hook ->
+                var readable = false
+                val texts = mutableListOf<String>()
+                for (hook in hooks) {
+                    val window = TextDecoder.window(memoryAccess(view), hook) ?: continue
+                    readable = true
                     // Os mesmos segmentos que a tradução dentro do jogo usa (linhas de tela, texto plausível, janela inteira).
-                    TextDecoder.slice(ram, hook.address, hook.length, hook.wordSwap)?.let { TextDecoder.segments(it, hook) }.orEmpty().map { it.text }
+                    texts += TextDecoder.segments(window, hook).map { it.text }
                 }
+                if (!readable) return@withContext null
+                val done = mutableListOf<TranslatedBlock>()
+                val rest = mutableListOf<String>()
+                for (text in texts.distinct()) {
+                    val stored = memory.get(text)
+                    if (stored == null) rest += text
+                    // Já no idioma de quem lê (o tradutor o deixou de fora antes): não há o que mostrar.
+                    else if (stored != text) done += TranslatedBlock(Box(0, 0, 0, 0), text, stored)
+                }
+                done to rest
             } catch (e: OutOfMemoryError) {
-                emptyList()
+                null
             }
-        }
-        if (texts.isEmpty()) return null
-        val result = tr.translateTexts(texts, target) { stage ->
+        } ?: return null
+        val (stored, rest) = read
+        val ai = aiConfig()
+        val context = GeminiText.GameContext(game.title, system.name)
+        val result = if (rest.isEmpty()) null else tr.translateTexts(rest, target, ai, context) { stage ->
             if (translation is TranslationUi.Working) translation = TranslationUi.Working(frame, stage)
         }
-        return if (result.blocks.isEmpty()) null else TranslationUi.Ready(frame, result.blocks, fromMemory = true)
+        val fresh = result?.blocks.orEmpty()
+        fresh.forEach { memory.put(it.original, it.translated) }
+        val blocks = stored + fresh
+        if (blocks.isEmpty()) return null
+        return TranslationUi.Ready(frame, blocks, fromMemory = true, aiError = result?.aiError?.userMessage(this@GameActivity))
     }
 
     /**

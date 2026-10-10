@@ -11,8 +11,13 @@ import java.text.Normalizer
  * seguidas (um diálogo sendo montado não é traduzido pela metade), e um texto já traduzido nesta sessão volta a ser
  * escrito na hora, sem rede, se o jogo o recarregar. [alreadyTranslated] diz se um texto já está no idioma de quem lê
  * (a memória guarda a tradução depois de carregar um save feito com ela ligada): esse não é traduzido de novo.
+ * [store] guarda as traduções entre sessões: um texto já traduzido é escrito de volta sem perguntar ao tradutor.
  */
-class TextPatcher(private val access: MemoryAccess, private val alreadyTranslated: (String) -> Boolean = { false }) {
+class TextPatcher(
+    private val access: MemoryAccess,
+    private val store: TranslationStore? = null,
+    private val alreadyTranslated: (String) -> Boolean = { false },
+) {
 
     data class Report(
         /** Quantos textos foram escritos no jogo neste passo. */
@@ -39,9 +44,14 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
 
     /**
      * [force]: traduz tudo o que há agora (o botão); sem ele, só o que ficou igual desde o passo anterior (automático).
-     * [translate] recebe os textos e devolve a tradução de cada um (os que não precisam de tradução ficam de fora).
+     * [translate] recebe os textos e o limite de caracteres de cada um ([limits]: o que o jogo deixa cabe nele) e devolve
+     * a tradução de cada um (os que não precisam de tradução ficam de fora).
      */
-    suspend fun step(hooks: List<TextHook>, force: Boolean, translate: suspend (List<String>) -> Map<String, String>): Report {
+    suspend fun step(
+        hooks: List<TextHook>,
+        force: Boolean,
+        translate: suspend (texts: List<String>, limits: Map<String, Int>) -> Map<String, String>,
+    ): Report {
         if (resetRequested) {
             resetRequested = false
             // O que escrevemos continua na memória do jogo e não vira "original" porque as fontes mudaram: `ours` fica.
@@ -50,6 +60,12 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
         }
         var scan = scan(hooks)
         if (scan.unreadable && scan.found.isEmpty()) return Report(unreadable = true)
+
+        // As traduções guardadas entram antes de qualquer pedido: o que já está na memória do app não vai ao tradutor.
+        scan.found.forEach { f ->
+            val text = f.segment.text
+            if (text !in translations && text !in ours) store?.get(text)?.let { translations[text] = it }
+        }
 
         var written = 0
         var truncated = 0
@@ -74,12 +90,16 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
         lastCandidates = need.toSet()
         if (candidates.isEmpty()) return Report(written, truncated, scan.unreadable, waiting = need.size)
 
-        val result = translate(candidates)
+        val limits = candidates.associateWith { text -> scan.found.filter { it.segment.text == text }.minOf { limitOf(it) } }
+        val result = translate(candidates, limits)
         if (translations.size > MAX_CACHE) translations.clear()
         // Tradução vazia não é tradução: gravá-la apagaria o diálogo.
-        translations.putAll(result.filterValues { it.isNotBlank() })
+        val added = result.filterValues { it.isNotBlank() }
+        translations.putAll(added)
         // Os textos que o tradutor deixou de fora (já no idioma de quem lê) não voltam a ser pedidos.
-        candidates.filter { result[it].isNullOrBlank() }.forEach { translations[it] = it }
+        val identity = candidates.filter { result[it].isNullOrBlank() }.associateWith { it }
+        translations.putAll(identity)
+        (added + identity).forEach { (original, translated) -> store?.put(original, translated) }
 
         // O jogo andou durante a tradução: lê de novo e só grava o que ainda é o mesmo texto.
         scan = scan(hooks)
@@ -93,6 +113,24 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
 
     private data class Found(val hook: TextHook, val segment: TextSegment)
     private data class Scan(val found: List<Found>, val unreadable: Boolean)
+
+    /** Quantos caracteres o jogo deixa para este trecho: o espaço inteiro, menos o terminador (exceto na grade de tela). */
+    private fun limitOf(f: Found): Int {
+        val unit = unitOf(f.hook, f.segment)
+        val room = if (f.hook.gridWidth > 0) f.segment.capacity else f.segment.capacity - TextEncoder.terminator(f.hook).size
+        return room / unit
+    }
+
+    /** Bytes por caractere que [write] usa para este trecho. */
+    private fun unitOf(hook: TextHook, segment: TextSegment): Int = when {
+        hook.encoding == TextEncoding.UTF16LE || hook.encoding == TextEncoding.UTF16BE -> 2
+        isFullWidth(hook, segment) -> 2
+        else -> 1
+    }
+
+    /** Shift-JIS sem nenhuma letra ou dígito meia-largura no original: a fonte só tem os caracteres de largura total. */
+    private fun isFullWidth(hook: TextHook, segment: TextSegment): Boolean =
+        hook.encoding == TextEncoding.SHIFT_JIS && segment.text.none { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }
 
     private fun scan(hooks: List<TextHook>): Scan {
         val found = mutableListOf<Found>()
@@ -112,9 +150,7 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
     private fun write(hook: TextHook, segment: TextSegment, translated: String): Boolean? {
         if (hook.gridWidth > 0) return writeRow(hook, segment, translated)
         val terminator = TextEncoder.terminator(hook)
-        // Shift-JIS sem nenhuma letra ou dígito meia-largura no original: a fonte só tem os caracteres de largura total.
-        val fullWidth = hook.encoding == TextEncoding.SHIFT_JIS &&
-            segment.text.none { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }
+        val fullWidth = isFullWidth(hook, segment)
         val encoded = TextEncoder.encode(translated, hook, segment.capacity - terminator.size, segment.lineWidth, fullWidth)
             ?.takeIf { it.bytes.isNotEmpty() } ?: return null
         // O texto, o terminador e mais terminadores até cobrir o que o original ocupava (apaga o que sobraria dele).
