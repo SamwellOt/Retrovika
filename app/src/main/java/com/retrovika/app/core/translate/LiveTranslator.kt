@@ -59,6 +59,11 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
     /** Pares de idiomas com o modelo do ML Kit já baixado; os trechos são traduzidos em paralelo. */
     private val downloaded: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var onDeviceBroken = false
+    /**
+     * Até quando os textos da memória não vão ao Gemini: depois de uma falha (cota, chave errada, sem rede) o laço
+     * automático, que pede a cada meio segundo, segue pelo Google em vez de bater na API de novo.
+     */
+    @Volatile private var aiTextsPausedUntil = 0L
     /** Últimos trechos traduzidos nesta sessão: a IA mantém os nomes e o tom entre uma tela e outra. */
     private val history = ArrayDeque<String>()
 
@@ -106,7 +111,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
             val pending = texts.distinct().mapNotNull { text -> TranslationText.sourceFor(text, target)?.let { text to it } }.take(MAX_TEXTS)
             var aiError: Throwable? = null
             val byAi = mutableMapOf<String, String>()
-            if (ai != null && game != null && pending.isNotEmpty()) {
+            if (ai != null && game != null && pending.isNotEmpty() && System.currentTimeMillis() >= aiTextsPausedUntil) {
                 onStage(Stage.ASKING_AI)
                 try {
                     val items = pending.mapIndexed { i, (text, _) -> GeminiText.TextItem(i, text, limits[text]) }
@@ -116,6 +121,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
                     throw c
                 } catch (t: Throwable) {
                     aiError = t
+                    aiTextsPausedUntil = System.currentTimeMillis() + AI_TEXTS_PAUSE_MS
                 }
             }
             val rest = pending.filter { (text, _) -> text !in byAi }
@@ -295,6 +301,7 @@ class LiveTranslator(private val pack: OcrPack) : Closeable {
         private const val MIN_CONFIDENCE = 0.35f
         private const val HISTORY = 12
         private const val MAX_TEXTS = 24
+        private const val AI_TEXTS_PAUSE_MS = 60_000L
     }
 }
 
