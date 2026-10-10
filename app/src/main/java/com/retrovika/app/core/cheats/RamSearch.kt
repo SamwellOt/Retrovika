@@ -52,6 +52,16 @@ class RamSearch(val width: Int, val bigEndian: Boolean = false, val wordSwap: Bo
         return keep(current) { now, _ -> now == value }
     }
 
+    /**
+     * Fica só com os endereços que mudaram exatamente [delta] desde a cópia anterior (o jogador perdeu 3 de vida: -3).
+     * A conta é feita módulo a largura do valor, então um contador de 1 byte que foi de 0 para 255 casa com -1.
+     */
+    fun filterDelta(current: ByteArray, delta: Long): Int {
+        val mask = RamCheat.maxValue(width)
+        val wanted = delta and mask
+        return keep(current) { now, before -> ((now - before) and mask) == wanted }
+    }
+
     fun filter(current: ByteArray, kind: Filter): Int = keep(current) { now, before ->
         when (kind) {
             Filter.UNCHANGED -> now == before

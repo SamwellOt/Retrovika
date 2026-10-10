@@ -61,6 +61,9 @@ internal fun RamSearchPanel(session: CheatSession, onClose: () -> Unit) {
     LaunchedEffect(studio) { studio.refreshSupport() }
     var locking by remember { mutableStateOf<RamSearch.Hit?>(null) }
     var equal by remember { mutableStateOf("") }
+    var delta by remember { mutableStateOf("") }
+    // Mudança aceita só o que cabe na largura (um byte: de -255 a 255), como o valor "igual a".
+    fun deltaValue(): Long? = parseDelta(delta)?.takeIf { kotlin.math.abs(it) <= RamCheat.maxValue(studio.width) }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -133,6 +136,20 @@ internal fun RamSearchPanel(session: CheatSession, onClose: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                             )
                             TextButton(onClick = { parseValue(equal)?.let(studio::filterEqual) }, enabled = parseValue(equal) != null && !studio.busy) {
+                                Text(stringResource(R.string.ram_apply))
+                            }
+                        }
+                    }
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                delta, { delta = it.filter { c -> c.isLetterOrDigit() || c == '+' || c == '-' } },
+                                label = { Text(stringResource(R.string.ram_filter_delta)) }, singleLine = true,
+                                // Teclado de texto: o numérico de muitos aparelhos não tem o sinal de menos.
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Text),
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { deltaValue()?.let(studio::filterDelta) }, enabled = deltaValue() != null && !studio.busy) {
                                 Text(stringResource(R.string.ram_apply))
                             }
                         }
@@ -218,6 +235,19 @@ private fun LockDialog(hit: RamSearch.Hit, width: Int, onLock: (Long, String) ->
 internal fun parseValue(text: String): Long? {
     val t = text.trim()
     return if (t.startsWith("0x", ignoreCase = true)) t.substring(2).toLongOrNull(16) else t.toLongOrNull()
+}
+
+/**
+ * Diferença para o filtro "mudou em N": sinal opcional (`-3`, `+5`, `5`), valor decimal ou hexadecimal (`0x10`,
+ * `-0x10`). Nulo se não for número; o sinal de mais ou de menos repetido não conta.
+ */
+internal fun parseDelta(text: String): Long? {
+    val t = text.trim()
+    val negative = t.startsWith("-")
+    val body = if (negative || t.startsWith("+")) t.substring(1) else t
+    if (body.startsWith("+") || body.startsWith("-")) return null
+    val magnitude = parseValue(body)?.takeIf { it >= 0 } ?: return null
+    return if (negative) -magnitude else magnitude
 }
 
 /**

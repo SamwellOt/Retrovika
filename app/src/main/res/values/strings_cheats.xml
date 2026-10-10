@@ -56,6 +56,7 @@
     <string name="ram_filter_up">Went up</string>
     <string name="ram_filter_down">Went down</string>
     <string name="ram_filter_equal">Equal to</string>
+    <string name="ram_filter_delta">Changed by (e.g. -3)</string>
     <string name="ram_value_label">Value</string>
     <string name="ram_apply">Filter</string>
     <string name="ram_too_many">Too many to list. Filter again.</string>

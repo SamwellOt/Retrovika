@@ -214,6 +214,8 @@ class RamStudio(private val scope: CoroutineScope) {
 
     fun filterEqual(value: Long) = filtering { s, buffer -> s.filterEqual(buffer, value) }
 
+    fun filterDelta(delta: Long) = filtering { s, buffer -> s.filterDelta(buffer, delta) }
+
     fun filter(kind: RamSearch.Filter) = filtering { s, buffer -> s.filter(buffer, kind) }
 
     private fun filtering(block: (RamSearch, ByteArray) -> Int) = work { size ->

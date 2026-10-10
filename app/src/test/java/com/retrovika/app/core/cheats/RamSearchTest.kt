@@ -171,4 +171,40 @@ class RamSearchTest {
         // Largura maior, menos candidatos.
         assertTrue(RamSearch.bytesNeeded(1 shl 20, 4) < RamSearch.bytesNeeded(1 shl 20, 1))
     }
+
+    @Test
+    fun `mudou em um valor fixo fica so o endereco que perdeu 3`() {
+        val search = RamSearch(1)
+        search.start(ram(4, 0 to 10, 1 to 10))
+        // Endereço 0 foi de 10 para 7 (-3); o endereço 1 foi de 10 para 9 (-1).
+        assertEquals(1, search.filterDelta(ram(4, 0 to 7, 1 to 9), -3))
+        assertEquals(listOf(RamSearch.Hit(0, 7)), search.hits(5))
+    }
+
+    @Test
+    fun `mudou em dois bytes little endian`() {
+        // 1000 = 0x03E8 em little endian: E8 03; depois 1050 = 0x041A: 1A 04.
+        val before = ByteArray(4).also { it[0] = 0xE8.toByte(); it[1] = 0x03 }
+        val after = ByteArray(4).also { it[0] = 0x1A; it[1] = 0x04 }
+        val search = RamSearch(2)
+        search.start(before)
+        assertEquals(1, search.filterDelta(after, 50))
+        assertEquals(RamSearch.Hit(0, 1050), search.hits(5).single())
+    }
+
+    @Test
+    fun `mudanca de zero da volta no contador de um byte`() {
+        // 0 -> 255 é -1 módulo 256.
+        val search = RamSearch(1)
+        search.start(ram(2, 0 to 0))
+        assertEquals(1, search.filterDelta(ram(2, 0 to 255), -1))
+        assertEquals(listOf(RamSearch.Hit(0, 255)), search.hits(5))
+    }
+
+    @Test
+    fun `mudou em zero e o mesmo que nao mudou`() {
+        val search = RamSearch(1)
+        search.start(ram(4, 0 to 1, 1 to 1))
+        assertEquals(3, search.filterDelta(ram(4, 0 to 1, 1 to 2), 0))
+    }
 }

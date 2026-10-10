@@ -56,6 +56,7 @@
     <string name="ram_filter_up">Subiu</string>
     <string name="ram_filter_down">Desceu</string>
     <string name="ram_filter_equal">Igual a</string>
+    <string name="ram_filter_delta">Mudou em (ex.: -3)</string>
     <string name="ram_value_label">Valor</string>
     <string name="ram_apply">Filtrar</string>
     <string name="ram_too_many">São muitos para listar. Filtre de novo.</string>
