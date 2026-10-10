@@ -88,4 +88,45 @@ class TextEncoderTest {
         assertArrayEquals(byteArrayOf(0x20), TextEncoder.fill(ascii))
         assertArrayEquals(byteArrayOf(0x20, 0), TextEncoder.fill(ascii.copy(encoding = TextEncoding.UTF16LE)))
     }
+
+    private val sjis = TextHook("sj", 0, 64, TextEncoding.SHIFT_JIS)
+
+    @Test
+    fun `largura total em shift-jis grava duas bytes por letra e espaco ideografico`() {
+        val e = TextEncoder.encode("Hi 1", sjis, 100, fullWidth = true)!!
+        assertArrayEquals("Ｈｉ　１".toByteArray(charset("Shift_JIS")), e.bytes)
+        assertEquals(8, e.bytes.size)
+    }
+
+    @Test
+    fun `largura total cortada respeita o maximo de bytes`() {
+        val e = TextEncoder.encode("uma frase bem comprida demais", sjis, 16, fullWidth = true)!!
+        assertTrue(e.truncated)
+        assertTrue(e.bytes.size <= 16)
+    }
+
+    @Test
+    fun `shift-jis sem largura total continua em ascii`() {
+        val e = TextEncoder.encode("Hi 1", sjis, 100)!!
+        assertArrayEquals("Hi 1".toByteArray(Charsets.US_ASCII), e.bytes)
+    }
+
+    @Test
+    fun `tabela sem ponto corta sem reticencias de espaco`() {
+        val t = LinearTable(upper = 0x10, lower = 0x30, digit = 0x50, space = 0x01, terminator = 0xFF)
+        val h = TextHook("t", 0, 32, TextEncoding.TABLE, table = t)
+        // "aa bb cc dd." são 12 bytes; cabem 8: "aa bb cc", sem "..." (que viraria três espaços)
+        val e = TextEncoder.encode("aa bb cc dd.", h, 8)!!
+        assertTrue(e.truncated)
+        assertArrayEquals(byteArrayOf(0x30, 0x30, 0x01, 0x31, 0x31, 0x01, 0x32, 0x32), e.bytes)
+    }
+
+    @Test
+    fun `tabela com ponto ainda recebe reticencias`() {
+        val t = LinearTable(upper = 0x10, lower = 0x30, digit = 0x50, space = 0x01, terminator = 0xFF, extra = mapOf("." to 0x2E))
+        val h = TextHook("t", 0, 32, TextEncoding.TABLE, table = t)
+        val e = TextEncoder.encode("aa bb cc dd.", h, 9)!!
+        assertTrue(e.truncated)
+        assertArrayEquals(byteArrayOf(0x30, 0x30, 0x01, 0x31, 0x31, 0x2E, 0x2E, 0x2E), e.bytes)
+    }
 }

@@ -1,5 +1,7 @@
 package com.retrovika.app.core.textmem
 
+import java.text.Normalizer
+
 /**
  * Traduz os textos do jogo e os escreve de volta na memória dele, no lugar do original: o jogo passa a mostrar o texto
  * traduzido na caixa de diálogo. Um passo ([step]) lê os buffers dos ganchos, separa os textos que ainda não são nossos,
@@ -98,7 +100,10 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
         for (hook in hooks) {
             val window = TextDecoder.window(access, hook)
             if (window == null) { unreadable = true; continue }
-            TextDecoder.segments(window, hook).filter { it.text !in ours && !alreadyTranslated(it.text) }.forEach { found += Found(hook, it) }
+            // Letras de largura total (que nós gravamos) voltam normalizadas, para o filtro de "já traduzido" as reconhecer.
+            TextDecoder.segments(window, hook)
+                .filter { it.text !in ours && !alreadyTranslated(Normalizer.normalize(it.text, Normalizer.Form.NFKC)) }
+                .forEach { found += Found(hook, it) }
         }
         return Scan(found, unreadable)
     }
@@ -107,7 +112,10 @@ class TextPatcher(private val access: MemoryAccess, private val alreadyTranslate
     private fun write(hook: TextHook, segment: TextSegment, translated: String): Boolean? {
         if (hook.gridWidth > 0) return writeRow(hook, segment, translated)
         val terminator = TextEncoder.terminator(hook)
-        val encoded = TextEncoder.encode(translated, hook, segment.capacity - terminator.size, segment.lineWidth)
+        // Shift-JIS sem nenhuma letra ou dígito meia-largura no original: a fonte só tem os caracteres de largura total.
+        val fullWidth = hook.encoding == TextEncoding.SHIFT_JIS &&
+            segment.text.none { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }
+        val encoded = TextEncoder.encode(translated, hook, segment.capacity - terminator.size, segment.lineWidth, fullWidth)
             ?.takeIf { it.bytes.isNotEmpty() } ?: return null
         // O texto, o terminador e mais terminadores até cobrir o que o original ocupava (apaga o que sobraria dele).
         // (nunca além da capacidade: sem terminador depois do original, o espaço acaba onde o texto acaba)

@@ -1,5 +1,6 @@
 package com.retrovika.app.core.textmem
 
+import java.nio.charset.Charset
 import java.text.Normalizer
 
 /**
@@ -18,20 +19,23 @@ object TextEncoder {
     /**
      * [text] nos bytes de [hook], em no máximo [maxBytes] (sem o terminador). [lineWidth]: o jogo já quebra o texto em
      * linhas dessa largura, e a tradução é quebrada igual (com o byte 0x0A); nulo = uma linha só.
+     * [fullWidth]: só para Shift-JIS; grava as letras em largura total (2 bytes cada), para fontes que não têm as
+     * meias-larguras.
      */
-    fun encode(text: String, hook: TextHook, maxBytes: Int, lineWidth: Int? = null): Encoded? {
+    fun encode(text: String, hook: TextHook, maxBytes: Int, lineWidth: Int? = null, fullWidth: Boolean = false): Encoded? {
         if (maxBytes <= 0) return null
         val canBreak = hook.encoding != TextEncoding.TABLE && lineWidth != null && lineWidth > 0
         var candidate = text.split(' ', '\n', '\r', '\t').filter { it.isNotEmpty() }.joinToString(" ")
         var truncated = false
-        fun render(t: String): ByteArray? = bytesOf(if (canBreak) wrap(t, lineWidth!!) else t, hook)
+        val ellipsis = ellipsisFor(hook)
+        fun render(t: String): ByteArray? = bytesOf(if (canBreak) wrap(t, lineWidth!!) else t, hook, fullWidth)
         var bytes = render(candidate) ?: return null
         if (bytes.size > maxBytes) {
             // Corta em palavras inteiras, com reticências quando couberem.
             val words = candidate.split(' ')
             var kept = words.size
-            while (kept > 1 && (render(words.take(kept).joinToString(" ") + ELLIPSIS)?.size ?: Int.MAX_VALUE) > maxBytes) kept--
-            candidate = words.take(kept).joinToString(" ") + ELLIPSIS
+            while (kept > 1 && (render(words.take(kept).joinToString(" ") + ellipsis)?.size ?: Int.MAX_VALUE) > maxBytes) kept--
+            candidate = words.take(kept).joinToString(" ") + ellipsis
             bytes = render(candidate) ?: return null
             if (bytes.size > maxBytes) {
                 // Nem a primeira palavra cabe: corta letras.
@@ -53,13 +57,39 @@ object TextEncoder {
     }
 
     private const val ELLIPSIS = "..."
+    private val shiftJis: Charset = Charset.forName("Shift_JIS")
 
-    private fun bytesOf(text: String, hook: TextHook): ByteArray? = when (hook.encoding) {
+    /**
+     * As reticências do corte. Numa tabela sem byte para o ponto (e sem ASCII nos símbolos) o "." vira espaço, e o corte
+     * acabaria em três espaços: nesse caso não há reticências, só o corte na palavra.
+     */
+    private fun ellipsisFor(hook: TextHook): String {
+        if (hook.encoding != TextEncoding.TABLE) return ELLIPSIS
+        val t = requireNotNull(hook.table)
+        return if (t.extra["."] != null || t.asciiLow) ELLIPSIS else ""
+    }
+
+    private fun bytesOf(text: String, hook: TextHook, fullWidth: Boolean): ByteArray? = when (hook.encoding) {
         TextEncoding.ASCII -> ascii(text)
-        TextEncoding.SHIFT_JIS -> ascii(text)   // ASCII é um byte só em Shift-JIS
+        // ASCII é um byte só em Shift-JIS; em largura total, cada letra são dois bytes.
+        TextEncoding.SHIFT_JIS -> if (fullWidth) fullWidth(text) else ascii(text)
         TextEncoding.UTF16LE -> text.toByteArray(Charsets.UTF_16LE)
         TextEncoding.UTF16BE -> text.toByteArray(Charsets.UTF_16BE)
         TextEncoding.TABLE -> table(text, requireNotNull(hook.table))
+    }
+
+    /** Shift-JIS em largura total: espaço vira o espaço ideográfico, ASCII vira a forma de largura total (U+FF01..). */
+    private fun fullWidth(text: String): ByteArray {
+        val mapped = buildString {
+            for (c in plain(text)) when {
+                c == '\n' -> append(c)
+                c == ' ' -> append('　')
+                c.code in 0x21..0x7E -> append(c + 0xFEE0)
+                c.code < 0x80 || !shiftJis.newEncoder().canEncode(c) -> append('？')
+                else -> append(c)
+            }
+        }
+        return mapped.toByteArray(shiftJis)
     }
 
     private fun ascii(text: String): ByteArray {

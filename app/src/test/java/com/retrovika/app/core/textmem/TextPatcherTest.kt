@@ -1,6 +1,7 @@
 package com.retrovika.app.core.textmem
 
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -377,5 +378,47 @@ class TextPatcherTest {
         val report = patcher.step(listOf(hook), true, translate)
         assertEquals(1, report.written)
         assertEquals("Ola mundo!", mem.text(0x100, 20))
+    }
+
+    // ---- Shift-JIS: letras de largura total quando a fonte não tem as meias-larguras
+    private val sjis = charset("Shift_JIS")
+    private val sjHook = TextHook("sj", 0x100, 64, TextEncoding.SHIFT_JIS)
+
+    private fun sjText(mem: FakeMemory, text: String) = text.toByteArray(sjis).copyInto(mem.bytes, 0x100)
+
+    @Test
+    fun `shift-jis sem letras meia-largura recebe a traducao em largura total`() = runBlocking {
+        val mem = FakeMemory(512).also { sjText(it, "こんにちは、ゆうしゃよ") }
+        val report = TextPatcher(mem).step(listOf(sjHook), true) { t -> t.associateWith { "Ola!" } }
+        assertEquals(1, report.written)
+        assertArrayEquals("Ｏｌａ！".toByteArray(sjis), mem.bytes.copyOfRange(0x100, 0x100 + 8))
+    }
+
+    @Test
+    fun `shift-jis com letras meia-largura recebe a traducao em ascii`() = runBlocking {
+        val mem = FakeMemory(512).also { sjText(it, "Lv5のゆうしゃ") }
+        val report = TextPatcher(mem).step(listOf(sjHook), true) { t -> t.associateWith { "Hero" } }
+        assertEquals(1, report.written)
+        assertArrayEquals("Hero".toByteArray(Charsets.US_ASCII), mem.bytes.copyOfRange(0x100, 0x100 + 4))
+    }
+
+    @Test
+    fun `traducao em largura total gravada nao e traduzida de novo`() = runBlocking {
+        val mem = FakeMemory(512).also { sjText(it, "こんにちは、ゆうしゃよ") }
+        val patcher = TextPatcher(mem)
+        patcher.step(listOf(sjHook), true) { t -> t.associateWith { "Ola!" } }
+        var calls = 0
+        val report = patcher.step(listOf(sjHook), true) { calls++; emptyMap() }
+        assertEquals(0, calls)
+        assertEquals(0, report.written)
+    }
+
+    @Test
+    fun `largura total ja traduzida e reconhecida pela forma normalizada`() = runBlocking {
+        val mem = FakeMemory(512).also { sjText(it, "Ｏｌａ！") }
+        var seen = emptyList<String>()
+        TextPatcher(mem) { text -> seen += text; text == "Ola!" }.step(listOf(sjHook), true) { t -> t.associateWith { "x" } }
+        assertTrue(seen.contains("Ola!"))
+        assertEquals(0, mem.writes.size)
     }
 }
