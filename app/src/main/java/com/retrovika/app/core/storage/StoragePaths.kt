@@ -12,6 +12,7 @@ import java.io.File
  *   saves/<sistema>/       memória interna do cartucho (.srm)
  *   states/<sistema>/<id>/ save states por slot + miniatura
  *   cheats/<sistema>/      trapaças baixadas e as escolhas de cada jogo (<id>.json)
+ *   translations/<sistema>/ traduções dos diálogos já feitas por jogo (<id>.<idioma>.json)
  *   system/                BIOS e assets exigidos pelos núcleos
  * <interno>/cores/         núcleos libretro (.so) — precisam ficar no armazenamento interno para dlopen
  * ```
@@ -34,6 +35,7 @@ class StoragePaths(private val context: Context) {
     val states: File get() = root.resolve("states").ensureDir()
     val cheats: File get() = root.resolve("cheats").ensureDir()
     val system: File get() = root.resolve("system").ensureDir()
+    val translations: File get() = root.resolve("translations").ensureDir()
     val cores: File get() = context.filesDir.resolve("cores").ensureDir()
     val downloadsTmp: File get() = context.cacheDir.resolve("downloads").ensureDir()
 
@@ -46,6 +48,10 @@ class StoragePaths(private val context: Context) {
 
     /** As trapaças escolhidas para um jogo. */
     fun cheatsFor(systemId: String, gameId: Long): File = cheats.resolve(systemId).resolve("$gameId.json")
+
+    /** A memória de traduções de um jogo num idioma (sem criar o arquivo). */
+    fun translationsFor(systemId: String, gameId: Long, language: String): File =
+        translations.resolve(systemId).resolve("$gameId.$language.json")
 
     private fun File.ensureDir(): File = apply { if (!exists()) mkdirs() }
 }

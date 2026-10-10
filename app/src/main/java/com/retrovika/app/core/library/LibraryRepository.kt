@@ -117,6 +117,12 @@ class LibraryRepository(
     private suspend fun forget(game: Game) {
         runCatching { paths.statesDir(game.systemId, game.id).deleteRecursively() }
         runCatching { paths.cheatsFor(game.systemId, game.id).delete() }
+        // Memórias de traduções do jogo (uma por idioma): <id>.<idioma>.json.
+        runCatching {
+            paths.translations.resolve(game.systemId).listFiles()
+                ?.filter { it.name.startsWith("${game.id}.") && it.name.endsWith(".json") }
+                ?.forEach { it.delete() }
+        }
         // Progresso do teste de qualidade por jogo (o GameActivity grava com este nome).
         runCatching { File(File(context.filesDir, GameActivity.BENCH_DIR), "benchmark_game_${game.id}.json").delete() }
         runCatching { settings.forgetGame(game.id) }
